@@ -108,7 +108,7 @@ External imports:
 >
 > Project settings (`<project>/.claude/settings.json`) определяются от **cwd сессии** (точнее — от git-root этого cwd), а не от вашего workspace-каталога агента. Сервис плагина обычно стартует с `WorkingDirectory=<...>/labops-tg-plugin/plugin`, поэтому «project» для сессии — это репозиторий плагина, а **не** `~/.claude-lab/<agent>/`. Если вы зарегистрируете хук в `~/.claude-lab/<agent>/.claude/settings.json`, рассчитывая что это «project settings», — живая сессия его **не прочитает**, и хук молча не сработает.
 >
-> Реальный инцидент (2026-05-29): read-receipt хук (детерминированная 👀-реакция «агент прочитал сообщение») положили в `~/.claude-lab/<agent>/.claude/settings.json`. Сессия канала стартует из `labops-tg-plugin/plugin` → читает глобальный `~/.claude/settings.json` → хук не подхватился → реакции 👀 пропали полностью. Диагностический признак: **ни один** Stop-хук из workspace-settings не отрабатывал (heartbeat пустой, `handoff.md`/`recent.md` не обновлялись). Лечение — перенести хук в глобальный `~/.claude/settings.json` + рестарт сервиса.
+> Реальный инцидент (2026-05-29): read-receipt хук (детерминированная 👀-реакция «агент прочитал сообщение») положили в `~/.claude-lab/<agent>/.claude/settings.json`. Сессия канала стартует из `labops-tg-plugin/plugin` → читает глобальный `~/.claude/settings.json` → хук не подхватился → реакции 👀 пропали полностью. Диагностический признак: **ни один** Stop-хук из workspace-settings не отрабатывал (heartbeat пустой, `handoff.md`/`episodic.md` не обновлялись). Лечение — перенести хук в глобальный `~/.claude/settings.json` + рестарт сервиса.
 >
 > Правило: **все** хуки плагина (`PreToolUse`/`PostToolUse`/`Stop`/`UserPromptSubmit`) регистрируются только в глобальном `~/.claude/settings.json`. Workspace-level settings подходят лишь для `permissions`/`env`, которые мёрджатся независимо от cwd.
 
@@ -141,8 +141,8 @@ External imports:
 - Когда контекст приближается к лимиту — auto-compact (Claude Code сжимает старые сообщения в summary)
 
 После рестарта сервиса — **новая** сессия с нуля. Контекст потерян. Поэтому:
-- Используйте memory hooks плагина (`<workspace>/core/active/recent.md` + `verbose.jsonl`)
-- Принимайте что после рестарта агент «забывает» текущий разговор — но может прочитать `recent.md` если ему это сказать в CLAUDE.md
+- Используйте memory hooks плагина (`<workspace>/core/active/episodic.md` + `verbose.jsonl`)
+- Принимайте что после рестарта агент «забывает» текущий разговор — но может прочитать `episodic.md` если ему это сказать в CLAUDE.md
 - Для production: минимизируйте рестарты, используйте `Restart=on-failure` (не `always`), мониторьте uptime
 
 ## Каноническая структура (резюме)
@@ -156,7 +156,7 @@ External imports:
 ├── core/                                  ← разделённая память (@-include)
 │   ├── USER.md
 │   ├── rules.md
-│   ├── active/{recent.md, handoff.md}
+│   ├── active/{episodic.md, handoff.md}
 │   ├── passive/{decisions.md}
 │   └── ...
 └── labops-tg-plugin/              ← плагин (внутри workspace!)

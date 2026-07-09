@@ -17,10 +17,11 @@ files. A `.mcp.json` points Claude Code at three remote MCP servers --
 **memory** (write decisions / knowledge / external notes, default port 5001),
 **memory_router** (read shared semantic memory, default port 5002),
 **agent_router** (notify other agents, default port 5000) -- each on its own
-port, all Bearer-authenticated. Three local hooks
-(`session-start`, `stop`, `precompact`) keep the local memory fresh; an
-optional `second_brain-memory_router-on-start.sh` pulls top-N relevant items from the
-shared brain on each session start.
+port, all Bearer-authenticated. Four local hooks
+(`session-start`, `user-prompt-submit`, `stop`, `precompact`) keep the local
+memory fresh; `working-set-build.sh` rebuilds `core/active/working-set.md` by
+fusing shared-brain recall with local `passive/` recall on each session start and
+on substantive prompts.
 
 ## Prerequisites
 
@@ -64,7 +65,7 @@ Copy the printed token into the installer prompt.
 ~/.claude-lab/<agent-id>/.claude/
 |-- CLAUDE.md                  # SOUL: who the agent is
 |-- .mcp.json                  # second_brain memory/memory_router/agent_router endpoints (chmod 600)
-|-- settings.json              # Claude Code hooks (SessionStart/Stop/PreCompact)
+|-- settings.json              # Claude Code hooks (SessionStart/UserPromptSubmit/Stop/PreCompact)
 |-- agent.env                  # source this to export MCP_HOST/SECOND_BRAIN_*_URL/AGENT_BEARER
 |-- core/
 |   |-- USER.md                # operator profile
@@ -72,16 +73,19 @@ Copy the printed token into the installer prompt.
 |   |-- AGENTS.md              # team / models / pipelines
 |   |-- MEMORY.md              # ARCHIVE archive (>14d, on-demand Read)
 |   |-- LEARNINGS.md           # structured log of corrections
-|   |-- passive/decisions.md      # last 14d decisions (auto-rotated)
-|   `-- active/
-|       |-- recent.md          # 24h rolling journal (Stop hook appends)
-|       |-- handoff.md         # last-N entries used by SessionStart
-|       |-- archived/           # old recent.md slices
-|       `-- pre-compact/       # PreCompact snapshots (rotated)
+|   |-- passive/                # semantic insights (insights/decisions/errors/preferences.md)
+|   |-- active/
+|   |   |-- episodic.md          # raw append-only diary (Stop hook appends, salience-tagged)
+|   |   |-- working-set.md       # materialised recall for current task (rebuilt)
+|   |   |-- handoff.md         # last-N entries used by SessionStart
+|   |   `-- pre-compact/       # PreCompact snapshots (rotated)
+|   `-- archived/
+|       |-- episodic/          # size-rolled old episodic slices (YYYY-MM.md)
+|       `-- superseded/        # decayed passive insights
 |-- tools/TOOLS.md             # infra map
-|-- scripts/                   # memory-rotate, trim-active, rotate-passive,
-|                              # compress-passive, second_brain-memory_router-on-start
-|-- hooks/                     # session-start, stop, precompact
+|-- scripts/                   # active-writer, working-set-build, reflect-nudge,
+|                              # decay-sweep, archive-roll
+|-- hooks/                     # session-start, user-prompt-submit, stop, precompact
 |-- logs/                      # hooks.log, verbose-YYYY-MM-DD.jsonl
 `-- skills/                    # symlink to ../skills/ (shared bundle)
 ```
@@ -111,30 +115,40 @@ source ~/.claude-lab/<agent-id>/.claude/agent.env
 claude --project ~/.claude-lab/<agent-id>/.claude
 ```
 
-On session start, the `SessionStart` hook reads `core/active/handoff.md`, and if
-`SECOND_BRAIN_MEMORY_ROUTER_URL` / `AGENT_BEARER` are set, runs
-`scripts/second_brain-memory_router-on-start.sh` which posts a JSON-RPC
-`tools/call recall` to `${SECOND_BRAIN_MEMORY_ROUTER_URL}` and prepends a
-`### YYYY-MM-DD HH:MM [second_brain-memory_router]` block to `core/active/recent.md`.
+On session start, the `SessionStart` hook reads `core/active/handoff.md` and runs
+`scripts/working-set-build.sh`: it fuses shared second_brain recall (a JSON-RPC
+`tools/call recall` to `${SECOND_BRAIN_MEMORY_ROUTER_URL}`, hard-timeout so it
+never blocks) with local `core/passive/*.md` lexical recall and writes the result
+to `core/active/working-set.md`, logging hits to `core/recall-events.jsonl`. It
+never edits `episodic.md`. `UserPromptSubmit` runs the same builder behind a
+worthiness gate (skips acknowledgements like "ok").
 
-On each turn end, `Stop` hook appends a 200-char snippet to `recent.md` and a
-full JSON envelope to `logs/verbose-YYYY-MM-DD.jsonl`.
+On each turn end, `Stop` hook appends a salience-tagged entry to `episodic.md`
+(via `active-writer.sh`) and a full JSON envelope to
+`logs/verbose-YYYY-MM-DD.jsonl`, and every `MEMORY_CHECKPOINT_EVERY_N_TURNS`
+(default 20) fires `reflect-nudge.sh` so the **live session** consolidates
+`episodic` -> `passive/` insights (via the `memory-consolidate` skill; no
+background model -- `claude -p` is forbidden).
 
 Before Claude Code auto-compacts context, `PreCompact` hook snapshots
-`recent.md` to `core/active/pre-compact/recent-<ts>.md`.
+`episodic.md` to `core/active/pre-compact/recent-<ts>.md`.
 
-## Memory rotation cron (optional)
+## Housekeeping cron (optional)
+
+Consolidation is **event-driven** (checkpoint every 20 turns + watchdog idle 10
+min), so there are no model crons. The only cron is optional nightly **pure-bash**
+housekeeping:
 
 ```cron
-30 4 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/rotate-passive.sh
- 0 5 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/trim-active.sh
- 0 6 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/compress-passive.sh
- 0 21 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/memory-rotate.sh
+0 3 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/decay-sweep.sh
+5 3 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/archive-roll.sh
 ```
 
-`trim-active.sh` and `compress-passive.sh` shell out to `claude --model sonnet --print`
-for smart summarization; if Sonnet is unreachable they fall back to a bash
-extraction so memory still gets pruned.
+`decay-sweep.sh` replays `recall-events.jsonl` to reinforce recalled insights and
+moves never-recalled decayed ones to `archived/superseded/`; `archive-roll.sh`
+size-rolls `episodic.md` into `archived/episodic/YYYY-MM.md`. Both are pure bash +
+Python arithmetic -- no model call, so episodic text is never summarised, only
+relocated.
 
 ## Adding more agents to the same shared brain
 
@@ -154,7 +168,7 @@ Re-run `install.sh` with a different agent name. Each agent gets its own
 2. **Inside an existing repo:** copy `templates/mcp.json.template`,
    `templates/settings.json.template`, `scripts/`, `hooks/` into the repo's
    `.claude/` directory and render placeholders manually. The hooks tolerate
-   absent files (handoff, recent.md) and won't break the harness.
+   absent files (handoff, episodic.md) and won't break the harness.
 
 Either way the wire protocol to second_brain is identical: HTTP MCP transport, Bearer
 in `Authorization` header, JSON-RPC 2.0 in the body.
@@ -163,16 +177,16 @@ in `Authorization` header, JSON-RPC 2.0 in the body.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `second_brain-memory_router-on-start.sh` logs "SECOND_BRAIN_MEMORY_ROUTER_URL or AGENT_BEARER unset" | shell didn't `source agent.env` | `source ~/.claude-lab/<agent-id>/.claude/agent.env` before `claude` |
+| `working-set-build.sh` logs "SECOND_BRAIN_MEMORY_ROUTER_URL or AGENT_BEARER unset" | shell didn't `source agent.env` | `source ~/.claude-lab/<agent-id>/.claude/agent.env` before `claude` (recall still runs file-only against `passive/`) |
 | recall returns `403` | token has no `inbox` (or relevant) scope, or wrong agent | re-issue with `issue-agent-token.py --scopes ...` |
 | recall returns empty results | second_brain DB has no notes yet | use `create_decision_note` first, or backfill from existing decisions.md |
 | `Stop` hook never fires | `settings.json` not picked up | confirm `claude --project` points at the workspace dir that contains `settings.json` |
-| `trim-active.sh` skips silently | ACTIVE < 10KB | by design; only compresses once the file grows |
+| `archive-roll.sh` skips silently | `episodic.md` < `EPISODIC_ROLL_KB` (40 KB) | by design; only rolls once the diary grows |
 
 ## Where to look next
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- end-to-end picture (memory + second_brain + hooks)
 - [HOOKS.md](HOOKS.md) -- hook contracts and patterns
-- [MEMORY.md](MEMORY.md) -- 4-layer memory rotation rules
+- [MEMORY.md](MEMORY.md) -- role-based memory (active/passive/archive) + event-driven consolidation
 - [MULTI-AGENT.md](MULTI-AGENT.md) -- multiple agents over one shared brain
 - [FIRST-AGENT.md](FIRST-AGENT.md) -- worked example of first agent setup

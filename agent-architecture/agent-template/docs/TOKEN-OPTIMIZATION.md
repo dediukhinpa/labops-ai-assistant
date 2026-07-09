@@ -104,15 +104,16 @@ Every session starts by loading these files:
 | core/AGENTS.md | 2-5 KB | 900-2,400 | On-demand (Read tool), NOT @include |
 | core/USER.md | 1-2 KB | 400-765 | Minimal |
 | core/rules.md | 2-4 KB | 900-1,935 | Only active rules |
-| core/passive/decisions.md | 1-3 KB | 450-1,400 | Auto-compressed by cron |
-| **core/active/recent.md** | **8-30 KB** | **3,600-13,500** | **#1 target for optimization** |
+| core/passive/*.md | 1-3 KB | 450-1,400 | Consolidated in-session (reflection), decayed by nightly bash |
+| core/active/working-set.md | 1-4 KB | 450-1,800 | Materialised recall, rebuilt per task (bounded) |
+| **core/active/episodic.md** | **8-30 KB** | **3,600-13,500** | Raw diary, on-demand Read (NOT @include); size-rolled to archive |
 | tools/TOOLS.md | 3-6 KB | 1,300-2,565 | On-demand (Read tool), NOT @include |
 | **TOTAL** | **22-65 KB** | **9,750-29,700** | |
 
 ### How to keep it lean
 
 1. **CLAUDE.md under 200 lines** -- Anthropic's recommendation. Move reference material to skills.
-2. **Cron scripts for ACTIVE memory** -- Without compression, ACTIVE grows to 80KB+ per day. See MEMORY.md.
+2. **Keep episodic out of context** -- `episodic.md` is the raw diary, loaded on-demand (not @include); `archive-roll.sh` size-rolls it to `archived/episodic/`. What loads is the compact `handoff.md` + `working-set.md`. See MEMORY.md.
 3. **Prune TOOLS.md** -- Remove servers/services you don't actively use.
 4. **Don't duplicate rules** -- Global `~/.claude/rules/*.md` apply to all agents. Don't repeat in per-agent rules.
 
@@ -159,7 +160,7 @@ Pattern: [thing] [action] [reason]. [next step].
 | Using Sonnet for code | Code quality suffers | Opus for code, Sonnet only for subagents |
 | Never compacting | Context pollution, quality drops | `/compact` at logical breakpoints |
 | CLAUDE.md > 200 lines | Agent ignores instructions | Extract to skills, keep core lean |
-| No cron compression | ACTIVE memory eats 70% of context | Set up cron scripts (see MEMORY.md) |
+| Loading raw episodic into context | episodic diary eats 70% of context | Load `handoff.md` + `working-set.md`, keep `episodic.md` on-demand (see MEMORY.md) |
 | Running everything in one session | Context fills up | `/clear` between unrelated tasks |
 | Not checking /cost | Surprise bills or slow responses | Check periodically |
 

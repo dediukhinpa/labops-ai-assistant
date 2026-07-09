@@ -16,8 +16,8 @@
             +-- core/AGENTS.md             <-- модели, субагенты, память
             +-- core/USER.md               <-- профиль владельца
             +-- core/rules.md              <-- границы этого агента
-            +-- core/passive/decisions.md     <-- решения за 14 дней
-            +-- core/active/recent.md         <-- журнал за 24 часа
+            +-- core/passive/*.md             <-- семантические инсайты (decisions/errors/...)
+            +-- core/active/episodic.md         <-- сырой дневник ходов (append-only)
             +-- core/MEMORY.md             <-- архив (не в контексте)
             +-- tools/TOOLS.md             <-- серверы, порты, скиллы
             +-- skills/                    <-- симлинки на shared скиллы
@@ -141,15 +141,21 @@ Claude Code загружает оба уровня. Глобальный все�
 
 ## Память (4 слоя)
 
+Тиры `active/passive/archive` означают **роль**, а не возраст.
+
 | Слой | Файл | Что хранит | Обновление |
 |------|------|-----------|------------|
 | **IDENTITY** | CLAUDE.md, AGENTS.md, USER.md | Кто ты, кто владелец | Вручную |
 | **RULES** | core/rules.md | Границы и запреты | Вручную |
-| **PASSIVE** | core/passive/decisions.md | Решения за 14 дней | Авто-ротация |
-| **ACTIVE** | core/active/handoff.md | Последние 10 записей из журнала | Авто-запись (recent.md НЕ грузится) |
-| **ARCHIVE** | core/MEMORY.md | Архив | По запросу |
+| **ACTIVE (episodic)** | core/active/episodic.md | Сырой append-only дневник ходов (salience-тег) | Stop-хук (active-writer.sh), НИКОГДА не сжимается моделью |
+| **ACTIVE (working-set)** | core/active/working-set.md | Материализованный recall под текущую задачу | working-set-build.sh (SessionStart + значимые промпты) |
+| **PASSIVE** | core/passive/*.md | Семантические инсайты (insights/decisions/errors/preferences) | Живая сессия при рефлексии (скилл memory-consolidate), событийно |
+| **ACTIVE (handoff)** | core/active/handoff.md | Последние 10 записей из журнала | Авто-запись |
+| **ARCHIVE** | core/MEMORY.md, core/archived/ | Архив (скрученный episodic, затухшие инсайты) | По запросу + ночной bash-крон (decay-sweep, archive-roll) |
 
-Правило: IDENTITY/RULES/PASSIVE/ACTIVE (handoff.md) -- всегда в контексте. recent.md и ARCHIVE -- только по запросу.
+Правило: IDENTITY/RULES/PASSIVE/ACTIVE (handoff.md + working-set.md) -- всегда в контексте. episodic.md и ARCHIVE -- только по запросу.
+
+Консолидация **событийная, не по крону**: чекпойнт каждые 20 ходов (счётчик в Stop-хуке) + простой watchdog 10 мин -> reflect-nudge.sh будит живую сессию (фоновая модель запрещена, `claude -p` под запретом). Единственный крон -- опциональная ночная чисто-bash уборка (decay-sweep 03:00, archive-roll 03:05).
 
 ---
 

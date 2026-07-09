@@ -686,7 +686,7 @@ sudo systemctl restart channel-<agent>
 
 ### Симптом
 
-После переноса плагина на новое место (или обновления через `git pull` после большого диффа) — бот стартует с нуля: не помнит предыдущие разговоры, `recent.md` пустой, история чата потеряна.
+После переноса плагина на новое место (или обновления через `git pull` после большого диффа) — бот стартует с нуля: не помнит предыдущие разговоры, `episodic.md` пустой, история чата потеряна.
 
 ### Корень
 
@@ -696,7 +696,7 @@ sudo systemctl restart channel-<agent>
 - `inbox/` — голосовые/медиа от пользователя (downloaded files)
 - `logs/permissions.jsonl` — лог permission запросов
 
-Плюс — `<workspace>/core/active/recent.md` (если memory hooks включены) — там хвост разговора.
+Плюс — `<workspace>/core/active/episodic.md` (если memory hooks включены) — там хвост разговора.
 
 При переезде эти файлы должны переехать вместе с плагином, иначе агент стартует с пустой памятью.
 
@@ -719,7 +719,7 @@ sudo tar czf /var/backups/<agent>-pre-migration-$(date +%Y%m%d).tgz \
 ```bash
 # 2. Перед стартом — verify state есть на месте
 ls -la $TELEGRAM_STATE_DIR/{bot.pid,config.json,inbox,logs}
-ls -la <workspace>/core/active/recent.md
+ls -la <workspace>/core/active/episodic.md
 
 # Только если оба есть — start
 sudo systemctl start channel-<agent>
@@ -743,7 +743,7 @@ sudo systemctl start channel-<agent>
 
 Claude Code читает **project settings** (`<project>/.claude/settings.json`) относительно **cwd сессии**, а не относительно workspace-каталога агента. Сервис плагина обычно стартует с `WorkingDirectory=<...>/labops-tg-plugin/plugin` — значит «project» для живой сессии это **репозиторий плагина**, а не `~/.claude-lab/<agent>/`.
 
-Если хук зарегистрировать в `~/.claude-lab/<agent>/.claude/settings.json`, ошибочно считая это «project settings» сессии, — живая сессия этот файл **не читает**, и хук не выполняется. Диагностический признак: **ни один** Stop-хук из этого settings не отрабатывает — `core/active/handoff.md` и `recent.md` не обновляются, heartbeat-файл пустой/старый.
+Если хук зарегистрировать в `~/.claude-lab/<agent>/.claude/settings.json`, ошибочно считая это «project settings» сессии, — живая сессия этот файл **не читает**, и хук не выполняется. Диагностический признак: **ни один** Stop-хук из этого settings не отрабатывает — `core/active/handoff.md` и `episodic.md` не обновляются, heartbeat-файл пустой/старый.
 
 Реальный инцидент (2026-05-29): read-receipt хук положили в workspace-settings; сессия стартует из `labops-tg-plugin/plugin` → читает только глобальный `~/.claude/settings.json` → 👀 пропали полностью.
 

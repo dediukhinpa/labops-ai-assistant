@@ -1,10 +1,18 @@
 # Memory redesign — active / passive / archive (maximal variant)
 
-> Status: **PLAN** (not yet implemented). Scope: `agent-architecture` layer of the
-> `labops-ai-assistant` monorepo (+ one file in `tg-plugin`). `second_brain` is
+> Status: **IMPLEMENTED** (phases 1–7). Scope: `agent-architecture` layer of the
+> `labops-ai-assistant` monorepo (+ the tg-plugin turn writer). `second_brain` is
 > **not** redesigned — only used via existing MCP tools and the fixed
-> `SECONDBRAIN_WRITE_RULES.md`. Live agents are not migrated; we change the
-> `agent-template` scaffold and docs.
+> `SECONDBRAIN_WRITE_RULES.md`. Live agents are not migrated; the change lands in
+> the `agent-template` scaffold, orchestration, skills, and docs.
+>
+> Shipped: tier rename `hot/warm/cold → active/passive/archive`; `active-writer.sh`
+> (episodic + salience); `working-set-build.sh` (non-blocking fused recall) +
+> `recall-events.jsonl`; `reflect-nudge.sh` + `memory-consolidate` skill (in-session
+> reflection, no `claude -p`); `decay-sweep.sh` + `archive-roll.sh` (pure-bash
+> housekeeping, replacing the 4 model crons); watchdog idle trigger + Stop-hook
+> checkpoint counter + `user-prompt-submit-hook.sh`. Verified by 48 bash unit tests
+> + the tg-plugin memory suite.
 
 Заменяет старую возрастную ротацию `hot → warm → cold` (4 модельных крона) на
 событийную модель памяти по **ценности**, с разделением на *эпизодическую* и

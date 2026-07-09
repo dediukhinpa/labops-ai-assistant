@@ -446,7 +446,7 @@ launchd, плагин и Claude Code пишут в три разных мест�
 | **`permissions.jsonl`** (журнал allowlist-решений) | `${TELEGRAM_STATE_DIR}/logs/permissions.jsonl` | `tail -50 ~/.claude-lab/shared/state/myagent/telegram/logs/permissions.jsonl` |
 | Tmux pane history (живой terminal Claude Code) | tmux session `channel-<agent>` | `tmux capture-pane -p -t channel-myagent -S -200` |
 | Tmux attach (интерактивно) | tmux session | `tmux attach -t channel-myagent` (detach Ctrl-B D) |
-| Workspace memory (если memory hooks включены) | `<workspace>/core/active/recent.md` + `<workspace>/../logs/verbose-YYYY-MM-DD.jsonl` | `tail -100 ~/.claude-lab/myagent/.claude/core/active/recent.md` |
+| Workspace memory (если memory hooks включены) | `<workspace>/core/active/episodic.md` + `<workspace>/../logs/verbose-YYYY-MM-DD.jsonl` | `tail -100 ~/.claude-lab/myagent/.claude/core/active/episodic.md` |
 
 `TELEGRAM_STATE_DIR` определяется в `channel.env` (Шаг 5). Если не задан — плагин падает на дефолт `/tmp/labops-channel-state/<agent>/`, который **зачищается при reboot** — в production задавайте явно (рекомендуется `~/.claude-lab/shared/state/<agent>/telegram/`).
 

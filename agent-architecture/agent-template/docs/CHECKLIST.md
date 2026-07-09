@@ -8,6 +8,7 @@
 AGENT_NAME="jarvis"  # ← replace with your agent name
 
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/{passive,active}
+mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/archived/{episodic,superseded}
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/tools
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/agents
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/scripts
@@ -16,8 +17,9 @@ mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/scripts
 ln -s ~/.claude-lab/shared/skills ~/.claude-lab/${AGENT_NAME}/.claude/skills
 
 # Initialize memory files with headers
+echo "# PASSIVE -- semantic insights" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/insights.md
 echo "# PASSIVE DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/decisions.md
-echo "# Active memory -- last 24h rolling journal" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/recent.md
+echo "# Active memory -- raw append-only episodic diary" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/episodic.md
 echo "# MEMORY -- Archive Archive" > ~/.claude-lab/${AGENT_NAME}/.claude/core/MEMORY.md
 echo "# LEARNINGS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/LEARNINGS.md
 ```
@@ -89,19 +91,21 @@ SECOND_BRAIN_BEARER=$(cat ~/.claude-lab/shared/secrets/second_brain.key)
 # Just ensure the key file exists
 ```
 
-## 7. Setup Cron Jobs
+## 7. Setup Housekeeping Cron (optional)
+
+Consolidation is **event-driven**, not cron: reflection is nudged in-session by
+checkpoint (every 20 turns) and watchdog idle (10 min) -- no model crons. The only
+cron is optional nightly **pure-bash** housekeeping (no model):
 
 ```bash
-# Order matters! rotate-passive first, then trim-active, then compress-passive
-30 4 * * * /path/to/scripts/rotate-passive.sh      # 04:30 -- move PASSIVE >14d to ARCHIVE
-0 5 * * * /path/to/scripts/trim-active.sh           # 05:00 -- compress ACTIVE >24h -> PASSIVE (Sonnet)
-0 6 * * * /path/to/scripts/compress-passive.sh      # 06:00 -- re-compress PASSIVE >10KB (Sonnet)
-0 21 * * * /path/to/scripts/memory-rotate.sh     # 21:00 -- archive ARCHIVE >5KB
+0 3 * * * /path/to/scripts/decay-sweep.sh      # 03:00 -- reinforce + decay passive/ -> archived/superseded/
+5 3 * * * /path/to/scripts/archive-roll.sh     # 03:05 -- size-roll episodic.md -> archived/episodic/YYYY-MM.md
 ```
 
 ## 8. Test
 
 1. Send message to Telegram bot
 2. Verify response arrives
-3. Check `core/active/recent.md` has the entry
-4. Verify other agent can message via inbox
+3. Check `core/active/episodic.md` has the salience-tagged entry
+4. Check `core/active/working-set.md` was rebuilt on session start (recall)
+5. Verify other agent can message via inbox

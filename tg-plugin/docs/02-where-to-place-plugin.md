@@ -43,7 +43,7 @@ Workspace агента — это каталог на диске, в котор�
 │   ├── USER.md
 │   ├── rules.md
 │   ├── active/
-│   │   ├── recent.md
+│   │   ├── episodic.md
 │   │   └── handoff.md
 │   ├── passive/
 │   │   └── decisions.md

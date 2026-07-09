@@ -165,7 +165,7 @@ describe('appendActiveEntry', () => {
     }
     expect(firstEntryIdx).toBeGreaterThanOrEqual(0)
     // Header is preserved at the top — ASCII `--`, byte-parity with
-    // gateway.py:1973 + scripts/trim-active.sh. NOT em-dash (review HIGH).
+    // gateway.py:1973 + active-writer.sh. NOT em-dash (review HIGH).
     expect(text.startsWith('# Active memory -- last 24h rolling journal\n\n')).toBe(true)
     // Exact-byte check on the first 42 bytes (length of the header).
     const headerLiteral = '# Active memory -- last 24h rolling journal\n\n'

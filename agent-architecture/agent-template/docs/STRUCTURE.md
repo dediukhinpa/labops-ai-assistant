@@ -45,11 +45,19 @@
     │       │   ├── AGENTS.md          models, subagents config
     │       │   ├── USER.md            operator profile
     │       │   ├── rules.md           boundaries, permissions
-    │       │   ├── passive/
-    │       │   │   └── decisions.md   rolling 14 days
+    │       │   ├── passive/          semantic insights (consolidated)
+    │       │   │   ├── insights.md    reflection insights (YAML frontmatter)
+    │       │   │   ├── decisions.md   architectural/operational decisions
+    │       │   │   ├── errors.md      error patterns
+    │       │   │   └── preferences.md operator preferences
     │       │   ├── active/
-    │       │   │   ├── recent.md      rolling 24 hours (full journal)
+    │       │   │   ├── episodic.md      raw append-only diary of turns
+    │       │   │   ├── working-set.md   materialised recall for current task (rebuilt)
     │       │   │   └── handoff.md    compact extract (last 10 entries, @include)
+    │       │   ├── archived/
+    │       │   │   ├── episodic/YYYY-MM.md  size-rolled episodic slices
+    │       │   │   └── superseded/    decayed insights
+    │       │   ├── recall-events.jsonl  recall log (reinforcement signal)
     │       │   ├── MEMORY.md          ARCHIVE archive
     │       │   └── LEARNINGS.md       lessons from mistakes
     │       │
@@ -59,10 +67,11 @@
     │       ├── skills/ → ../../shared/skills (symlink)
     │       ├── agents/                subagent .md definitions
     │       └── scripts/
-    │           ├── trim-active.sh        cron: compress ACTIVE >24h
-    │           ├── compress-passive.sh   cron: compress PASSIVE >10KB
-    │           ├── rotate-passive.sh     cron: move PASSIVE >14d to ARCHIVE
-    │           └── memory-rotate.sh   cron: archive ARCHIVE >5KB
+    │           ├── active-writer.sh      Stop hook: append salience-tagged episodic entry
+    │           ├── working-set-build.sh  recall -> working-set.md (second_brain + passive/)
+    │           ├── reflect-nudge.sh      nudge live session to consolidate (no model in bg)
+    │           ├── decay-sweep.sh        nightly bash: decay passive/ -> archived/superseded/
+    │           └── archive-roll.sh       nightly bash: size-roll episodic -> archived/episodic/
     │
     └── jarvis/                        WORKSPACE: Agent 2 (example name)
         └── .claude/
@@ -83,7 +92,7 @@
 | CLAUDE.md (SOUL) | ~/.claude/CLAUDE.md (global) |
 | rules.md (boundaries) | ~/.claude/rules/*.md |
 | TOOLS.md (servers) | shared/skills/ |
-| ACTIVE recent.md (journal) | shared/gateway/ |
+| ACTIVE episodic.md (journal) | shared/gateway/ |
 | PASSIVE decisions.md | shared/secrets/ |
 | ARCHIVE MEMORY.md | second_brain (namespaced) |
 | Subagents | |

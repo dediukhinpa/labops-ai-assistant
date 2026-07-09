@@ -282,16 +282,16 @@ Replace `npx prettier --write` with your formatter: `black` (Python), `gofmt` (G
 
 Creates atomic commits after each Claude response. Combine with `claude -w feature-branch` (worktrees) for isolated auto-committed feature branches.
 
-### Sync session to second_brain on Stop
+### Rebuild recall working-set on session start
 
 ```json
 {
   "hooks": {
-    "Stop": [{
+    "SessionStart": [{
       "matcher": "",
       "hooks": [{
         "type": "command",
-        "command": "bash scripts/second_brain-memory_router-on-start.sh >> /tmp/second_brain-memory_router-on-start.log 2>&1 &",
+        "command": "bash scripts/working-set-build.sh >> /tmp/working-set.log 2>&1 &",
         "timeout": 10
       }]
     }]
@@ -299,7 +299,7 @@ Creates atomic commits after each Claude response. Combine with `claude -w featu
 }
 ```
 
-Uploads ACTIVE+PASSIVE memory to second_brain for semantic search across sessions. The script (`second_brain-memory_router-on-start.sh`) uses `temp_upload` + `add_resource` to create indexed resources at `second_brain://notes/{agent}-sessions/{date}`. Runs in background (`&`) so it doesn't block the session exit. Combine with a daily cron (`30 6 * * *`) for redundancy. See MEMORY.md for full details.
+Rebuilds `core/active/working-set.md` -- the materialised recall for the current task. It fuses shared second_brain recall (RRF over embeddings, hard-timeout so it never blocks) with local `core/passive/*.md` lexical recall, and logs every hit to `core/recall-events.jsonl` (the reinforcement signal). Recall is a *view*, never an edit of `episodic.md`. Wire the same script on `UserPromptSubmit` behind a worthiness gate so it also refreshes on substantive prompts. Persisting insights back to `passive/` is done by the **live session** during reflection (nudged by `reflect-nudge.sh`), never a background model -- `claude -p` is forbidden repo-wide. See MEMORY.md for full details.
 
 ### Inject context on session start
 
@@ -386,7 +386,7 @@ These hooks form the production memory and safety pipeline for agents running vi
 | Hook | Purpose |
 |------|---------|
 | **auto-capture.mjs** | Captures incremental conversation content to second_brain for semantic indexing. Runs on every response completion — builds the agent's long-term memory automatically. |
-| **write-handoff.sh** | Generates deterministic `handoff.md` from `recent.md` — extracts last 10 entries, active topics, modified files, and pending messages. Next session starts where this one left off. |
+| **write-handoff.sh** | Generates deterministic `handoff.md` from `episodic.md` — extracts last 10 entries, active topics, modified files, and pending messages. Next session starts where this one left off. |
 | **close-heartbeat.sh** | Updates agent status to `offline`. Coordinator uses this to know which agents are available. |
 
 ### Production settings.json

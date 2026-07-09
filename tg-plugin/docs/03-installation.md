@@ -102,7 +102,7 @@ Welcome-промты Claude Code (external imports + `--dangerously-load-develop
 | **Supervisor stderr/stdout** | `journalctl -u channel-<agent>` (или `journalctl -u labops-channel-<agent>` если такой alias) | `~/Library/Logs/labops-plugin/channel-<agent>.out.log` + `.err.log` |
 | **Plugin state dir** (`TELEGRAM_STATE_DIR`, default `/tmp/labops-channel-state/<agent>/`) | `bot.pid`, `access.json`, `update-offset`, `dead-letter/`, `permissions.jsonl` | то же |
 | **Tmux pane history** | `tmux capture-pane -p -t channel-<agent>` (под service-user) | `tmux capture-pane -p -t channel-<agent>` |
-| **Workspace memory** (если включены memory hooks) | `<workspace>/core/active/recent.md` + `<workspace>/../logs/verbose-YYYY-MM-DD.jsonl` | то же |
+| **Workspace memory** (если включены memory hooks) | `<workspace>/core/active/episodic.md` + `<workspace>/../logs/verbose-YYYY-MM-DD.jsonl` | то же |
 
 `TELEGRAM_STATE_DIR` определяется в `channel.env` (рекомендуется `<shared>/state/<agent>/telegram/`). Если не задан — плагин падает на дефолт `/tmp/labops-channel-state/`, который зачищается при reboot — **в production задавайте явно**.
 

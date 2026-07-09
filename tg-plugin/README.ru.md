@@ -113,7 +113,7 @@ cd <your-workspace>/.claude/labops-tg-plugin
 | **Permission-prompt** | подтверждение опасных действий (sudo и т.п.) кнопками | `channel/permissions.ts` |
 | **Зеркало прогресса** | живой статус «что агент делает сейчас» (фильтр terminal/tmux) | `status/`, `status/tmux-mirror.ts` |
 | **Multichat** | один сервер обслуживает несколько чатов/тредов | `router/multichat-router.ts` |
-| **Память хода** | запись turn'ов в `active/recent.md` + verbose-jsonl (опционально) | `memory/` |
+| **Память хода** | запись turn'ов в `active/episodic.md` + verbose-jsonl (опционально) | `memory/` |
 | **HTML-фильтр** | безопасная конвертация терминального вывода в Telegram-HTML | `safety/html-validator.ts`, `format/html.ts` |
 | **Rate-limit & redact** | соблюдение лимитов Telegram API, маскирование секретов | `safety/rate-limited-telegram-api.ts`, `safety/redact.ts` |
 
@@ -233,7 +233,7 @@ sequenceDiagram
 | `AGENT_ID` | идентификатор агента (маршрутизация в multi-agent + логи) |
 | `TELEGRAM_STATE_DIR` | state агента: `bot.pid`, `config.json`, inbox, логи (изолируйте на агента) |
 | `TELEGRAM_WEBHOOK_HOST` / `_PORT` | локальный хост/порт для Claude hooks (по агенту — свой порт, `6000+`) |
-| `TELEGRAM_MEMORY_ENABLED` | писать turn'ы в `active/recent.md` + verbose-jsonl |
+| `TELEGRAM_MEMORY_ENABLED` | писать turn'ы в `active/episodic.md` + verbose-jsonl |
 | `TELEGRAM_MEMORY_WORKSPACE` / `_AGENT_LABEL` / `_SOURCE_TAG` | параметры записи памяти хода |
 
 ### Команды

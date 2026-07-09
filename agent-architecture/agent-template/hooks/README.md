@@ -11,9 +11,10 @@ so the harness is never stalled.
 
 | File | Hook event | Purpose |
 |---|---|---|
-| `session-start-hook.sh` | `SessionStart` | Log session start; optionally call `scripts/second_brain-memory_router-on-start.sh` to pull top-N relevant items from shared second_brain into `core/active/recent.md`. |
-| `stop-hook.sh` | `Stop` (end of each turn) | Append a 200-char snippet to `core/active/recent.md`; append a verbose JSON line to `logs/verbose-YYYY-MM-DD.jsonl` (full payload, for replay). |
-| `precompact-hook.sh` | `PreCompact` | Snapshot `core/active/recent.md` to `core/active/pre-compact/recent-<ts>.md`; keep newest `KEEP_SNAPSHOTS` (default 10). |
+| `session-start-hook.sh` | `SessionStart` | Log session start; rebuild `core/active/working-set.md` via `scripts/working-set-build.sh` -- fuses shared second_brain recall (if creds present) with local `passive/` lexical recall. Never edits `episodic.md`. |
+| `user-prompt-submit-hook.sh` | `UserPromptSubmit` | Proactive recall: a pure-bash worthiness gate drops acknowledgements ("ok"/"спасибо"); for substantive prompts it rebuilds `core/active/working-set.md` keyed on the prompt, in the background (working-set-build self-caps with a hard timeout). |
+| `stop-hook.sh` | `Stop` (end of each turn) | Append a salience-tagged episodic entry to `core/active/episodic.md` (via `scripts/active-writer.sh`) + a verbose JSON line to `logs/verbose-YYYY-MM-DD.jsonl`; increment the turn counter and, every `MEMORY_CHECKPOINT_EVERY_N_TURNS` (default 20), fire `scripts/reflect-nudge.sh --reason checkpoint`. |
+| `precompact-hook.sh` | `PreCompact` | Snapshot `core/active/episodic.md` to `core/active/pre-compact/recent-<ts>.md`; keep newest `KEEP_SNAPSHOTS` (default 10). |
 
 ## Environment
 
@@ -23,10 +24,13 @@ Hooks read these env vars (all optional):
 |---|---|---|
 | `AGENT_WORKSPACE` | all | derived from script path (`hooks/..`) |
 | `AGENT_ID` | all | derived from workspace parent dir |
-| `MCP_HOST` | session-start | host/IP only (no protocol/port); used to derive `SECOND_BRAIN_*_URL` defaults; unset -> skip recall |
-| `SECOND_BRAIN_MEMORY_ROUTER_URL` | session-start | full URL to memory_router `/mcp` (default `http://${MCP_HOST}:5002/mcp`); unset -> skip recall |
-| `AGENT_BEARER` | session-start | unset -> skip recall |
-| `RECALL_LIMIT` | session-start (-> recall script) | 5 |
+| `MCP_HOST` | session-start / user-prompt-submit | host/IP only (no protocol/port); used to derive `SECOND_BRAIN_*_URL` defaults; unset -> shared recall skipped, local `passive/` recall still runs |
+| `SECOND_BRAIN_MEMORY_ROUTER_URL` | working-set-build | full URL to memory_router `/mcp` (default `http://${MCP_HOST}:5002/mcp`); unset -> shared half skipped |
+| `AGENT_BEARER` | working-set-build / reflect-nudge | unset -> shared half skipped (file-only recall) |
+| `RECALL_LIMIT` | working-set-build | 5 |
+| `RECALL_TIMEOUT_MS` | working-set-build | 1000 (hard timeout; skip-on-timeout, non-blocking) |
+| `RECALL_MIN_OVERLAP` | working-set-build | 2 (local lexical-fallback keyword overlap) |
+| `MEMORY_CHECKPOINT_EVERY_N_TURNS` | stop | 20 (turns between checkpoint reflect-nudges) |
 | `KEEP_SNAPSHOTS` | precompact | 10 |
 
 `install.sh` writes `MCP_HOST`, the three `SECOND_BRAIN_*_URL` vars, and

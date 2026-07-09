@@ -1,4 +1,8 @@
-# Memory System — 4 Layers
+# Memory System — active / passive / archive (role, not age)
+
+`active` / `passive` / `archive` name a **role**, not an age. Consolidation is
+**event-driven**, done by the live session (no background model -- `claude -p` is
+forbidden repo-wide). The only cron is optional nightly pure-bash housekeeping.
 
 ## Overview
 
@@ -8,16 +12,17 @@
 │  CLAUDE.md + AGENTS + USER + rules        │
 │  Always in context                        │
 ├──────────────────────────────────────────┤
-│  PASSIVE (rolling 14 days)                   │
-│  core/passive/decisions.md                   │
-│  Always in context, auto-rotate to ARCHIVE   │
+│  ACTIVE (current-task working memory)        │
+│  active/episodic.md  raw diary (on-demand)   │
+│  active/working-set.md  recall (in context)  │
+│  active/handoff.md   last 10 (in context)    │
 ├──────────────────────────────────────────┤
-│  ACTIVE (handoff at startup)                │
-│  core/active/handoff.md (last 10 entries)    │
-│  In context; recent.md NOT loaded         │
+│  PASSIVE (semantic insights)                 │
+│  passive/insights|decisions|errors|prefs.md  │
+│  Always in context; written in-session       │
 ├──────────────────────────────────────────┤
-│  ARCHIVE (archive, grows)                   │
-│  MEMORY.md, LEARNINGS.md                  │
+│  ARCHIVE (cold storage, grows)              │
+│  MEMORY.md, LEARNINGS.md, archived/       │
 │  NOT in context, Read tool on demand      │
 ├──────────────────────────────────────────┤
 │  L4 SEMANTIC (second_brain)                │
@@ -38,46 +43,49 @@
 | rules.md | Boundaries, permissions | Manual only |
 | TOOLS.md | Servers, Docker, services | Manual only |
 
-### PASSIVE (rolling 14 days)
+### ACTIVE (current-task working memory)
 
-- File: `core/passive/decisions.md`
-- Contains: architectural and operational decisions
-- Rotation: entries older than 14 days move to ARCHIVE (MEMORY.md)
-- Always in context via @include
+- Files: `core/active/episodic.md`, `core/active/working-set.md`, `core/active/handoff.md`
+- **episodic.md** — raw, append-only diary of turns, salience-tagged. Written by `active-writer.sh` (Stop hook). **Never model-compressed**; only size-rolled to `archived/episodic/`. On-demand Read (NOT loaded at startup).
+- **working-set.md** — materialised recall for the current task, rebuilt by `working-set-build.sh` (SessionStart + worthy prompts). Loaded via @include.
+- **handoff.md** — compact extract (last 10 entries) for continuity. Loaded via @include.
+- WARNING: episodic.md grows to 80KB+ but is never in context; `archive-roll.sh` size-rolls it.
 
-### ACTIVE (rolling 24 hours)
-
-- File: `core/active/recent.md`
-- Contains: conversation journal (every message + response)
-- Written by: Gateway process (auto-write after each interaction)
-- Trim: cron job removes entries older than 24h
-- Always in context via @include
-- WARNING: without cron, can grow to 80KB+ before trimming. After cron runs, typical size is 8-30 KB
-
-### ACTIVE Format
+### ACTIVE episodic Format
 
 ```markdown
-### 2026-04-08 15:03 [own_voice]
+### 2026-04-08 15:03 [own_voice] [preference]
 **Operator:** (transcription of voice message)
-**Agent:** (compressed response summary)
+**Agent:** (response summary)
 
-### 2026-04-08 15:10 [own_text]
+### 2026-04-08 15:10 [own_text] [decision]
 **Operator:** text message here
 **Agent:** response summary here
 ```
 
-### ARCHIVE (archive)
+Salience classes: `ephemeral` | `error` | `decision` | `preference` | `fact`.
 
-- Files: `MEMORY.md`, `LEARNINGS.md`, `archived/`
+### PASSIVE (semantic insights)
+
+- Files: `core/passive/insights.md`, `decisions.md`, `errors.md`, `preferences.md`
+- Contains: consolidated SEMANTIC insights ("what I understood"), not raw events
+- Written by: the **live session** during reflection (via the `memory-consolidate` skill), never a background model
+- Each insight carries YAML frontmatter: `id`, `created`, `last_recalled`, `recall_count`, `half_life_days`, `salience`, `provenance`
+- Decay: `decay-sweep.sh` (nightly bash) evicts never-recalled decayed insights to `archived/superseded/`
+- Always in context via @include
+
+### ARCHIVE (cold storage)
+
+- Files: `MEMORY.md`, `LEARNINGS.md`, `archived/episodic/`, `archived/superseded/`
 - NOT loaded at startup
 - Accessed via Read tool when needed
-- Grows indefinitely
+- Grows indefinitely; `archived/episodic/` = size-rolled diary, `archived/superseded/` = decayed insights
 
 ### L4 Semantic ([second_brain](https://github.com/volcengine/second_brain))
 
 - Endpoints: `${SECOND_BRAIN_MEMORY_URL}` (write, default port 5001), `${SECOND_BRAIN_MEMORY_ROUTER_URL}` (recall, default port 5002), `${SECOND_BRAIN_AGENT_ROUTER_URL}` (swarm, default port 5000)
 - NOT loaded at startup
-- Accessed via curl when old context needed (>24h)
+- Accessed via curl (recall) when older context is needed
 - Each agent has own namespace (User header)
 - Search: `POST ${SECOND_BRAIN_MEMORY_ROUTER_URL}` (JSON-RPC tools/call recall)
 - Stores embeddings of past conversations
@@ -85,42 +93,40 @@
 
 ## Memory Operations (Flush, Compaction, Rotation)
 
-### ACTIVE write (every message)
+### ACTIVE episodic write (every turn)
 
-Gateway calls `append_to_hot_memory()` after **every** interaction:
+`active-writer.sh` (Stop hook) appends one salience-tagged entry after **every**
+turn; the gateway may also append for gateway-driven turns:
 
 ```
-User sends message -> Claude responds -> append to core/active/recent.md
+User sends message -> Claude responds -> Stop hook -> append to core/active/episodic.md
 ```
 
-- Format: `### YYYY-MM-DD HH:MM [source_tag]` + user snippet (200 chars) + agent snippet (200 chars)
-- File locking: `fcntl.LOCK_EX` prevents interleaved writes from concurrent handlers
+- Format: `### YYYY-MM-DD HH:MM [source_tag] [salience]` + user snippet (200 chars) + agent snippet (200 chars)
+- Salience via pure-bash heuristic (no model): `ephemeral | error | decision | preference | fact`
+- File locking prevents interleaved writes from concurrent handlers
 - Source tags: `own_text`, `own_voice`, `forwarded`, `external_media`
+- **Append-only:** episodic is never model-compressed; it is the source of truth
 
-### Emergency trim (automatic, on write)
+### Size-roll (archive-roll.sh, not a trim)
 
-If `recent.md` exceeds **20 KB** after a write:
-
-```
-active file > 20KB → keep last 600 lines (~150 entries) → find first ### header → rewrite
-```
-
-- Trigger: checked on every `append_to_hot_memory()` call
-- Keeps: last 600 lines (entries are 4 lines each = ~150 entries = ~2-3 days)
-- Trims from the top, preserving entry boundaries (finds first `### ` header)
+Episodic is not truncated in place — it is **relocated**, so nothing is lost. When
+`episodic.md` exceeds `EPISODIC_ROLL_KB` (default **40 KB**), `archive-roll.sh`
+(nightly bash) moves the OLDER entries to `archived/episodic/YYYY-MM.md` and keeps
+the recent tail, preserving entry boundaries (first `### ` header).
 
 ### /compact command (manual)
 
 Operator sends `/compact` in Telegram:
 
 ```
-1. Read core/active/recent.md
+1. Read core/active/episodic.md
 2. Extract key facts from last 24h (decisions, preferences, pending actions)
 3. ADD extracted facts to beginning of core/passive/decisions.md as:
    ## YYYY-MM-DD
    - fact 1
    - fact 2
-4. Trim active/recent.md: keep last 24h only
+4. Trim active/episodic.md: keep last 24h only
 ```
 
 - Model: Sonnet (cheaper, fast enough for extraction)
@@ -143,142 +149,100 @@ Operator sends `/reset` in Telegram:
 - Model: Sonnet (for the save step)
 - After reset, first message injects latest MEMORY.md section as context bridge
 
-### PASSIVE -> ARCHIVE rotation (rotate-passive.sh, cron 04:30 UTC)
+### Reflection: ACTIVE episodic -> PASSIVE insights (event-driven, no cron)
 
-Entries older than 14 days in `core/passive/decisions.md` move to `core/MEMORY.md`.
+Consolidation is NOT a cron job and uses NO background model (`claude -p` is
+forbidden repo-wide). Instead `reflect-nudge.sh` asks the **live session** to
+reflect; the session runs the `memory-consolidate` skill, reads `episodic.md`, and
+writes synthesised insights to `passive/*.md` (dual-writing important knowledge to
+second_brain).
 
-```
-# Cron: daily at 04:30 UTC (runs BEFORE trim-active adds new entries to PASSIVE)
-30 4 * * * /path/to/rotate-passive.sh
-```
+Triggers:
+1. **Checkpoint** — every `MEMORY_CHECKPOINT_EVERY_N_TURNS` (default **20**) turns; the Stop hook counts turns and fires `reflect-nudge.sh --reason checkpoint`.
+2. **Idle** — `watchdog.sh` detects **10 min** of silence (`MEMORY_IDLE_CONSOLIDATE_MIN`) and fires `reflect-nudge.sh --reason idle`.
 
-Script logic (pure bash, no model):
-1. Parse `## YYYY-MM-DD` headers in `decisions.md`
-2. Sections older than 14 days -- append to `MEMORY.md`
-3. Remove from `decisions.md`
+Reflection is **synthesis of new knowledge**, not text compression. `episodic.md`
+itself is never rewritten by a model — it is the append-only source of truth.
 
-### ACTIVE -> PASSIVE compression (trim-active.sh, cron 05:00 UTC)
+### Recall: build the working-set (working-set-build.sh)
 
-Entries older than 24h are collected and sent to **Sonnet** for smart summarization, then appended to PASSIVE.
+`working-set-build.sh` materialises `active/working-set.md` for the current task.
+It fuses two sources and never edits `episodic.md`:
+1. **Shared brain** — second_brain `memory_router recall` (RRF over embeddings). Non-blocking: a hard timeout (`RECALL_TIMEOUT_MS`, default **1000** ms) skips the shared half rather than delaying the session.
+2. **Local passive** — lexical keyword-overlap over `core/passive/*.md` (`RECALL_MIN_OVERLAP`, default **2**), the file-only fallback when the brain is unreachable.
 
-```
-# Cron: daily at 05:00 UTC
-0 5 * * * /path/to/trim-active.sh
-```
+Every hit is appended to `core/recall-events.jsonl` — the reinforcement signal that
+`decay-sweep.sh` replays. Runs on SessionStart and on substantive prompts
+(UserPromptSubmit, behind a worthiness gate).
 
-How it works:
-1. If ACTIVE (`recent.md`) is under 10 KB -- skip entirely
-2. Acquire `flock` on ACTIVE file (prevents conflicts with gateway writes)
-3. Collect all entries with timestamps older than 24h
-4. If more than 40 entries remain after removing old ones -- also collect the oldest entries
-5. Send collected entries to **Sonnet** with prompt: extract key facts as `- YYYY-MM-DD HH:MM: fact/decision/result`
-6. Append Sonnet output to `core/passive/decisions.md`
-7. Rewrite `recent.md` with remaining (recent) entries only
+### Decay / reinforcement (decay-sweep.sh, nightly bash)
 
-Key details:
-- Runs from `/tmp` working directory to avoid loading project CLAUDE.md (saves ~35K tokens per run)
-- **Bash fallback:** if Sonnet is unavailable (rate limit, timeout), falls back to extracting first 120 characters of each entry
-- Uses `flock` for safe concurrent access with gateway process
+Each insight in `passive/` has YAML frontmatter. `decay-sweep.sh` (pure bash +
+Python arithmetic, no model):
+1. **Reinforce** — replays `recall-events.jsonl`: a recalled insight gets `recall_count++`, `half_life_days *= 1.5` (capped), `last_recalled` bumped.
+2. **Decay** — `score = 2^(-age_days / half_life_days)`; an insight scoring below `DECAY_ARCHIVE_THRESHOLD` (default **0.25**) that was **never** recalled moves to `archived/superseded/`.
 
-### PASSIVE compression (compress-passive.sh, cron 06:00 UTC)
+Base `half_life_days` default **14** (`DECAY_HALF_LIFE_DAYS`).
 
-After trim-active.sh adds new entries to PASSIVE daily, PASSIVE can grow large with raw per-entry facts. compress-passive.sh uses **Sonnet** to re-compress PASSIVE by grouping related events into topic-based key facts.
+### Episodic size-roll (archive-roll.sh, nightly bash)
 
-```
-# Cron: daily at 06:00 UTC (runs AFTER trim-active adds new entries)
-0 6 * * * /path/to/compress-passive.sh
-```
+When `episodic.md` exceeds `EPISODIC_ROLL_KB` (default **40** KB), `archive-roll.sh`
+moves the OLDER entries to `archived/episodic/YYYY-MM.md` and keeps the recent tail
+in place. Episodic text is **relocated, never summarised or lost** — pure bash, no
+model.
 
-How it works:
-1. If PASSIVE (`decisions.md`) is under 10 KB or under 50 lines -- skip
-2. Send full PASSIVE content to Sonnet: "group related events into topic-based key facts"
-3. If Sonnet returns fewer than 3 lines -- skip (garbage protection)
-4. Replace PASSIVE content with compressed output
-5. Typical result: 110 raw entries -- 15-20 key facts
+### Recommended cron schedule (optional, pure bash, no model)
 
-Safety:
-- **Sonnet unavailable** (rate limit, timeout) -- skip, retry next run
-- **Sonnet returns < 3 lines** -- skip, do not overwrite (garbage protection)
-- Original content is backed up before overwrite
-
-### ARCHIVE archival (memory-rotate.sh, cron 21:00 UTC)
-
-When ARCHIVE (`MEMORY.md`) exceeds 5 KB, older content is moved to monthly archives.
-
-```
-# Cron: daily at 21:00 UTC
-0 21 * * * /path/to/memory-rotate.sh
-```
-
-Script logic (pure bash, no model):
-1. If `MEMORY.md` is under 5 KB -- skip
-2. Move content to `archived/YYYY-MM.md` (grouped by month)
-3. Keep only recent entries in `MEMORY.md`
-
-### Recommended cron schedule
+Consolidation needs no cron (it is event-driven). The only cron is optional nightly
+housekeeping:
 
 ```crontab
-# 1. Rotate PASSIVE: move >14d entries to ARCHIVE (bash, no model)
-30 4 * * * /path/to/rotate-passive.sh
+# 1. Decay sweep: reinforce recalled insights, evict decayed ones -> archived/superseded/
+0 3 * * * /path/to/decay-sweep.sh
 
-# 2. Trim ACTIVE: entries >24h -> Sonnet summary -> PASSIVE
-0 5 * * * /path/to/trim-active.sh
-
-# 3. Compress PASSIVE: Sonnet re-compression by topic (>10KB only)
-0 6 * * * /path/to/compress-passive.sh
-
-# 4. Sync to second_brain: ACTIVE+PASSIVE -> semantic search (bash + curl)
-30 6 * * * /path/to/second_brain-memory_router-on-start.sh
-
-# 5. Archive ARCHIVE: MEMORY.md >5KB -> archived/YYYY-MM.md (bash)
-0 21 * * * /path/to/memory-rotate.sh
+# 2. Archive roll: size-roll episodic.md -> archived/episodic/YYYY-MM.md
+5 3 * * * /path/to/archive-roll.sh
 ```
 
-Order matters: rotate-passive first (clears old PASSIVE entries), then trim-active (adds new entries to PASSIVE), then compress-passive (re-compresses if PASSIVE grew too large), then second_brain-memory_router-on-start (uploads compressed state to second_brain).
+Was **4 model crons** (the old age-based hot→warm→cold compression/rotation jobs)
+→ now **0 model crons + 1 optional bash housekeeping cron**; all model work happens
+in the live session, on event.
 
 ## second_brain: Triggers and Data Flow
 
-second_brain data is synced via two mechanisms: **batch sync** (recommended) and **real-time push** (optional).
+second_brain is written on the **write** path (dual-write of insights) and read on
+the **recall** path (working-set build). No batch upload script, no model cron.
 
-### Method 1: Batch sync via cron + Stop hook (recommended)
+### Method 1: Dual-write insights during in-session reflection (recommended)
 
-A shell script (`second_brain-memory_router-on-start.sh`) collects ACTIVE + PASSIVE memory and uploads to second_brain as a single resource. Runs on two triggers:
+When the live session reflects (nudged by `reflect-nudge.sh` at checkpoint/idle),
+it writes each durable insight to both `passive/*.md` locally AND second_brain,
+using the fixed write tools with recall-before-write:
 
 | Trigger | When | How |
 |---------|------|-----|
-| **Cron** | Daily at 06:30 UTC (after memory rotation) | `30 6 * * * bash scripts/second_brain-memory_router-on-start.sh` |
-| **Stop hook** | Every time Claude Code finishes responding | `settings.json` → `hooks.Stop` |
+| **Checkpoint** | Every 20 turns (Stop counter) | `reflect-nudge.sh --reason checkpoint` → session consolidates |
+| **Idle** | 10 min of silence (watchdog) | `reflect-nudge.sh --reason idle` → session consolidates |
 
-**What the script does:**
+**What the session does:**
 
 ```
-1. Health check → second_brain reachable?
-2. Build markdown summary from ACTIVE (last 10 entries) + PASSIVE (full)
-3. POST ${SECOND_BRAIN_MEMORY_URL} (create_external_note via JSON-RPC) → upload markdown as temp file
-4. POST ${SECOND_BRAIN_MEMORY_URL} → add_resource with target URI + wait=true
-5. second_brain indexes content, creates embeddings automatically
+1. Recall-before-write (avoid duplicating an existing note)
+2. POST ${SECOND_BRAIN_MEMORY_URL} create_decision_note / create_error_pattern_note / ...
+3. second_brain indexes content, creates embeddings automatically
+4. The same insight is written locally to passive/*.md (with YAML frontmatter)
 ```
 
-**Target URI pattern:** `second_brain://notes/{agent}-sessions/{YYYY-MM-DD}`
+Dual-write rules are fixed in `SECONDBRAIN_WRITE_RULES.md` (RED zone): recall before
+write; write immediately (compaction/session-end do NOT auto-flush); write only
+within your `can_write_scopes`.
 
-**Stop hook configuration** (in `~/.claude/settings.json`):
+### Recall path: working-set-build.sh
 
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "bash scripts/second_brain-memory_router-on-start.sh >> /tmp/second_brain-memory_router-on-start.log 2>&1 &",
-        "timeout": 10
-      }]
-    }]
-  }
-}
-```
-
-**Why batch sync over real-time:** Simpler, no threading issues, no session lifecycle to manage. ACTIVE+PASSIVE already contain compressed context — uploading once per session (or daily) is sufficient for semantic search.
+On SessionStart and worthy prompts, `working-set-build.sh` posts a JSON-RPC
+`recall` to `${SECOND_BRAIN_MEMORY_ROUTER_URL}` (RRF, hard-timeout, non-blocking),
+fuses the hits with local `passive/` lexical recall, and writes
+`active/working-set.md` — logging each hit to `recall-events.jsonl`.
 
 ### Method 2: Real-time push from gateway (optional)
 
@@ -349,46 +313,55 @@ This means a 10 KB file in Russian consumes ~4,500 tokens, while the same 10 KB 
 | TOOLS.md | ~6 KB | ~2,700 | ~1,800 |
 | Language rules (rules/*.md) | ~3 KB | ~1,350 | ~900 |
 | **IDENTITY subtotal** | **~38 KB** | **~17,100** | **~11,400** |
-| PASSIVE decisions.md | 3-15 KB | 1,350-6,750 | 900-4,500 |
-| ACTIVE recent.md | 5-80 KB | 2,250-36,000 | 1,500-24,000 |
+| PASSIVE insights + decisions/errors/prefs | 3-15 KB | 1,350-6,750 | 900-4,500 |
+| ACTIVE handoff.md + working-set.md (loaded) | 2-8 KB | 900-3,600 | 600-2,400 |
+| ACTIVE episodic.md (NOT loaded, on-demand) | 5-80 KB | — | — |
 
-IDENTITY is fixed cost -- it loads every session regardless. PASSIVE and ACTIVE are variable and controlled by the compression cron jobs.
+IDENTITY is fixed cost -- it loads every session regardless. PASSIVE and the loaded
+ACTIVE files (handoff + working-set) are variable; `episodic.md` is never loaded
+into context (on-demand Read only), so its size does not enter the startup budget.
 
 ### Three load scenarios
 
-**Scenario 1: After all cron jobs (optimal)**
+**Scenario 1: Consolidated state (optimal)**
 
-All 4 cron scripts ran successfully. ACTIVE trimmed to ~20 KB, PASSIVE compressed to ~3 KB.
+Reflection has run recently. Insights consolidated in PASSIVE (~3 KB), working-set
+built for the current task (~2 KB), episodic on-demand only.
 
 ```
-IDENTITY: 17,100 + PASSIVE: 1,350 + ACTIVE: 9,000 = 27,450 tokens (~7% of 400K working context)
+IDENTITY: 17,100 + PASSIVE: 1,350 + ACTIVE loaded (handoff+working-set): 1,800 = 20,250 tokens (~5% of 400K working context)
 ```
 
 This is the target operating state. The agent starts each session with clean, focused context.
 
-**Scenario 2: End of day, before cron (loaded)**
+**Scenario 2: Long busy session (loaded)**
 
-Active day with 150+ messages. ACTIVE grew to ~80 KB, PASSIVE accumulated entries from trim-active.
-
-```
-IDENTITY: 17,100 + PASSIVE: 6,750 + ACTIVE: 36,000 = 59,850 tokens (~15% of 400K working context)
-```
-
-Still within acceptable range but agent quality starts degrading. The operator should run `/compact` manually or wait for cron.
-
-**Scenario 3: Cron broken, gateway writing for a week (worst case)**
-
-Cron jobs failed silently. No compression for 7 days. ACTIVE has accumulated ~200 KB of raw logs.
+Active day with 150+ messages. `episodic.md` grew to ~80 KB but is NOT loaded;
+PASSIVE accumulated insights from several reflections.
 
 ```
-IDENTITY: 17,100 + PASSIVE: 6,750 + ACTIVE: 90,000 = 113,850 tokens (~29% of 400K working context)
+IDENTITY: 17,100 + PASSIVE: 6,750 + ACTIVE loaded: 3,600 = 27,450 tokens (~7% of 400K working context)
 ```
 
-Agent noticeably ignores instructions buried in IDENTITY. Emergency trim (>20 KB) will eventually cap ACTIVE at ~600 lines, but quality is already degraded.
+Still clean, because the raw episodic diary never enters context. Checkpoint
+reflection (every 20 turns) keeps insights fresh.
+
+**Scenario 3: No reflection + episodic accidentally loaded (worst case)**
+
+If an operator Reads the full `episodic.md` (~200 KB) into context and never lets
+reflection run:
+
+```
+IDENTITY: 17,100 + PASSIVE: 6,750 + episodic in context: 90,000 = 113,850 tokens (~29% of 400K working context)
+```
+
+Agent noticeably ignores instructions buried in IDENTITY. Fix: keep `episodic.md`
+on-demand (it is not @include'd), let reflection consolidate, and let
+`archive-roll.sh` size-roll the diary.
 
 ### Key insight
 
-The base context window is 1M tokens, but we set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000` because model quality degrades well before 1M. The **working context is 400K**. At worst case (29% consumed by memory), only 284K tokens remain for actual work. The compression system exists not to save money but to keep context CLEAN -- an agent with 80 KB of raw conversation logs performs worse than one with 20 KB of structured facts, because attention is finite even when context is not.
+The base context window is 1M tokens, but we set `CLAUDE_CODE_AUTO_COMPACT_WINDOW=400000` because model quality degrades well before 1M. The **working context is 400K**. The memory system exists not to save money but to keep context CLEAN -- an agent carrying 80 KB of raw conversation logs performs worse than one with a few KB of structured insights, because attention is finite even when context is not. That is why the raw episodic diary is never loaded and reflection distils it into compact insights.
 
 ### Reference limits
 
@@ -396,4 +369,4 @@ The base context window is 1M tokens, but we set `CLAUDE_CODE_AUTO_COMPACT_WINDO
 - Working context (via CLAUDE_CODE_AUTO_COMPACT_WINDOW): 400,000 tokens
 - CLAUDE.md recommended size: under 200 lines (beyond that Claude starts ignoring instructions)
 - @import max recursion depth: 5 hops
-- Sonnet compression (compress-passive.sh) keeps PASSIVE compact at ~3 KB even with daily additions from trim-active.sh
+- In-session reflection (memory-consolidate skill) keeps PASSIVE compact by synthesising insights; episodic.md is never model-compressed, only size-rolled by archive-roll.sh

@@ -151,8 +151,8 @@ Telegram
 │       │   ├── AGENTS.md              # Models, routing rules, agent registry
 │       │   ├── USER.md               # Operator profile
 │       │   ├── rules.md              # Boundaries, permissions
-│       │   ├── passive/decisions.md     # 14d rolling decisions
-│       │   ├── active/recent.md         # 24h rolling journal
+│       │   ├── passive/                  # semantic insights (decisions/errors/...)
+│       │   ├── active/episodic.md         # raw append-only diary + working-set.md
 │       │   └── MEMORY.md             # ARCHIVE archive
 │       ├── tools/TOOLS.md            # Servers, Docker, services
 │       ├── skills/                    # Agent-specific + symlinks to shared
@@ -201,7 +201,7 @@ The gateway handles much more than simple message routing. Full feature list:
 | **Session management** | `--resume` for context continuity, `--resume` for context continuity, `/reset` for fresh start |
 | **Voice transcription** | Auto-transcribe `.ogg` via Groq Whisper before passing to agent |
 | **Source classification** | Tags every message: `own_text`, `own_voice`, `forwarded`, `external_media` |
-| **ACTIVE memory write** | Appends every interaction to `core/active/recent.md` (file-locked) |
+| **ACTIVE memory write** | Appends every interaction to `core/active/episodic.md` (file-locked) |
 | **second_brain push** | Background push to semantic memory with anti-pollution guards |
 | **Emergency trim** | Auto-trims ACTIVE when >20KB (keeps last 600 lines) |
 | **Media download** | Photos, documents, stickers -- downloaded to `media-inbound/` |
@@ -417,9 +417,9 @@ All agents push to and search from one second_brain instance. Replaces file-base
 
 ```
 OLD: File mirrors          →  NEW: second_brain
-shared/state/tasks.json         temp_upload + add_resource
+shared/state/tasks.json         create_decision_note / create_error_pattern_note (dual-write)
 shared/state/agents.json        (auto-indexed to semantic store)
-mirrors/sync-cron.sh            second_brain-memory_router-on-start.sh (cron + Stop hook)
+mirrors/sync-cron.sh            working-set-build.sh (recall) + in-session reflection (dual-write)
 ```
 
 ### Namespacing
@@ -429,7 +429,7 @@ Each agent writes under its own user namespace but can search across all:
 ```bash
 SECOND_BRAIN_BEARER=$(cat ~/.claude-lab/shared/secrets/second_brain.key)
 
-# Agent syncs sessions to its own namespace (via second_brain-memory_router-on-start.sh or manual)
+# Agent dual-writes insights to its own namespace during in-session reflection (or manual)
 # Step 1: upload markdown
 curl -X POST "${SECOND_BRAIN_MEMORY_URL}" \
   -H "X-API-Key: $SECOND_BRAIN_BEARER" \
@@ -513,7 +513,7 @@ STEPS:
 
 ## Privacy Rules
 
-1. **Agent workspaces are private** -- Homer cannot read Edith's active/recent.md
+1. **Agent workspaces are private** -- Homer cannot read Edith's active/episodic.md
 2. **second_brain is shared** -- any agent can search, writes are namespaced
 3. **Message bus inbox is per-agent** -- only the recipient reads their inbox
 4. **Gateway state is per-agent** -- session IDs isolated per (agent, chat)
@@ -534,7 +534,7 @@ bash install.sh
 # - Creates ~/.claude-lab/{agent}/.claude/ with all dirs
 # - Fills templates, replaces {{AGENT_NAME}} etc.
 # - Installs 10 base skills (symlinked)
-# - Sets up cron scripts for memory management
+# - Wires memory hooks (SessionStart/UserPromptSubmit/Stop/PreCompact) + optional nightly bash housekeeping
 ```
 
 ## Memory Flow
@@ -555,13 +555,16 @@ AGENT SESSION
     │
     ▼
 POST-RESPONSE (parallel)
-    ├── Gateway: append to ACTIVE (active/recent.md, file lock)
-    └── Gateway: push to second_brain (background)
+    ├── Stop hook: active-writer.sh → append salience-tagged entry to active/episodic.md
+    └── Stop hook: turn counter → every 20 turns reflect-nudge.sh → live session consolidates
               │
               ▼
-CRON SCRIPTS (daily)
-    ├── trim-active.sh    → compress ACTIVE >24h entries
-    ├── rotate-passive.sh → move PASSIVE >14d to ARCHIVE
-    ├── compress-passive.sh → re-compress PASSIVE if >10KB
-    └── memory-gc.sh   → archive ARCHIVE >5KB to monthly files
+EVENT-DRIVEN CONSOLIDATION (no model crons)
+    ├── checkpoint every 20 turns + watchdog idle 10 min → reflect-nudge.sh
+    │        → live session runs memory-consolidate skill → passive/*.md + dual-write to second_brain
+    └── recall: working-set-build.sh (SessionStart + worthy prompts) → active/working-set.md
+
+NIGHTLY HOUSEKEEPING (optional, pure bash, no model)
+    ├── decay-sweep.sh  → reinforce + decay passive/ insights → archived/superseded/
+    └── archive-roll.sh → size-roll episodic.md → archived/episodic/YYYY-MM.md
 ```

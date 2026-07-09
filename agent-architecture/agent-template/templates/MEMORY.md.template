@@ -1,4 +1,6 @@
 # MEMORY -- {{AGENT_NAME}} (ARCHIVE archive)
 
 _Permanent archive. NOT loaded into session context. Access via Read tool when needed._
-_Entries rotated here from PASSIVE (>14 days) by rotate-passive.sh._
+_Curated long-term notes. Aged-out memory lands under `core/archived/` automatically:
+size-rolled episodic slices via `archive-roll.sh`, decayed passive insights via
+`decay-sweep.sh` (pure-bash nightly housekeeping, no model)._

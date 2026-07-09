@@ -27,7 +27,7 @@ ln -s ~/.claude-lab/shared/skills ~/.claude-lab/${AGENT_NAME}/.claude/skills
 
 # Create empty memory files
 echo "# PASSIVE DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/decisions.md
-echo "# Active memory -- last 24h rolling journal" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/recent.md
+echo "# Active memory -- raw append-only episodic diary" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/episodic.md
 echo "# MEMORY -- Archive Archive" > ~/.claude-lab/${AGENT_NAME}/.claude/core/MEMORY.md
 echo "# LEARNINGS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/LEARNINGS.md
 ```
@@ -92,7 +92,7 @@ Create `~/.claude-lab/reviewer/.claude/core/AGENTS.md`:
 - Key: ~/.claude-lab/shared/secrets/second_brain.key
 - Search: POST `${SECOND_BRAIN_MEMORY_ROUTER_URL}` (default `http://${MCP_HOST}:5002/mcp`) — JSON-RPC tools/call recall
 - Write: POST `${SECOND_BRAIN_MEMORY_URL}` (default `http://${MCP_HOST}:5001/mcp`)
-- Sync: Stop hook + cron via second_brain-memory_router-on-start.sh (see MEMORY.md)
+- Recall: SessionStart + worthy prompts via working-set-build.sh (RRF recall + local passive/); dual-write of insights during in-session reflection (see MEMORY.md)
 ```
 
 ## Step 4: Write USER.md
@@ -209,7 +209,7 @@ See [jarvis-telegram-gateway](https://github.com/your-org/telegram-gateway) for 
 
 1. Send your bot a message: "Review this code: [paste code]"
 2. Or send a GitHub PR link: "Review this PR"
-3. Check that `core/active/recent.md` has the conversation entry
+3. Check that `core/active/episodic.md` has the conversation entry
 
 ## What You Built
 
@@ -222,7 +222,7 @@ See [jarvis-telegram-gateway](https://github.com/your-org/telegram-gateway) for 
     │   ├── USER.md            ← your profile
     │   ├── rules.md           ← review rules
     │   ├── passive/decisions.md  ← recent decisions (auto)
-    │   ├── active/recent.md      ← conversation log (auto)
+    │   ├── active/episodic.md      ← conversation log (auto)
     │   ├── MEMORY.md          ← archive (auto)
     │   └── LEARNINGS.md       ← lessons from mistakes
     ├── tools/TOOLS.md         ← available tools

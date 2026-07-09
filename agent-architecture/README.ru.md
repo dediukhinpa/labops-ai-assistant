@@ -184,7 +184,7 @@ flowchart LR
 | **(A) Замёрзший ход** (frozen turn) | `esc to interrupt` присутствует, но панель байт-в-байт не меняется (таймер встал) | подтверждение через ~60 c (2 цикла) → рестарт сессии |
 | **(B) Застрявший ввод** (stuck input) | в `❯` лежит неотправленный inbound, активного хода нет | эскалация: `Enter` → `Escape`+`Enter` (коммит bracketed-paste) → рестарт |
 | Потерян промпт | TUI не рендерит ни `❯`, ни `bypass permissions`, ни `Listening for channel` | немедленный рестарт |
-| Чистый idle-промпт | `❯` есть, поле ввода пустое | **не трогать** (здоровый агент) |
+| Чистый idle-промпт | `❯` есть, поле ввода пустое | **не трогать** (здоровый агент); после ~10 мин простоя один раз дёрнуть in-session консолидацию памяти |
 
 Режим (B) срабатывает **только** при непустом поле ввода — иначе чистый idle-промпт никогда не тревожится (это была главная причина «молчащих» агентов до фикса nbsp-парсинга `❯`). Отдельная защита — реапинг **осиротевшего bun**: если родительский `claude` умер, а канал-сервер «завис» с `PPID==1`, он на 2-ядерном боксе уходит в EPIPE-петлю на ~90 % CPU и душит живые сессии; watchdog/start-agent убивают его `pkill` строго по пути конкретного агента.
 
@@ -208,15 +208,15 @@ flowchart LR
 
 ## Слои памяти агента
 
-У агента четыре слоя памяти: первые три — локальные файлы в его воркспейсе (`@core/…`, частично всегда в контексте), четвёртый — общий мозг `labops-second-brain` по MCP. Иерархия истины: **live-проверка (exec/grep) → second_brain (общий мозг) → git-история → локальная память**. Память противоречит проверке — побеждает проверка.
+Память организована по **роли**, а не по возрасту, и делится на два *рода*: **эпизодическую** (сырой дневник событий) и **семантическую** (выжатые инсайты — что понято). `active/` — рабочий набор, `passive/` — курируемое семантическое знание, `archive/` — холодное хранилище; четвёртый слой — общий мозг `labops-second-brain` по MCP. Консолидация (episodic → passive-инсайты) **событийная, а не по крону**: живую сессию «подталкивают» к рефлексии на чекпойнте (каждые ~20 ходов) или после ~10 мин простоя — фонового вызова модели нет (`claude -p` запрещён). Иерархия истины: **live-проверка (exec/grep) → second_brain (общий мозг) → git-история → локальная память**. Память противоречит проверке — побеждает проверка.
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'primaryColor':'#EDE9FE','primaryTextColor':'#4C1D95','primaryBorderColor':'#8B5CF6','lineColor':'#8B5CF6','secondaryColor':'#F1F5F9','tertiaryColor':'#ffffff','clusterBkg':'transparent','clusterBorder':'#B794F4','fontFamily':'Helvetica,Arial,sans-serif'}}}%%
 flowchart LR
   subgraph local["Локальная память агента (файлы воркспейса)"]
     L1["L1 IDENTITY<br/>CLAUDE.md · rules.md · USER.md<br/>(всегда в контексте)"]
-    L2["L2 ACTIVE<br/>active/recent.md (24h) · active/handoff.md<br/>(handoff кладёт boot-хук)"]
-    L3["L3 PASSIVE<br/>passive/decisions.md (ротация >14д → ARCHIVE)<br/>ARCHIVE: MEMORY.md · LEARNINGS.md (по запросу)"]
+    L2["L2 ACTIVE<br/>episodic.md (сырой дневник) · working-set.md (recall) · handoff.md"]
+    L3["L3 PASSIVE (semantic)<br/>insights · decisions · errors · preferences<br/>ARCHIVE: archived/{episodic,superseded} · MEMORY.md (по запросу)"]
   end
   L4["L4 ОБЩИЙ МОЗГ<br/>labops-second-brain · memory_router/memory/agent_router по MCP"]
   L1 --> L2 --> L3 --> L4
@@ -232,12 +232,12 @@ flowchart LR
 | Слой | Файлы / источник | В контексте | Кто правит |
 |---|---|---|---|
 | **L1 Идентичность** | `CLAUDE.md`, `rules.md`, `USER.md` | всегда (`@import`) | только оператор (RED-зона) |
-| **L2 Active** | `active/recent.md` (скользящие 24 ч), `active/handoff.md` | да (handoff кладёт boot-хук) | агент автономно (GREEN) |
-| **L3 Passive** | `passive/decisions.md` (последние ~14 д, ротация в ARCHIVE) | да | агент с обоснованием (YELLOW) |
-| **ARCHIVE** | `MEMORY.md`, `LEARNINGS.md` | нет — по запросу (Read) | агент (GREEN) |
-| **L4 Общий** | second_brain `memory_router` / `memory` / `agent_router` | нет — по запросу (MCP) | по RBAC-scopes |
+| **L2 Active** | `active/episodic.md` (сырой дневник, с salience-тегами), `active/working-set.md` (материализованный recall), `active/handoff.md` | да (working-set + handoff) | `active-writer.sh` (Stop-хук) пишет episodic; `working-set-build.sh` пересобирает working-set |
+| **L3 Passive** (semantic) | `passive/insights.md · decisions.md · errors.md · preferences.md` (инсайты + decay-frontmatter) | да | **живая сессия** на рефлексии (скилл `memory-consolidate`); `decay-sweep.sh` вычищает |
+| **ARCHIVE** | `archived/episodic/YYYY-MM.md`, `archived/superseded/`, `MEMORY.md`, `LEARNINGS.md` | нет — по запросу (Read) | `archive-roll.sh` / `decay-sweep.sh` (чистый bash) |
+| **L4 Общий** | second_brain `memory_router` / `memory` / `agent_router` | нет — по запросу (MCP) | по RBAC-scopes (dual-write на рефлексии) |
 
-Зоны доступа к файлам: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — только оператор; **YELLOW** (`decisions.md`, `AGENTS.md`, `TOOLS.md`) — агент с обоснованием; **GREEN** (`LEARNINGS.md`, `active/recent.md`, `feedback_*`) — агент автономно.
+Episodic **никогда не сжимается моделью** — только скручивается по размеру в `archived/episodic/`; семантический слой *синтезируется* из него (обратимо через `provenance`). Зоны доступа к файлам: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — только оператор; **YELLOW** (`passive/*`, `AGENTS.md`, `TOOLS.md`) — агент с обоснованием; **GREEN** (`LEARNINGS.md`, `active/episodic.md`, `feedback_*`) — агент автономно.
 
 **Политика записи в общий мозг** зафиксирована в [`SECONDBRAIN_WRITE_RULES.md`](SECONDBRAIN_WRITE_RULES.md) — это единый canonical-файл (RED-зона), который симлинкуется в `core/` каждого агента и **@-импортится в его `CLAUDE.md`** (`@core/SECONDBRAIN_WRITE_RULES.md`). Правишь один файл → подхватывают все агенты. Четыре дисциплины: (1) `recall` **перед** записью — не плодить дубли; (2) **dual-write** важного — и в локальный `.md`, и в second_brain (идемпотентно по sha256); (3) писать **сразу**, не «потом» (компакция знания не выгружает); (4) писать в свой `scope`. Инструменты записи жёстко зафиксированы кодом: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_personal_note` (→ `personal`), `create_project_note` (→ `projects`), `create_handoff`, `append_daily_log`, `supersede_decision`.
 
@@ -260,9 +260,9 @@ flowchart LR
 ├── core/
 │   ├── USER.md · rules.md · AGENTS.md · MEMORY.md · LEARNINGS.md
 │   ├── passive/decisions.md           # PASSIVE (последние 14д)
-│   └── active/{recent.md, handoff.md, archived/, pre-compact/}
+│   └── active/{episodic.md, handoff.md, archived/, pre-compact/}
 ├── tools/TOOLS.md
-├── scripts/             # ротация памяти + second_brain-memory_router-on-start
+├── scripts/             # episodic-писатель, working-set recall, reflect-nudge, decay/archive housekeeping
 ├── hooks/               # session-start, stop, precompact
 ├── logs/
 └── skills/              # симлинк на общий бандл скиллов
@@ -270,9 +270,9 @@ flowchart LR
 
 | Каталог шаблона | Содержимое |
 |---|---|
-| `templates/` | `CLAUDE.md`, `rules.md`, `USER.md`, `tools.md`, `agents.md`, `decisions.md`, `recent.md`, `MEMORY.md`, `LEARNINGS.md`, `mcp.json`, `settings.json` |
+| `templates/` | `CLAUDE.md`, `rules.md`, `USER.md`, `tools.md`, `agents.md`, `decisions.md`, `episodic.md`, `MEMORY.md`, `LEARNINGS.md`, `mcp.json`, `settings.json` |
 | `hooks/` | `session-start-hook.sh`, `stop-hook.sh`, `precompact-hook.sh` |
-| `scripts/` | `memory-rotate.sh`, `trim-active.sh`, `rotate-passive.sh`, `compress-passive.sh`, `second_brain-memory_router-on-start.sh` |
+| `scripts/` | `active-writer.sh`, `working-set-build.sh`, `reflect-nudge.sh`, `decay-sweep.sh`, `archive-roll.sh` |
 | `docs/` | `ARCHITECTURE.md`, `MEMORY.md`, `HOOKS.md`, `MULTI-AGENT.md`, `SETUP-GUIDE.md`, `AGENT-LAWS.md`, … (16 файлов) |
 
 Важно: `mcp.json.template` подключает агенту **только** second_brain (3 сервера). Канал (`labops-channel`) грузится отдельно при запуске через `claude … server:labops-channel`, а task-board MCP (`:5003`) агентам намеренно **не** заводится (heartbeat идёт отдельным кроном).
@@ -338,9 +338,10 @@ flowchart LR
 
 | Событие | Хук (`agent-template/hooks/`) | Что делает |
 |---|---|---|
-| **SessionStart** | `session-start-hook.sh` | логирует старт; если есть `SECOND_BRAIN_MEMORY_ROUTER_URL`+`AGENT_BEARER` — зовёт `second_brain-memory_router-on-start.sh` (дописывает блок релевантных recall в `active/recent.md`); surface `handoff.md`. В рое также `agent-boot-sequence.sh`: 👀 на свежие сообщения + `agent_router.list_my_pending()` (забрать делегированные задачи — pull-страховка) |
-| **Stop** | `stop-hook.sh` | дописывает 200-символьный сниппет хода в `active/recent.md` и подробную JSON-строку в `logs/verbose-YYYY-MM-DD.jsonl`. В рое также `read-receipt-hook.ts` (POST `/hooks/react` → 👌) и `reflect-error-pattern.sh` (если Оператор поправил → нудж записать error-pattern через `decision:"block"`) |
-| **PreCompact** | `precompact-hook.sh` | снапшотит `active/recent.md` в `active/pre-compact/` перед авто-компакцией, держит последние `KEEP_SNAPSHOTS` (10) |
+| **SessionStart** | `session-start-hook.sh` | логирует старт; пересобирает `active/working-set.md` через `working-set-build.sh` (сливает shared-recall second_brain — hard-timeout, non-blocking — с локальным лексическим recall из `passive/`; работает и file-only); surface `handoff.md`. В рое также `agent-boot-sequence.sh`: 👀 на свежие сообщения + `agent_router.list_my_pending()` (pull-страховка) |
+| **UserPromptSubmit** | `user-prompt-submit-hook.sh` | проактивный recall: bash-гейт значимости отбрасывает ack'и/короткие промпты, затем пересобирает `working-set.md` под сам промпт (фоном, non-blocking) |
+| **Stop** | `stop-hook.sh` | дописывает salience-тегированную episodic-запись в `active/episodic.md` (через `active-writer.sh`) + подробную JSON-строку в `logs/verbose-*.jsonl`; инкрементит счётчик ходов и каждые ~20 ходов дёргает in-session консолидацию (`reflect-nudge.sh`). В рое также `read-receipt-hook.ts` (POST `/hooks/react` → 👌) и `reflect-error-pattern.sh` |
+| **PreCompact** | `precompact-hook.sh` | снапшотит `active/episodic.md` в `active/pre-compact/` перед авто-компакцией, держит последние `KEEP_SNAPSHOTS` (10) |
 
 Все хуки несут `sdk-guard`: при `CLAUDE_SDK_CHILD=1` (или `entrypoint=sdk-ts`) сразу выходят, чтобы не зацикливаться в дочерних Agent-SDK-сессиях.
 

@@ -290,7 +290,7 @@ sudo -u agentctl bash /home/agentctl/.claude-lab/myagent/.claude/labops-tg-plugi
 
 ## Шаг 10. Memory hooks (опционально)
 
-Для long-term memory pipeline (запись turn'ов в `<workspace>/core/active/recent.md` + `verbose-YYYY-MM-DD.jsonl`) — раздел [`plugin/README.md` → Memory hooks](../plugin/README.md#memory-hooks-phase-8-config).
+Для long-term memory pipeline (запись turn'ов в `<workspace>/core/active/episodic.md` + `verbose-YYYY-MM-DD.jsonl`) — раздел [`plugin/README.md` → Memory hooks](../plugin/README.md#memory-hooks-phase-8-config).
 
 Альтернатива: используйте second_brain ([dediukhinpa/labops-second-brain](https://github.com/dediukhinpa/labops-second-brain)) — там MCP-серверы для memory/memory_router/agent_router.
 
@@ -311,7 +311,7 @@ sudo -u agentctl bash /home/agentctl/.claude-lab/myagent/.claude/labops-tg-plugi
 | **`permissions.jsonl`** (журнал allowlist-решений) | `${TELEGRAM_STATE_DIR}/logs/permissions.jsonl` | `tail -50 /home/agentctl/.claude-lab/shared/state/myagent/telegram/logs/permissions.jsonl` |
 | Tmux pane history (живой terminal Claude Code) | tmux session `channel-<agent>` | `sudo -u agentctl tmux capture-pane -p -t channel-myagent -S -200` |
 | Tmux attach (интерактивно) | tmux session | `sudo -u agentctl tmux attach -t channel-myagent` (detach Ctrl-B D) |
-| Workspace memory (если memory hooks включены) | `<workspace>/core/active/recent.md` + `<workspace>/../logs/verbose-YYYY-MM-DD.jsonl` | `tail -100 /home/agentctl/.claude-lab/myagent/.claude/core/active/recent.md` |
+| Workspace memory (если memory hooks включены) | `<workspace>/core/active/episodic.md` + `<workspace>/../logs/verbose-YYYY-MM-DD.jsonl` | `tail -100 /home/agentctl/.claude-lab/myagent/.claude/core/active/episodic.md` |
 
 `TELEGRAM_STATE_DIR` определяется в `channel.env` (Шаг 5). Если не задан — плагин падает на дефолт `/tmp/labops-channel-state/<agent>/`, который **зачищается при reboot** — в production задавайте явно (рекомендуется `<shared>/state/<agent>/telegram/`).
 

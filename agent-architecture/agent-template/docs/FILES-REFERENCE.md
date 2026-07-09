@@ -45,41 +45,48 @@ Per-agent identity. Loaded every session via `@include` directives in CLAUDE.md.
 
 ## Layer 3: Memory -- PASSIVE (`core/passive/`)
 
-Rolling 14-day memory. Auto-compressed. Loaded every session.
+Consolidated **semantic insights** (role, not age). Written by the live session
+during reflection, never by a background model. Loaded every session.
 
 | File | Role | Loads | Writer | Access |
 |------|------|-------|--------|--------|
-| **passive/decisions.md** | Recent architectural/operational decisions. Topic-based key facts, auto-compressed by Sonnet | always (@include) | **trim-active.sh** (cron, appends summaries from ACTIVE), **compress-passive.sh** (cron, re-compresses), agent (during session for important decisions) | agent reads, cron writes, operator can edit |
+| **passive/insights.md** | Synthesised insights from reflection, each with YAML frontmatter (`id`, `created`, `last_recalled`, `recall_count`, `half_life_days`, `salience`, `provenance`) | always (@include) | **live session** (memory-consolidate skill) | agent reads/writes, decay-sweep prunes, operator can edit |
+| **passive/decisions.md** | Architectural/operational decisions | always (@include) | **live session** (during reflection / when a decision is made), dual-written to second_brain | agent reads/writes, operator can edit |
+| **passive/errors.md** | Error patterns and their fixes | always (@include) | **live session** (reflection) | agent reads/writes, operator can edit |
+| **passive/preferences.md** | Operator preferences distilled from episodic | always (@include) | **live session** (reflection) | agent reads/writes, operator can edit |
 
-**Lifecycle:**
-1. `trim-active.sh` (05:00 UTC) extracts old ACTIVE entries -> appends to PASSIVE as `## YYYY-MM-DD (auto-compressed)` sections
-2. `compress-passive.sh` (06:00 UTC) re-compresses PASSIVE if >10KB using Sonnet -> topic-based key facts
-3. `rotate-passive.sh` (04:30 UTC) moves entries >14 days to ARCHIVE (MEMORY.md)
-4. Agent can write important decisions during session
+**Lifecycle (event-driven, no model cron):**
+1. `active-writer.sh` (Stop hook) appends raw turns to `active/episodic.md` -- never compressed.
+2. Reflection is nudged in-session by `reflect-nudge.sh`: checkpoint every 20 turns (Stop counter) and watchdog idle 10 min. The **live session** reads `episodic.md` and writes insights to `passive/*.md` (via the `memory-consolidate` skill), dual-writing important knowledge to second_brain.
+3. `decay-sweep.sh` (nightly, pure bash) reinforces recalled insights (`recall_count++`, `half_life_days *= 1.5`) and moves never-recalled decayed ones (`score < 0.25`) to `archived/superseded/`.
 
-**Who can touch:** Cron scripts (automated), agent (append only), operator (full access).
+**Who can touch:** Live session (writes insights), decay-sweep (usage-driven pruning, no model), operator (full access).
 
 ---
 
 ## Layer 4: Memory -- ACTIVE (`core/active/`)
 
-Rolling 24h journal. Every conversation turn recorded. Loaded every session.
+Current-task working memory (role, not age): the raw episodic diary plus the
+materialised recall for the task. Loaded every session (except `episodic.md`).
 
 | File | Role | Loads | Writer | Access |
 |------|------|-------|--------|--------|
-| **active/handoff.md** | Compact extract from recent.md: last 10 conversation entries. Injected at session start for continuity without loading the full journal | always (@include) | **hook** (extracts last 10 from recent.md at session start) | agent reads, hook writes |
-| **active/recent.md** | Full conversation journal: timestamp, source tag, user snippet (200 chars), agent snippet (200 chars). Emergency trim at 20KB/600 lines | on-demand (Read tool) | **gateway.py** (`append_to_hot_memory()` with fcntl lock), **trim-active.sh** (cron, compresses old entries) | agent reads, gateway writes, cron trims |
+| **active/handoff.md** | Compact extract from episodic.md: last 10 conversation entries. Injected at session start for continuity without loading the full journal | always (@include) | **hook** (extracts last 10 from episodic.md at session start) | agent reads, hook writes |
+| **active/working-set.md** | Materialised recall for the current task: shared second_brain recall (RRF) fused with local `passive/` lexical recall, with provenance/date tags | always (@include) | **working-set-build.sh** (SessionStart + UserPromptSubmit) | agent reads, hook writes |
+| **active/episodic.md** | Raw, append-only diary of turns: timestamp, source tag, snippets, salience tag. **Never model-compressed** -- only size-rolled to `archived/episodic/` | on-demand (Read tool) | **active-writer.sh** (Stop hook, salience-tagged), gateway append | agent reads, hook/gateway append, archive-roll relocates |
+| **recall-events.jsonl** | Log of every recall hit -- the reinforcement signal decay-sweep replays | never | **working-set-build.sh** (append) | decay-sweep reads |
 
 **Entry format:**
 ```
-### YYYY-MM-DD HH:MM [source_tag]
+### YYYY-MM-DD HH:MM [source_tag] [salience]
 **Оператор:** user message snippet (200 chars max)
 **Agent:** agent response snippet (200 chars max)
 ```
 
 **Source tags:** `own_text`, `own_voice`, `forwarded`, `external_media`
+**Salience classes:** `ephemeral` | `error` | `decision` | `preference` | `fact`
 
-**Who can touch:** Gateway (append via fcntl lock), cron (trim/compress), agent (read only). Operator can edit.
+**Who can touch:** Stop hook / gateway (append episodic), working-set-build (writes working-set), archive-roll (relocates old episodic, no model), agent (read). Operator can edit.
 
 ---
 
@@ -89,11 +96,12 @@ Archive. NOT loaded into session context. Accessed via Read tool when needed.
 
 | File | Role | Loads | Writer | Access |
 |------|------|-------|--------|--------|
-| **MEMORY.md** | Permanent archive of decisions rotated from PASSIVE (>14 days). May contain months of history | on-demand (Read tool) | **rotate-passive.sh** (cron, appends old PASSIVE entries), **memory-rotate.sh** (cron, archives to monthly files) | agent reads on-demand, cron writes |
+| **MEMORY.md** | Curated permanent archive. May contain months of history | on-demand (Read tool) | agent/operator (curated) | agent reads on-demand, operator edits |
 | **LEARNINGS.md** | Lessons from mistakes: context, what went wrong, correct approach, rule | on-demand (Read tool) | agent (during session when learning occurs) | agent reads/writes, operator reads |
-| **archived/*.md** | Monthly archives (`2026-04.md`, `2026-03.md`). MEMORY.md archived here when >5KB | never (manual Read) | **memory-rotate.sh** (cron) | read-only archive |
+| **archived/episodic/YYYY-MM.md** | Size-rolled old episodic slices. Episodic text is relocated here, never summarised | never (manual Read) | **archive-roll.sh** (nightly bash, size-roll) | read-only archive |
+| **archived/superseded/*.md** | Decayed/never-recalled insights evicted from `passive/` | never (manual Read) | **decay-sweep.sh** (nightly bash, usage-driven) | read-only archive |
 
-**Who can touch:** Cron scripts (automated archival), agent (append learnings), operator (full access).
+**Who can touch:** Nightly pure-bash housekeeping (archive-roll relocates episodic, decay-sweep evicts decayed insights -- no model), agent (append learnings / curate MEMORY.md), operator (full access).
 
 ---
 
@@ -144,16 +152,19 @@ MD files defining subagent behavior. NOT loaded at session start. Used when Agen
 
 ## Layer 9: Scripts (`scripts/`)
 
-Cron jobs, utilities, automation. NOT loaded into context. Executed by cron or manually.
+Memory-engine helpers. NOT loaded into context. Fired by hooks/watchdog or an
+optional nightly cron. All are pure bash (+ `curl`/`python3` arithmetic); none
+calls a model -- `claude -p` is forbidden repo-wide.
 
 | File | Role | Runs | Writer |
 |------|------|------|--------|
-| **trim-active.sh** | Compress ACTIVE >24h entries via Sonnet | cron 05:00 UTC daily | developer |
-| **compress-passive.sh** | Re-compress PASSIVE via Sonnet if >10KB | cron 06:00 UTC daily | developer |
-| **rotate-passive.sh** | Move PASSIVE >14d to ARCHIVE | cron 04:30 UTC daily | developer |
-| **memory-rotate.sh** | Archive ARCHIVE >5KB to monthly files | cron 21:00 UTC daily | developer |
+| **active-writer.sh** | Append salience-tagged entry to `active/episodic.md` | Stop hook (each turn) | developer |
+| **working-set-build.sh** | Rebuild `active/working-set.md` = second_brain recall (RRF, hard-timeout) + local `passive/` lexical recall; log to `recall-events.jsonl` | SessionStart + UserPromptSubmit | developer |
+| **reflect-nudge.sh** | Nudge the **live session** to consolidate (via `agent_router.notify`); the session does the model work | checkpoint every 20 turns + watchdog idle 10 min | developer |
+| **decay-sweep.sh** | Reinforce recalled insights; evict never-recalled decayed ones to `archived/superseded/` | optional nightly cron 03:00 | developer |
+| **archive-roll.sh** | Size-roll `episodic.md` (>40 KB) into `archived/episodic/YYYY-MM.md` | optional nightly cron 03:05 | developer |
 
-**Who can touch:** Developer/operator creates and maintains. Cron executes. Agent can read but should not modify without permission.
+**Who can touch:** Developer/operator creates and maintains. Hooks/watchdog/cron execute. Agent can read but should not modify without permission.
 
 ---
 
@@ -200,9 +211,10 @@ Telegram router. Shared across agents. NOT loaded into agent context.
 | CLAUDE.md (SOUL) | 8 KB | 3,500 |
 | core/USER.md | 2 KB | 765 |
 | core/rules.md | 4 KB | 1,935 |
-| core/passive/decisions.md | 3 KB | 1,400 |
+| core/passive/*.md | 3 KB | 1,400 |
 | core/active/handoff.md | 1-4 KB | 450-1,800 |
-| **TOTAL** | **26-29 KB** | **11,680-13,030** |
+| core/active/working-set.md | 1-4 KB | 450-1,800 |
+| **TOTAL** | **27-33 KB** | **12,130-14,830** |
 
 ### On-demand (not in startup context)
 
@@ -210,7 +222,7 @@ Telegram router. Shared across agents. NOT loaded into agent context.
 |----------|------|------|
 | core/AGENTS.md | 5 KB | Agent needs models, subagents, pipelines (on-demand Read) |
 | tools/TOOLS.md | 6 KB | Agent needs servers, infrastructure (on-demand Read) |
-| core/active/recent.md | 8-30 KB | Full journal, loaded by gateway (on-demand Read) |
+| core/active/episodic.md | 8-30 KB | Full journal, loaded by gateway (on-demand Read) |
 | MEMORY.md (ARCHIVE) | 5+ KB | Agent needs old decisions |
 | LEARNINGS.md | varies | Agent needs past mistakes |
 | Skills (15) | ~50 KB total | Skill tool invocation |
@@ -222,17 +234,18 @@ Telegram router. Shared across agents. NOT loaded into agent context.
 
 ## Access Matrix
 
-| File | Operator | Agent | Gateway | Cron | Other Agents |
-|------|----------|-------|---------|------|--------------|
+| File | Operator | Agent | Gateway | Hooks/Bash | Other Agents |
+|------|----------|-------|---------|------------|--------------|
 | Global CLAUDE.md | RW | R | - | - | R |
 | SOUL CLAUDE.md | RW | R | - | - | **NO** |
 | AGENTS.md | RW | R | - | - | **NO** |
 | USER.md | RW | R | - | - | **NO** |
 | rules.md | RW | R | - | - | **NO** |
 | TOOLS.md | RW | R (suggest) | - | - | **NO** |
-| passive/decisions.md | RW | R+append | - | RW | **NO** |
-| active/recent.md | RW | R | W (append) | RW | **NO** |
-| MEMORY.md | RW | R+append | - | W | **NO** |
+| passive/*.md | RW | RW (reflection) | - | decay-sweep prunes | **NO** |
+| active/working-set.md | RW | R | - | working-set-build writes | **NO** |
+| active/episodic.md | RW | R | W (append) | active-writer appends, archive-roll relocates | **NO** |
+| MEMORY.md | RW | R+append | - | - | **NO** |
 | LEARNINGS.md | RW | RW | - | - | **NO** |
 | Skills | RW | R+execute | - | - | shared |
 | Secrets | RW | **NEVER** | R | R | **NEVER** |

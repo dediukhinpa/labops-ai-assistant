@@ -180,7 +180,7 @@ Full, layer-specific instructions live in each component's README:
 
 > Runtime & lifecycle — how an agent *lives*. Full docs: [`agent-architecture/README.md`](agent-architecture/README.md).
 
-- **`agent-template/`** — the scaffolder: `install.sh` renders `templates/*.template` into a per-agent workspace `~/.claude-lab/<agent-id>/.claude/` (`CLAUDE.md` = identity, `settings.json` = hooks + `model`, `.mcp.json` = second_brain endpoints). Memory is layered: identity + `core/` rules + `active/recent.md` working set + shared second_brain over MCP.
+- **`agent-template/`** — the scaffolder: `install.sh` renders `templates/*.template` into a per-agent workspace `~/.claude-lab/<agent-id>/.claude/` (`CLAUDE.md` = identity, `settings.json` = hooks + `model`, `.mcp.json` = second_brain endpoints). Memory is role-based: identity + `core/` rules + `active/` (episodic diary + materialised recall) + `passive/` (distilled insights) + `archive/`, plus the shared second_brain over MCP. Consolidation is event-driven (in-session reflection on checkpoint / idle), not cron — see [`agent-architecture/docs/MEMORY-REDESIGN.md`](agent-architecture/docs/MEMORY-REDESIGN.md).
 - **`orchestration/`** — the running swarm: `watchdog.sh <agent>` is the systemd `ExecStart`; it launches `start-agent.sh` which sources `channel.env`, computes a per-agent webhook port (base `6000 + roster index`), and starts tmux session `labops-<agent>`. `lib/agents.sh` resolves the roster dynamically; `lib/notify.sh` sends throttled Telegram alerts.
 - **`skills/`** — bundled Claude Code skills; **`create-agent`** is the key one — it drives a full deployment (role → scaffold → bot → voice → token → systemd → smoke) so the swarm grows itself.
 

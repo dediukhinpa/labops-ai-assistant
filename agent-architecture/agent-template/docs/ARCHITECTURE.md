@@ -28,10 +28,11 @@ Claude Code launch
 └── {agent}/.claude/CLAUDE.md     agent SOUL
     ├── @core/USER.md             operator profile
     ├── @core/rules.md            boundaries
-    ├── @core/passive/decisions.md   rolling 14 days
-    └── @core/active/handoff.md      compact extract (last 10 entries)
+    ├── @core/passive/*.md          semantic insights (decisions/errors/preferences)
+    ├── @core/active/handoff.md      compact extract (last 10 entries)
+    └── @core/active/working-set.md  materialised recall for the current task
 
-~10-25K tokens depending on ACTIVE size
+~10-25K tokens (episodic.md is NOT loaded -- on-demand Read only)
 ```
 
 ## Session Management
@@ -89,18 +90,21 @@ GATEWAY (systemd service, always running)
     |
     v
 MEMORY WRITE (parallel, after every message)
-    | A. ACTIVE: append to core/active/recent.md (ALWAYS, all source tags)
+    | A. ACTIVE: append to core/active/episodic.md (ALWAYS, all source tags)
     |    - fcntl.LOCK_EX for concurrent safety
     |    - Format: ### YYYY-MM-DD HH:MM [source_tag]
     |    - Snippet: 200 chars user + 200 chars agent
     |    - Emergency trim: if >20KB, keep last 600 lines
     |
-    | B. second_brain: synced via Stop hook + daily cron (NOT per-message)
-    |    - Stop hook: runs second_brain-memory_router-on-start.sh on session end (background)
-    |    - Cron: 06:30 UTC daily (after memory rotation scripts)
-    |    - Uploads ACTIVE (last 10 entries) + PASSIVE (full) as markdown
-    |    - Method: temp_upload -> add_resource to second_brain://notes/
-    |    - Idempotent: same date = same URI = overwrites previous
+    | B. PASSIVE: insights consolidated by the LIVE SESSION during reflection
+    |    - Nudged by reflect-nudge.sh (checkpoint every 20 turns + watchdog idle 10 min)
+    |    - Session reads episodic.md -> writes passive/*.md (memory-consolidate skill)
+    |    - Important knowledge dual-written to second_brain (create_decision_note, ...)
+    |    - No background model: `claude -p` is forbidden repo-wide
+    |
+    | C. RECALL: working-set-build.sh (SessionStart + worthy prompts)
+    |    - second_brain recall (RRF, hard-timeout, non-blocking) + local passive/ lexical
+    |    - Writes active/working-set.md; logs hits to recall-events.jsonl
     |
     v
 REPLY to operator in Telegram (markdown -> HTML, chunked at 4000 chars)
@@ -108,23 +112,37 @@ REPLY to operator in Telegram (markdown -> HTML, chunked at 4000 chars)
 
 This is the critical path. Every message follows this exact sequence. Memory writes never block the response -- they happen in parallel after Claude Code returns.
 
-## Why Memory Compression Matters
+## Why Keeping Episodic Out of Context Matters
 
-Without compression, ACTIVE memory grows to 80KB+ per day (before cron runs). After daily cron rotation, ACTIVE is typically 8-20KB. At 150+ messages per day with ~500 bytes each, this is expected. The problem: 80KB of raw conversation logs equals ~36,000 tokens -- roughly 70% of the total startup context at Opus level.
+The episodic diary (`episodic.md`) grows to 80KB+ per day. The redesign never loads
+it into context: what loads is the compact `handoff.md` + `working-set.md` +
+consolidated `passive/` insights. The raw diary stays on-demand (Read tool) and is
+size-rolled to `archived/episodic/` by `archive-roll.sh`. The problem it avoids:
+80KB of raw conversation logs equals ~36,000 tokens -- roughly 70% of the startup
+context at Opus level.
 
-Quality degrades when context is bloated with raw logs. The agent spends most of its attention on unstructured conversation history instead of identity, rules, and tools. This is measurable -- an agent with 80KB of raw ACTIVE performs noticeably worse at following instructions than one with 20KB of structured facts.
+Quality degrades when context is bloated with raw logs. The agent spends most of its
+attention on unstructured conversation history instead of identity, rules, and tools.
+This is measurable -- an agent carrying 80KB of raw episodic performs noticeably
+worse at following instructions than one with 20KB of structured facts.
 
-Sonnet compression solves this: 110 raw entries compress into 15-20 key facts (80% reduction). The 4 cron scripts (rotate-passive, trim-active, compress-passive, memory-rotate) run daily and keep memory clean.
+Consolidation solves this WITHOUT a background model: the **live session** reflects
+(nudged by `reflect-nudge.sh`) and distils many raw turns into a handful of semantic
+insights in `passive/`. Episodic text is never model-compressed -- only role-promoted
+(into insights) and size/usage-rolled (into `archived/`) by pure bash.
 
-| Metric | Without compression | With compression |
+| Metric | Loading raw episodic | Consolidated (recall + insights) |
 |--------|--------------------|--------------------|
-| ACTIVE size (end of day) | 80 KB+ | 10-20 KB |
-| Tokens consumed by ACTIVE | ~36,000 | ~4,500-9,000 |
+| Episodic in context | 80 KB+ | 0 (on-demand only) |
+| Loaded memory (handoff + working-set + passive) | n/a | 5-11 KB |
+| Tokens consumed by memory | ~36,000 | ~2,500-5,000 |
 | Startup context used | ~70% | ~10-15% |
-| Sonnet cost | n/a | $0 (Max subscription) |
+| Background model cost | n/a | $0 (reflection runs in the live session) |
 | Agent instruction-following | Degraded | Optimal |
 
-The compression system exists not to save money but to keep context CLEAN. An agent with 80KB of raw conversation logs performs worse than one with 20KB of structured facts -- even though both fit within the 1M token window.
+The system exists not to save money but to keep context CLEAN. An agent carrying 80KB
+of raw conversation logs performs worse than one with a few KB of structured facts --
+even though both fit within the 1M token window.
 
 ## Gateway Flow (Telegram → Claude Code)
 
@@ -139,8 +157,8 @@ Gateway (systemd service)
     │ 4. Transcribe voice ([Groq](https://groq.com) Whisper — whisper-large-v3-turbo)
     │ 5. Launch Claude Code (claude -p --resume <session_id>)
     │ 6. Stream progress (real-time status in Telegram: plan, tools, subagents)
-    │ 7. Write to ACTIVE (core/active/recent.md — fcntl lock, 200 char snippets)
-    │ 8. Write to ACTIVE completes (second_brain synced separately via Stop hook + cron)
+    │ 7. Write to ACTIVE (core/active/episodic.md — fcntl lock, 200 char snippets)
+    │ 8. Insights consolidated in-session during reflection (dual-write to second_brain)
     │ 9. Reply in Telegram (markdown → HTML, chunked at 4000 chars)
     ▼
 Claude Code (model)
@@ -172,81 +190,65 @@ MCP_HOST = host/IP only (set to Tailscale IP for multi-VPS — check ss -tlnp)
 │   ├── User: claude-code    (own embeddings)
 │   └── User: jarvis         (own embeddings)
 │
-├── Write: batch sync (NOT per-message)
-│   Trigger 1: Stop hook (runs second_brain-memory_router-on-start.sh on session end)
-│   Trigger 2: Cron 06:30 UTC daily (after memory rotation)
-│   Method:
-│     POST ${SECOND_BRAIN_MEMORY_URL} (create_external_note via JSON-RPC) → upload markdown
-│     POST ${SECOND_BRAIN_MEMORY_URL}                 → add_resource (indexes + embeds)
-│   Target: second_brain://notes/{agent}-sessions/{YYYY-MM-DD}
-│   Content: last 10 ACTIVE entries + full PASSIVE decisions
+├── Write: dual-write of insights by the LIVE SESSION during reflection
+│   Trigger: reflect-nudge.sh (checkpoint every 20 turns + watchdog idle 10 min)
+│   Method: create_decision_note / create_error_pattern_note / ... (recall-before-write)
+│   No background model, no batch upload: `claude -p` is forbidden repo-wide
 │
-└── Search: when old context needed (>24h)
+└── Recall: working-set-build.sh (SessionStart + worthy prompts)
     POST ${SECOND_BRAIN_MEMORY_ROUTER_URL} (JSON-RPC tools/call recall)
-    {"query": "topic", "limit": 10}
+    {"query": "topic", "limit": 5}   # RRF, hard-timeout, non-blocking; fused with local passive/
 ```
 
 Install: `pip install second_brain --upgrade`
 
-## Memory Rotation and Cron
+## Memory Consolidation (event-driven) and Housekeeping
 
-Complete data flow with Sonnet-based compression:
+Consolidation is **event-driven**, not cron. Reflection is done by the **live
+session** (no background model -- `claude -p` is forbidden); scripts only nudge it.
 
 ```
-Gateway (every message) -> ACTIVE (recent.md)
+Stop hook (every turn) -> active-writer.sh -> ACTIVE (episodic.md, salience-tagged)
+  |     raw, append-only diary -- NEVER model-compressed
   |
-  +-- Emergency trim (auto, >20KB, bash)
-  |     Keeps last 600 lines, trims from top
+  +-- reflect-nudge.sh (checkpoint every 20 turns + watchdog idle 10 min)
+  |     -> agent_router.notify -> LIVE SESSION runs memory-consolidate skill
+  |     -> reads episodic.md, writes passive/*.md insights (YAML frontmatter),
+  |        dual-writes important knowledge to second_brain
   |
-  +-- trim-active.sh (cron 05:00 UTC, Sonnet)
-  |     Entries >24h -> Sonnet summary -> PASSIVE
-  |     >40 entries remaining -> oldest also compressed
-  |     Fallback: bash (first 120 chars if Sonnet unavailable)
-  |     Runs from /tmp to avoid loading CLAUDE.md (~35K tokens saved)
-  |     flock for safe concurrent access with gateway
+  +-- working-set-build.sh (SessionStart + worthy prompts)
+  |     recall = second_brain (RRF, hard-timeout) + local passive/ lexical
+  |     -> active/working-set.md; logs hits to recall-events.jsonl (reinforcement)
   |
-  +-- compress-passive.sh (cron 06:00 UTC, Sonnet)
-  |     PASSIVE >10KB -> Sonnet re-compression by topic
-  |     110 raw entries -> 15-20 key facts
-  |     Skip if <10KB or <50 lines or Sonnet unavailable
-  |     Garbage protection: skip if Sonnet returns <3 lines
+  +-- decay-sweep.sh (nightly bash, no model)
+  |     reinforce recalled insights; evict never-recalled decayed ones (score<0.25)
+  |     -> archived/superseded/
   |
-  +-- rotate-passive.sh (cron 04:30 UTC, bash)
-  |     PASSIVE >14d -> ARCHIVE (pure bash, no model)
+  +-- archive-roll.sh (nightly bash, no model)
+  |     episodic.md >40KB -> archived/episodic/YYYY-MM.md (relocated, not summarised)
   |
-  +-- memory-rotate.sh (cron 21:00 UTC, bash)
-  |     ARCHIVE >5KB -> archived/YYYY-MM.md (pure bash)
-  |
-  +-- /compact command (manual, Sonnet)
-  |     Extract key facts from last 24h ACTIVE -> PASSIVE, trim ACTIVE to 24h
-  |
-  +-- /reset command (manual, Sonnet)
-        Save important context to ARCHIVE, start new session
+  +-- /compact, /reset (manual gateway commands)
+        Extract/save key context, start fresh session
 
-L4     -> second_brain, batch sync via Stop hook + daily cron (06:30 UTC)
-         Method: temp_upload + add_resource to second_brain://notes/
+L4     -> second_brain, dual-write of insights during in-session reflection
+         Method: create_decision_note / create_error_pattern_note (recall-before-write)
 ```
 
-### Recommended crontab
+Was **4 model crons** -> now **0 model crons + 1 optional bash housekeeping cron**.
+
+### Recommended crontab (optional, pure bash, no model)
 
 ```crontab
-# 1. Rotate PASSIVE: move >14d entries to ARCHIVE (bash, no model)
-30 4 * * * /path/to/rotate-passive.sh
+# Nightly housekeeping only. Consolidation is event-driven (hooks + watchdog).
+# 1. Decay sweep: reinforce recalled insights, evict decayed ones -> archived/superseded/
+0 3 * * * /path/to/decay-sweep.sh
 
-# 2. Trim ACTIVE: entries >24h -> Sonnet summary -> PASSIVE
-0 5 * * * /path/to/trim-active.sh
-
-# 3. Compress PASSIVE: Sonnet re-compression by topic (>10KB only)
-0 6 * * * /path/to/compress-passive.sh
-
-# 4. Sync to second_brain: ACTIVE+PASSIVE -> semantic search (bash + curl)
-30 6 * * * /path/to/second_brain-memory_router-on-start.sh
-
-# 5. Archive ARCHIVE: MEMORY.md >5KB -> archived/YYYY-MM.md (bash)
-0 21 * * * /path/to/memory-rotate.sh
+# 2. Archive roll: size-roll episodic.md -> archived/episodic/YYYY-MM.md
+5 3 * * * /path/to/archive-roll.sh
 ```
 
-Order: rotate-passive (clear old) -> trim-active (add new to PASSIVE) -> compress-passive (re-compress) -> second_brain-memory_router-on-start (upload to L4).
+Consolidation (episodic -> passive insights) needs no cron: it fires in-session on
+the checkpoint counter (every 20 turns) and on watchdog idle (10 min).
 
 ### Gateway commands for memory
 

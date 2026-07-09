@@ -100,7 +100,7 @@ bash plugin/scripts/install-hooks.sh \
 
 ## Memory hooks (опционально)
 
-Чтобы плагин писал turn'ы в `<workspace>/core/active/recent.md` + `<workspace_parent>/logs/verbose-YYYY-MM-DD.jsonl` (cognee cron подхватит автоматически), добавь в `config.json`:
+Чтобы плагин писал turn'ы в `<workspace>/core/active/episodic.md` + `<workspace_parent>/logs/verbose-YYYY-MM-DD.jsonl` (cognee cron подхватит автоматически), добавь в `config.json`:
 
 ```json
 {
