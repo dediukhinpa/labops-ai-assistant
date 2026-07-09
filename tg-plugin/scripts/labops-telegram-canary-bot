@@ -1,0 +1,904 @@
+#!/usr/bin/env python3
+"""Telegram canary smoke bot for the Labops tmux migration."""
+
+from __future__ import annotations
+
+import argparse
+import html
+import json
+import mimetypes
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable, TextIO
+from uuid import uuid4
+
+
+CANARY_AGENT = "canary"
+DEFAULT_RUNTIME_ROOT = "~/.claude-lab/shared/channel-runtime"
+DEFAULT_POLL_TIMEOUT = 20
+DEFAULT_IDLE_SLEEP = 1.0
+DEFAULT_CLAUDE_TIMEOUT = 120
+DEFAULT_CLAUDE_MAX_BUDGET_USD = "0.05"
+DEFAULT_GROQ_KEY_PATH = "~/.secrets/groq-api-key"
+TOKEN_PATTERN = re.compile(r"\b\d{5,}:[A-Za-z0-9_-]{10,}\b")
+
+
+class CanaryBotError(Exception):
+    pass
+
+
+class TelegramAPIError(CanaryBotError):
+    def __init__(self, status_code: int, description: str):
+        super().__init__(description)
+        self.status_code = status_code
+        self.description = description
+
+
+class ConfigError(CanaryBotError):
+    pass
+
+
+class ClaudeReplyError(CanaryBotError):
+    pass
+
+
+@dataclass(frozen=True)
+class CanaryBotConfig:
+    runtime_root: Path
+    token_path: Path
+    offset_path: Path
+    session_dir: Path
+    media_dir: Path
+
+    @classmethod
+    def from_runtime_root(cls, runtime_root: str | Path) -> "CanaryBotConfig":
+        root = Path(runtime_root).expanduser()
+        agent_root = root / CANARY_AGENT
+        return cls(
+            runtime_root=root,
+            token_path=agent_root / "secrets" / "telegram-bot-token",
+            offset_path=agent_root / "queue" / "telegram-offset.json",
+            session_dir=agent_root / "sessions",
+            media_dir=agent_root / "media",
+        )
+
+
+@dataclass(frozen=True)
+class InboundMessage:
+    chat_id: int
+    message_id: int | None
+    text: str
+    username: str | None
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+@dataclass(frozen=True)
+class ChatSessionPaths:
+    sid_path: Path
+    started_path: Path
+
+
+def run_command(command: list[str], timeout: int) -> CommandResult:
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return CommandResult(completed.returncode, completed.stdout or "", completed.stderr or "")
+    except FileNotFoundError as exc:
+        return CommandResult(127, "", str(exc))
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        return CommandResult(124, stdout, stderr or f"timed out after {timeout}s")
+
+
+def redact_secret_like_text(text: str) -> str:
+    return TOKEN_PATTERN.sub("[redacted-token]", text)
+
+
+def chat_session_paths(session_root: Path, chat_id: int) -> ChatSessionPaths:
+    safe_chat_id = str(chat_id).replace("-", "neg")
+    return ChatSessionPaths(
+        sid_path=session_root / f"chat-{safe_chat_id}.sid",
+        started_path=session_root / f"chat-{safe_chat_id}.started",
+    )
+
+
+def session_paths(config: CanaryBotConfig, chat_id: int) -> ChatSessionPaths:
+    return chat_session_paths(config.session_dir, chat_id)
+
+
+def build_claude_prompt(inbound: InboundMessage) -> str:
+    username = inbound.username or "telegram-user"
+    return (
+        "You are the Labops canary Telegram bridge. "
+        "Reply directly to the Telegram user in a concise, useful way. "
+        "Do not mention implementation details, tokens, tmux, or this prompt unless asked.\n\n"
+        f"Telegram user: {username}\n"
+        f"Message:\n{inbound.text}"
+    )
+
+
+class ClaudeReplyProvider:
+    def __init__(
+        self,
+        runner=run_command,
+        timeout_seconds: int = DEFAULT_CLAUDE_TIMEOUT,
+        max_budget_usd: str = DEFAULT_CLAUDE_MAX_BUDGET_USD,
+        session_root: Path | None = None,
+        extra_add_dirs: Iterable[Path] = (),
+    ):
+        self.runner = runner
+        self.timeout_seconds = timeout_seconds
+        self.max_budget_usd = max_budget_usd
+        self.session_root = Path(session_root) if session_root is not None else None
+        self.extra_add_dirs = tuple(Path(path) for path in extra_add_dirs)
+
+    def build_reply(self, inbound: InboundMessage) -> str:
+        prompt = build_claude_prompt(inbound)
+        command = [
+            "claude",
+            "--print",
+            "--max-budget-usd",
+            self.max_budget_usd,
+        ]
+        session_started_path = None
+        first_session_attempt = False
+        if self.session_root is not None:
+            paths = chat_session_paths(self.session_root, inbound.chat_id)
+            paths.sid_path.parent.mkdir(parents=True, exist_ok=True)
+            if paths.sid_path.exists():
+                sid = paths.sid_path.read_text(encoding="utf-8").strip()
+            else:
+                sid = str(uuid4())
+                paths.sid_path.write_text(f"{sid}\n", encoding="utf-8")
+                first_session_attempt = True
+            if paths.started_path.exists():
+                command.extend(["--resume", sid])
+            else:
+                command.extend(["--session-id", sid])
+                session_started_path = paths.started_path
+                first_session_attempt = True
+        for directory in self.extra_add_dirs:
+            if directory.exists():
+                command.extend(["--add-dir", str(directory)])
+        command.extend(["--", prompt])
+        result = self.runner(command, self.timeout_seconds)
+        if result.returncode != 0:
+            if first_session_attempt and self.session_root is not None:
+                paths = chat_session_paths(self.session_root, inbound.chat_id)
+                paths.sid_path.unlink(missing_ok=True)
+                paths.started_path.unlink(missing_ok=True)
+            detail = redact_secret_like_text((result.stderr or result.stdout or "claude command failed").strip())
+            raise ClaudeReplyError(detail)
+        reply = result.stdout.strip()
+        if not reply:
+            raise ClaudeReplyError("claude returned an empty reply")
+        if session_started_path is not None:
+            session_started_path.write_text("1\n", encoding="utf-8")
+        return reply
+
+
+class TelegramClient:
+    def __init__(self, token: str):
+        self.token = token
+        self.base_url = f"https://api.telegram.org/bot{token}"
+
+    def call(self, method: str, payload: dict[str, object]) -> dict[str, object]:
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/{method}",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=DEFAULT_POLL_TIMEOUT + 10) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            description = exc.reason
+            try:
+                data = json.loads(exc.read().decode("utf-8"))
+                description = str(data.get("description", description))
+            except (json.JSONDecodeError, OSError):
+                pass
+            raise TelegramAPIError(exc.code, description) from exc
+        except urllib.error.URLError as exc:
+            raise TelegramAPIError(0, str(exc.reason)) from exc
+
+        if not data.get("ok"):
+            raise TelegramAPIError(int(data.get("error_code", 0)), str(data.get("description", "Telegram API error")))
+        return data
+
+    def get_updates(self, offset: int | None, timeout: int) -> list[dict[str, object]]:
+        payload: dict[str, object] = {
+            "timeout": timeout,
+            "allowed_updates": ["message"],
+        }
+        if offset is not None:
+            payload["offset"] = offset
+        data = self.call("getUpdates", payload)
+        result = data.get("result", [])
+        if not isinstance(result, list):
+            raise TelegramAPIError(0, "Telegram getUpdates returned a non-list result")
+        return result
+
+    def send_message(self, chat_id: int, text: str, reply_to_message_id: int | None = None, html: bool = True) -> None:
+        rendered = markdown_to_telegram_html(text) if html else text
+        parse_mode = "HTML" if html else None
+        for index, chunk in enumerate(chunk_telegram_text(rendered)):
+            payload: dict[str, object] = {
+                "chat_id": chat_id,
+                "text": chunk,
+                "disable_web_page_preview": True,
+            }
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
+            if index == 0 and reply_to_message_id is not None:
+                payload["reply_to_message_id"] = reply_to_message_id
+                payload["allow_sending_without_reply"] = True
+            try:
+                self.call("sendMessage", payload)
+            except TelegramAPIError as exc:
+                if parse_mode and is_html_parse_error(exc.description):
+                    payload.pop("parse_mode", None)
+                    self.call("sendMessage", payload)
+                    continue
+                raise
+
+    def set_reaction(self, chat_id: int, message_id: int, emoji: str = "\U0001f440") -> None:
+        try:
+            self.call(
+                "setMessageReaction",
+                {
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "reaction": [{"type": "emoji", "emoji": emoji}],
+                },
+            )
+        except TelegramAPIError:
+            pass
+
+    def download_file(self, file_id: str, media_type: str, file_name: str | None, media_root: Path) -> Path | None:
+        try:
+            data = self.call("getFile", {"file_id": file_id})
+            result = data.get("result", {})
+            if not isinstance(result, dict):
+                return None
+            file_path = result.get("file_path")
+            if not isinstance(file_path, str) or not file_path:
+                return None
+            media_root.mkdir(parents=True, exist_ok=True)
+            suffix = Path(file_path).suffix or media_extension(media_type, file_name)
+            stem = sanitize_filename(Path(file_name or file_path).stem) or media_type
+            local_path = media_root / f"{stem}-{uuid4()}{suffix}"
+            request = urllib.request.Request(f"https://api.telegram.org/file/bot{self.token}/{file_path}", method="GET")
+            with urllib.request.urlopen(request, timeout=60) as response:
+                local_path.write_bytes(response.read())
+            return local_path
+        except (OSError, TelegramAPIError, urllib.error.URLError):
+            return None
+
+
+def sanitize_filename(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-")[:48]
+
+
+def media_extension(media_type: str, file_name: str | None) -> str:
+    if file_name:
+        suffix = Path(file_name).suffix
+        if suffix:
+            return suffix
+    return {
+        "photo": ".jpg",
+        "voice": ".ogg",
+        "audio": ".mp3",
+        "video": ".mp4",
+        "video_note": ".mp4",
+        "sticker": ".webp",
+        "document": ".bin",
+    }.get(media_type, ".bin")
+
+
+def is_html_parse_error(description: str) -> bool:
+    lowered = description.lower()
+    return "parse" in lowered and ("entity" in lowered or "entities" in lowered or "html" in lowered)
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    placeholders: dict[str, str] = {}
+
+    def save_code_block(match: re.Match[str]) -> str:
+        key = f"\0code{len(placeholders)}\0"
+        code = html.escape(match.group(2).rstrip("\n"))
+        language = html.escape(match.group(1) or "")
+        class_attr = f' class="language-{language}"' if language else ""
+        placeholders[key] = f"<pre><code{class_attr}>{code}</code></pre>"
+        return key
+
+    rendered = re.sub(r"```([A-Za-z0-9_-]+)?\n(.*?)```", save_code_block, text, flags=re.DOTALL)
+
+    def save_inline_code(match: re.Match[str]) -> str:
+        key = f"\0inline{len(placeholders)}\0"
+        placeholders[key] = f"<code>{html.escape(match.group(1))}</code>"
+        return key
+
+    rendered = re.sub(r"`([^`\n]+)`", save_inline_code, rendered)
+    rendered = html.escape(rendered)
+    rendered = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", rendered)
+    rendered = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<i>\1</i>", rendered)
+    rendered = re.sub(r"~~([^~\n]+)~~", r"<s>\1</s>", rendered)
+    rendered = re.sub(r"^#{1,6}\s+(.+)$", r"<b>\1</b>", rendered, flags=re.MULTILINE)
+    for key, value in placeholders.items():
+        rendered = rendered.replace(html.escape(key), value)
+    return rendered
+
+
+def chunk_telegram_text(text: str, limit: int = 4000) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in text.split("\n\n"):
+        separator = "\n\n" if current else ""
+        if len(current) + len(separator) + len(paragraph) <= limit:
+            current = f"{current}{separator}{paragraph}"
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        if len(paragraph) <= limit:
+            current = paragraph
+            continue
+        for index in range(0, len(paragraph), limit):
+            chunks.append(paragraph[index : index + limit])
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def runtime_root_from_env(env: dict[str, str]) -> Path:
+    return Path(env.get("LABOPS_CHANNEL_RUNTIME_ROOT", DEFAULT_RUNTIME_ROOT)).expanduser()
+
+
+def load_token(config: CanaryBotConfig) -> str:
+    if not config.token_path.exists():
+        raise ConfigError("canary_token_missing")
+    token = config.token_path.read_text(encoding="utf-8").strip()
+    if not token:
+        raise ConfigError("canary_token_empty")
+    return token
+
+
+class GroqTranscriber:
+    def __init__(self, key_path: str | Path = DEFAULT_GROQ_KEY_PATH, language: str = "ru"):
+        self.key_path = Path(key_path).expanduser()
+        self.language = language
+
+    def load_key(self) -> str | None:
+        env_key = os.environ.get("GROQ_API_KEY", "").strip()
+        if env_key:
+            return env_key
+        if self.key_path.exists():
+            value = self.key_path.read_text(encoding="utf-8").strip()
+            return value or None
+        return None
+
+    def transcribe(self, path: Path) -> str | None:
+        key = self.load_key()
+        if not key:
+            return None
+        boundary = f"----labops-canary-{uuid4().hex}"
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        fields = {
+            "model": "whisper-large-v3-turbo",
+            "response_format": "text",
+            "language": self.language,
+        }
+        parts: list[bytes] = []
+        for name, value in fields.items():
+            parts.extend(
+                [
+                    f"--{boundary}\r\n".encode("utf-8"),
+                    f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+                    f"{value}\r\n".encode("utf-8"),
+                ]
+            )
+        parts.extend(
+            [
+                f"--{boundary}\r\n".encode("utf-8"),
+                f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'.encode("utf-8"),
+                f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
+                path.read_bytes(),
+                b"\r\n",
+                f"--{boundary}--\r\n".encode("utf-8"),
+            ]
+        )
+        request = urllib.request.Request(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            data=b"".join(parts),
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.read().decode("utf-8", errors="replace").strip() or None
+        except (OSError, urllib.error.URLError):
+            return None
+
+
+def read_last_update_id(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    value = path.read_text(encoding="utf-8").strip()
+    if not value:
+        return None
+    return int(value)
+
+
+def write_last_update_id(path: Path, update_id: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp_path.write_text(f"{update_id}\n", encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def update_chat_id(update: dict[str, object]) -> int | None:
+    message = update.get("message")
+    if not isinstance(message, dict):
+        return None
+    chat = message.get("chat")
+    if not isinstance(chat, dict):
+        return None
+    chat_id = chat.get("id")
+    return chat_id if isinstance(chat_id, int) else None
+
+
+def update_message_id(update: dict[str, object]) -> int | None:
+    message = update.get("message")
+    if not isinstance(message, dict):
+        return None
+    message_id = message.get("message_id")
+    return message_id if isinstance(message_id, int) else None
+
+
+def update_username(update: dict[str, object]) -> str | None:
+    message = update.get("message")
+    if not isinstance(message, dict):
+        return None
+    from_user = message.get("from")
+    if not isinstance(from_user, dict):
+        return None
+    username = from_user.get("username")
+    return username if isinstance(username, str) else None
+
+
+def update_text(update: dict[str, object]) -> str:
+    message = update.get("message")
+    if not isinstance(message, dict):
+        return ""
+    for key in ("text", "caption"):
+        value = message.get(key)
+        if isinstance(value, str) and value.strip():
+                return normalize_inbound_text(value.strip())
+    return "(non-text Telegram message)"
+
+
+def update_message(update: dict[str, object]) -> dict[str, object]:
+    message = update.get("message")
+    return message if isinstance(message, dict) else {}
+
+
+def normalize_inbound_text(text: str) -> str:
+    if not text.startswith("/"):
+        return text
+    command, separator, rest = text.partition(" ")
+    command_base = command.split("@", 1)[0].lower()
+    if command_base != "/goat":
+        return text
+    return "/goal" + (separator + rest if separator else "")
+
+
+def parse_command(text: str) -> tuple[str, str] | None:
+    if not text.startswith("/"):
+        return None
+    command, separator, rest = text.partition(" ")
+    command_base = command.split("@", 1)[0].lower()
+    return command_base, rest if separator else ""
+
+
+def forwarded_label(message: dict[str, object]) -> str | None:
+    if isinstance(message.get("forward_sender_name"), str):
+        return str(message["forward_sender_name"])
+    forward_from = message.get("forward_from")
+    if isinstance(forward_from, dict):
+        username = forward_from.get("username")
+        first_name = forward_from.get("first_name")
+        if isinstance(username, str):
+            return f"@{username}"
+        if isinstance(first_name, str):
+            return first_name
+    forward_from_chat = message.get("forward_from_chat")
+    if isinstance(forward_from_chat, dict) and isinstance(forward_from_chat.get("title"), str):
+        return str(forward_from_chat["title"])
+    forward_origin = message.get("forward_origin")
+    if isinstance(forward_origin, dict):
+        sender_name = forward_origin.get("sender_user_name") or forward_origin.get("sender_user")
+        if isinstance(sender_name, str):
+            return sender_name
+    return None
+
+
+def compact_reply_context(message: dict[str, object]) -> dict[str, object] | None:
+    reply = message.get("reply_to_message")
+    if not isinstance(reply, dict):
+        return None
+    from_user = reply.get("from") if isinstance(reply.get("from"), dict) else {}
+    context: dict[str, object] = {
+        "message_id": reply.get("message_id"),
+        "from": from_user.get("username") or from_user.get("first_name"),
+    }
+    for key in ("text", "caption"):
+        value = reply.get(key)
+        if isinstance(value, str) and value.strip():
+            context[key] = value.strip()[:1000]
+            break
+    if "text" not in context and "caption" not in context:
+        context["media"] = media_type_from_message(reply) or "non-text"
+    return context
+
+
+def media_type_from_message(message: dict[str, object]) -> str | None:
+    if message.get("photo"):
+        return "photo"
+    for media_type in ("voice", "audio", "video_note", "video", "document", "sticker"):
+        if media_type in message:
+            return media_type
+    return None
+
+
+def media_ref_from_message(message: dict[str, object]) -> dict[str, object] | None:
+    if isinstance(message.get("photo"), list) and message["photo"]:
+        photos = [item for item in message["photo"] if isinstance(item, dict)]
+        if not photos:
+            return None
+        largest = photos[-1]
+        return {
+            "type": "photo",
+            "file_id": largest.get("file_id"),
+            "file_name": None,
+            "mime_type": "image/jpeg",
+            "file_size": largest.get("file_size"),
+        }
+    for media_type in ("voice", "audio", "video_note", "video", "document", "sticker"):
+        media = message.get(media_type)
+        if isinstance(media, dict):
+            return {
+                "type": media_type,
+                "file_id": media.get("file_id"),
+                "file_name": media.get("file_name"),
+                "mime_type": media.get("mime_type"),
+                "file_size": media.get("file_size"),
+            }
+    return None
+
+
+def describe_media(
+    message: dict[str, object],
+    config: CanaryBotConfig,
+    client: TelegramClient,
+    transcriber: object | None,
+) -> str | None:
+    media = media_ref_from_message(message)
+    if media is None:
+        return None
+    media_type = str(media.get("type"))
+    file_id = media.get("file_id")
+    file_name = media.get("file_name")
+    mime_type = media.get("mime_type")
+    file_size = media.get("file_size")
+    parts = [
+        f"type={media_type}",
+        f"file_id={file_id}" if file_id else "file_id=unknown",
+    ]
+    if file_name:
+        parts.append(f"file_name={file_name}")
+    if mime_type:
+        parts.append(f"mime_type={mime_type}")
+    if isinstance(file_size, int):
+        parts.append(f"file_size={file_size}")
+    local_path = None
+    if isinstance(file_id, str) and hasattr(client, "download_file"):
+        local_path = client.download_file(file_id, media_type, file_name if isinstance(file_name, str) else None, config.media_dir)
+        if local_path is not None:
+            parts.append(f"local_path={local_path}")
+    if media_type in ("voice", "audio", "video_note"):
+        transcript = None
+        if local_path is not None and transcriber is not None and hasattr(transcriber, "transcribe"):
+            try:
+                transcript = transcriber.transcribe(local_path)
+            except OSError:
+                transcript = None
+        if transcript:
+            parts.append(f"transcript={transcript}")
+        else:
+            parts.append("transcript=unavailable")
+    return "[media: " + "; ".join(str(part) for part in parts) + "]"
+
+
+def build_inbound_text(
+    update: dict[str, object],
+    config: CanaryBotConfig,
+    client: TelegramClient,
+    transcriber: object | None,
+) -> str:
+    message = update_message(update)
+    base_text = update_text(update)
+    context: list[str] = []
+    label = forwarded_label(message)
+    if label:
+        context.append(f"[source: forwarded from: {label}]")
+    reply_context = compact_reply_context(message)
+    if reply_context:
+        context.append("[reply_to_message]\n" + json.dumps(reply_context, ensure_ascii=False, sort_keys=True))
+    media_description = describe_media(message, config, client, transcriber)
+    if media_description:
+        context.append(media_description)
+    if not context:
+        return base_text
+    return "\n\n".join([*context, f"Message:\n{base_text}"])
+
+
+def handle_local_command(config: CanaryBotConfig, inbound: InboundMessage) -> str | None:
+    parsed = parse_command(inbound.text)
+    if parsed is None:
+        return None
+    command, args = parsed
+    if command == "/help":
+        return (
+            "<b>gateway commands</b>\n\n"
+            "<code>/goal</code> -- send a GoalBuddy task to Claude\n"
+            "<code>/goat</code> -- alias for /goal\n"
+            "<code>/status</code> -- session and canary status\n"
+            "<code>/reset force</code> or <code>/new force</code> -- reset canary session\n"
+            "<code>/compact</code> -- report compact availability\n"
+            "<code>/stop</code> or <code>/cancel</code> -- stop status for this sync runner\n"
+            "<code>/help</code> -- this help"
+        )
+    if command == "/status":
+        paths = session_paths(config, inbound.chat_id)
+        if paths.sid_path.exists():
+            sid = paths.sid_path.read_text(encoding="utf-8").strip()
+            return (
+                "<b>session active</b>\n"
+                f"id: <code>{html.escape(sid[:8])}...</code>\n"
+                f"media dir: <code>{html.escape(str(config.media_dir))}</code>"
+            )
+        return (
+            "<b>session empty</b>\n\n"
+            "next Claude message will start a new session with <code>--session-id</code>"
+        )
+    if command in ("/reset", "/new"):
+        if args.strip().lower() != "force":
+            return (
+                "<b>canary reset requires force</b>\n\n"
+                "Use <code>/reset force</code> to drop only the canary session files. "
+                "Handoff reset is not enabled in canary."
+            )
+        paths = session_paths(config, inbound.chat_id)
+        old_sid = paths.sid_path.read_text(encoding="utf-8").strip() if paths.sid_path.exists() else ""
+        paths.sid_path.unlink(missing_ok=True)
+        paths.started_path.unlink(missing_ok=True)
+        if old_sid:
+            return f"<b>session reset (force)</b>\nold: <code>{html.escape(old_sid[:8])}...</code>\nnext message = new session"
+        return "<b>session already empty</b>\nnext message = new session"
+    if command == "/compact":
+        paths = session_paths(config, inbound.chat_id)
+        if not paths.sid_path.exists():
+            return "<b>no session</b> -- nothing to compact"
+        return "<b>compact queued manually only</b>\nCanary has session state, but Jarvis hot/warm memory compaction is not enabled here yet."
+    if command in ("/stop", "/cancel"):
+        return "<b>nothing to stop</b> -- canary uses a synchronous Claude runner for one message at a time"
+    return None
+
+
+def inbound_from_update(
+    update: dict[str, object],
+    chat_id: int,
+    config: CanaryBotConfig,
+    client: TelegramClient,
+    transcriber: object | None = None,
+) -> InboundMessage:
+    return InboundMessage(
+        chat_id=chat_id,
+        message_id=update_message_id(update),
+        text=build_inbound_text(update, config, client, transcriber),
+        username=update_username(update),
+    )
+
+
+def build_ack_text() -> str:
+    return f"labops canary ack: message received at {utc_now()}"
+
+
+def write_json_line(stdout: TextIO, payload: dict[str, object]) -> None:
+    stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+    stdout.flush()
+
+
+def write_error(stderr: TextIO, reason: str, message: str) -> None:
+    stderr.write(f"{reason}: {message}\n")
+    stderr.flush()
+
+
+def run_once(
+    config: CanaryBotConfig,
+    client: TelegramClient,
+    poll_timeout: int,
+    stdout: TextIO = sys.stdout,
+    stderr: TextIO = sys.stderr,
+    reply_provider: ClaudeReplyProvider | None = None,
+    transcriber: object | None = None,
+) -> int:
+    try:
+        last_update_id = read_last_update_id(config.offset_path)
+        offset = last_update_id + 1 if last_update_id is not None else None
+        updates = client.get_updates(offset=offset, timeout=poll_timeout)
+    except TelegramAPIError as exc:
+        if exc.status_code == 409:
+            write_error(stderr, "telegram_getupdates_conflict", "another consumer is already polling this bot token")
+            return 4
+        write_error(stderr, "telegram_api_error", f"status={exc.status_code} {exc.description}")
+        return 5
+    except OSError as exc:
+        write_error(stderr, "canary_state_error", str(exc))
+        return 5
+
+    processed = 0
+    max_update_id = last_update_id
+    for update in updates:
+        update_id = update.get("update_id")
+        if isinstance(update_id, int):
+            max_update_id = update_id if max_update_id is None else max(max_update_id, update_id)
+        chat_id = update_chat_id(update)
+        if chat_id is None:
+            continue
+        inbound = inbound_from_update(update, chat_id, config, client, transcriber)
+        if inbound.message_id is not None and hasattr(client, "set_reaction"):
+            try:
+                client.set_reaction(chat_id, inbound.message_id)
+            except TelegramAPIError:
+                pass
+        reply_text = build_ack_text()
+        local_reply = handle_local_command(config, inbound)
+        if local_reply is not None:
+            reply_text = local_reply
+        elif reply_provider is not None:
+            try:
+                reply_text = reply_provider.build_reply(inbound)
+            except ClaudeReplyError as exc:
+                detail = redact_secret_like_text(str(exc))
+                write_error(stderr, "claude_reply_error", detail)
+                reply_text = f"labops canary Claude fallback unavailable: {detail}"
+        try:
+            client.send_message(chat_id, reply_text, reply_to_message_id=inbound.message_id, html=True)
+            processed += 1
+        except TelegramAPIError as exc:
+            write_error(stderr, "telegram_send_error", f"status={exc.status_code} {exc.description}")
+            return 5
+
+    if max_update_id is not None:
+        write_last_update_id(config.offset_path, max_update_id)
+
+    write_json_line(
+        stdout,
+        {
+            "agent": CANARY_AGENT,
+            "processed": processed,
+            "status": "ok",
+            "updates": len(updates),
+        },
+    )
+    return 0
+
+
+def run_forever(
+    config: CanaryBotConfig,
+    client: TelegramClient,
+    poll_timeout: int,
+    idle_sleep: float,
+    stdout: TextIO = sys.stdout,
+    stderr: TextIO = sys.stderr,
+    reply_provider: ClaudeReplyProvider | None = None,
+    transcriber: object | None = None,
+) -> int:
+    write_json_line(stdout, {"agent": CANARY_AGENT, "status": "running", "started_at": utc_now()})
+    while True:
+        code = run_once(config, client, poll_timeout, stdout, stderr, reply_provider, transcriber)
+        if code in (4, 5):
+            return code
+        time.sleep(idle_sleep)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="labops-telegram-canary-bot",
+        description="Run a canary-only Telegram polling smoke bot for Labops migration testing.",
+    )
+    parser.add_argument("--runtime-root", default=None)
+    parser.add_argument("--once", action="store_true")
+    parser.add_argument("--poll-timeout", type=int, default=DEFAULT_POLL_TIMEOUT)
+    parser.add_argument("--idle-sleep", type=float, default=DEFAULT_IDLE_SLEEP)
+    parser.add_argument("--reply-mode", choices=("ack", "claude"), default="ack")
+    parser.add_argument("--claude-timeout", type=int, default=DEFAULT_CLAUDE_TIMEOUT)
+    parser.add_argument("--claude-max-budget-usd", default=DEFAULT_CLAUDE_MAX_BUDGET_USD)
+    parser.add_argument("--no-session-persistence", action="store_true")
+    parser.add_argument("--no-voice-transcription", action="store_true")
+    parser.add_argument("--groq-api-key-file", default=DEFAULT_GROQ_KEY_PATH)
+    return parser
+
+
+def main(
+    argv: Iterable[str] | None = None,
+    env: dict[str, str] | None = None,
+    stdout: TextIO = sys.stdout,
+    stderr: TextIO = sys.stderr,
+    client_factory=TelegramClient,
+) -> int:
+    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    effective_env = dict(os.environ if env is None else env)
+    root = Path(args.runtime_root).expanduser() if args.runtime_root else runtime_root_from_env(effective_env)
+    config = CanaryBotConfig.from_runtime_root(root)
+
+    try:
+        token = load_token(config)
+    except ConfigError as exc:
+        write_error(stderr, str(exc), "canary token file is missing or empty")
+        return 3
+
+    client = client_factory(token)
+    reply_provider = None
+    if args.reply_mode == "claude":
+        reply_provider = ClaudeReplyProvider(
+            timeout_seconds=args.claude_timeout,
+            max_budget_usd=args.claude_max_budget_usd,
+            session_root=None if args.no_session_persistence else config.session_dir,
+            extra_add_dirs=(config.media_dir,),
+        )
+    transcriber = None if args.no_voice_transcription else GroqTranscriber(args.groq_api_key_file)
+    if args.once:
+        return run_once(config, client, args.poll_timeout, stdout, stderr, reply_provider, transcriber)
+    try:
+        return run_forever(config, client, args.poll_timeout, args.idle_sleep, stdout, stderr, reply_provider, transcriber)
+    except KeyboardInterrupt:
+        write_json_line(stdout, {"agent": CANARY_AGENT, "status": "stopped"})
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

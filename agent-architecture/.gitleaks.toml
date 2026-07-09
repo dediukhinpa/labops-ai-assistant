@@ -1,0 +1,14 @@
+title = "labops gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known doc/test placeholders — not real secrets"
+paths = [
+  '''.*/tests?/.*''',
+]
+regexes = [
+  '''YOUR_[A-Z_]*TOKEN''',
+  '''sk-abcDEF1234567890token''',
+]

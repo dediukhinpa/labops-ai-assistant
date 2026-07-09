@@ -1,0 +1,17 @@
+[Unit]
+Description=second_brain backend health monitor (alerts the Operator on failures)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+# Which agent's bot relays ops alerts (bot token + chat resolved from its channel.env).
+Environment=MONITOR_AGENT=__MONITOR_AGENT__
+# Optional overrides:
+#   Environment=MONITOR_COMPONENTS=memory|second_brain-memory-mcp|5001 memory_router|second_brain-memory_router-mcp|5002 agent_router|second_brain-agent_router-mcp|5000 ingest|second_brain-ingest-worker| agent_routerw|second_brain-agent_router-worker| task|second_brain-task-mcp|5003
+#   Environment=WATCHDOG_ALERT_CHAT_ID=<dedicated ops chat id>
+#   Environment=WATCHDOG_TG_ALERTS=0   # disable alerting entirely
+ExecStart=__ORCH__/second_brain-monitor.sh
+StandardOutput=append:__LAB__/logs/second_brain-monitor.log
+StandardError=append:__LAB__/logs/second_brain-monitor.log

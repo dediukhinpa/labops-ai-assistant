@@ -1,0 +1,26 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.*
+!.env.example
+secrets/
+*.token
+*.key
+*.pem
+.DS_Store
+bun.lockb.bak
+coverage/
+.bun/
+# python test env / caches
+.venv/
+.venv-test/
+__pycache__/
+*.pyc
+# runtime state
+channel.env
+config.json
+bot.pid
+inbox/
+state/

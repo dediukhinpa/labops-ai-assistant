@@ -1,0 +1,19 @@
+# agents.conf — roster of agent-ids for the orchestration scripts.
+#
+# Copy this file to "$CLAUDE_LAB/agents.conf" (default: ~/.claude-lab/agents.conf)
+# and list one agent-id per line. The orchestration scripts read it via
+# lib/agents.sh (list_agents).
+#
+# Rules:
+#   - One agent-id per line.
+#   - Blank lines are ignored.
+#   - Everything after a '#' on a line is treated as a comment and ignored.
+#
+# If this file is absent, list_agents() falls back to scanning
+# "$CLAUDE_LAB"/*/.claude and using each parent directory name as an agent-id
+# (excluding shared, logs, mcp-servers, __pycache__).
+#
+# Example:
+# agent-one
+# agent-two
+# agent-three

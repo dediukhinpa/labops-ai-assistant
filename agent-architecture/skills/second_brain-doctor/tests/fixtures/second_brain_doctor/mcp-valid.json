@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "second_brain-memory": {
+      "type": "http",
+      "url": "https://mcp.labops.local/memory/mcp",
+      "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
+    },
+    "second_brain-memory_router": {
+      "type": "http",
+      "url": "https://mcp.labops.local/memory_router/mcp",
+      "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
+    },
+    "second_brain-agent_router": {
+      "type": "http",
+      "url": "https://mcp.labops.local/agent_router/mcp",
+      "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "second_brain-memory": {
+      "type": "http",
+      "url": "http://127.0.0.1:5001/mcp",
+      "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
+    },
+    "second_brain-memory_router": {
+      "type": "http",
+      "url": "http://127.0.0.1:5002/mcp",
+      "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
+    },
+    "second_brain-agent_router": {
+      "type": "http",
+      "url": "http://127.0.0.1:5000/mcp",
+      "headers": {"Authorization": "Bearer test-token-aaaaaaaaaaaa"}
+    }
+  }
+}

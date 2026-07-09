@@ -1,0 +1,12 @@
+title = "labops gitleaks config"
+
+# Use gitleaks' built-in rules, plus an allowlist for known test fixtures.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known test fixtures & placeholders — not real secrets"
+paths = [
+  '''plugin/tests/.*''',
+  '''webhook-listener/.*test.*''',
+]

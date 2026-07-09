@@ -1,0 +1,57 @@
+# /etc/sudoers.d/atlas — NOPASSWD whitelist для sa-atlas (Claude Code agent)
+#
+# Установка (от operator):
+#   sudo cp ops/sudoers/atlas.sudoers /etc/sudoers.d/atlas
+#   sudo chmod 0440 /etc/sudoers.d/atlas
+#   sudo visudo -c   # syntax check
+#
+# Применяется к пользователю openclaw на atlas VPS.
+# Любая команда вне whitelist всё равно требует пароль -- whitelist аддитивный.
+
+# systemd services -- управление основными сервисами без пароля
+openclaw ALL=(root) NOPASSWD: /bin/systemctl restart channel-atlas
+openclaw ALL=(root) NOPASSWD: /bin/systemctl restart channel-atlas-webhook
+openclaw ALL=(root) NOPASSWD: /bin/systemctl restart atlas-gateway.service
+openclaw ALL=(root) NOPASSWD: /bin/systemctl restart iel-bot
+openclaw ALL=(root) NOPASSWD: /bin/systemctl restart labops-api
+openclaw ALL=(root) NOPASSWD: /bin/systemctl restart labops-staging
+openclaw ALL=(root) NOPASSWD: /bin/systemctl start channel-atlas
+openclaw ALL=(root) NOPASSWD: /bin/systemctl start channel-atlas-webhook
+openclaw ALL=(root) NOPASSWD: /bin/systemctl start iel-bot
+openclaw ALL=(root) NOPASSWD: /bin/systemctl start labops-api
+openclaw ALL=(root) NOPASSWD: /bin/systemctl start labops-staging
+openclaw ALL=(root) NOPASSWD: /bin/systemctl stop channel-atlas
+openclaw ALL=(root) NOPASSWD: /bin/systemctl stop channel-atlas-webhook
+openclaw ALL=(root) NOPASSWD: /bin/systemctl stop iel-bot
+openclaw ALL=(root) NOPASSWD: /bin/systemctl stop labops-api
+openclaw ALL=(root) NOPASSWD: /bin/systemctl stop labops-staging
+openclaw ALL=(root) NOPASSWD: /bin/systemctl status *
+openclaw ALL=(root) NOPASSWD: /bin/systemctl is-active *
+openclaw ALL=(root) NOPASSWD: /bin/systemctl daemon-reload
+
+# Логи -- read-only, безопасно
+openclaw ALL=(root) NOPASSWD: /bin/journalctl
+openclaw ALL=(root) NOPASSWD: /bin/journalctl *
+
+# sudoers self-management через tee (нужно для добавления новых правил без интерактивного visudo)
+openclaw ALL=(root) NOPASSWD: /usr/bin/tee /etc/sudoers.d/*
+openclaw ALL=(root) NOPASSWD: /usr/sbin/visudo -c
+openclaw ALL=(root) NOPASSWD: /usr/sbin/visudo -c -f /etc/sudoers.d/*
+
+# pm2 process manager (используется на staging и в некоторых local services)
+openclaw ALL=(root) NOPASSWD: /usr/bin/pm2 *
+openclaw ALL=(root) NOPASSWD: /usr/local/bin/pm2 *
+
+# Caddy reload (HTTPS gateway)
+openclaw ALL=(root) NOPASSWD: /usr/bin/caddy reload *
+openclaw ALL=(root) NOPASSWD: /usr/bin/caddy validate *
+
+# apt-get -- non-interactive package updates
+openclaw ALL=(root) NOPASSWD: /usr/bin/apt-get update
+openclaw ALL=(root) NOPASSWD: /usr/bin/apt-get install -y *
+openclaw ALL=(root) NOPASSWD: /usr/bin/apt-get upgrade -y
+
+# Защитные deny (даже whitelist не обходит)
+Defaults!ALL    !visiblepw
+Defaults:openclaw env_reset
+Defaults:openclaw timestamp_timeout=5

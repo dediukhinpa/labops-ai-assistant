@@ -1,0 +1,30 @@
+[Unit]
+Description=labops-plugin webhook listener (second_brain agent_router → claude -p)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Use a non-root service user. The user must own AGENT_WORKSPACE.
+User=<service-user>
+Group=<service-user>
+
+EnvironmentFile=/etc/labops-plugin/webhook.env
+
+# HOME is needed by Claude Code for ~/.claude/CLAUDE.md and settings.json
+Environment=HOME=/home/<service-user>
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+WorkingDirectory=/opt/labops-plugin-webhook
+ExecStart=/opt/labops-plugin-webhook/.venv/bin/python /opt/labops-plugin-webhook/listener.py
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/log/labops-plugin-webhook /home/<service-user>/.claude-lab
+
+[Install]
+WantedBy=multi-user.target

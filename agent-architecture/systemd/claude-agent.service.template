@@ -1,0 +1,21 @@
+[Unit]
+Description=Claude Code Agent — __AGENT__ (watchdog)
+# Wait for second_brain MCP if it runs on the same host (harmless if not present).
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__USER__
+# watchdog.sh keeps the tmux session `labops-__AGENT__` alive and restarts a
+# wedged turn. It launches start-agent.sh on first boot.
+ExecStart=__ORCH__/watchdog.sh __AGENT__
+Restart=on-failure
+RestartSec=15
+StandardOutput=append:__LAB__/__AGENT__/logs/watchdog.log
+StandardError=append:__LAB__/__AGENT__/logs/watchdog.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,39 @@
+# ── secrets / runtime (NEVER commit) ─────────────────────────────
+secrets/
+.claude/secrets/
+*.token
+*.key
+*.pem
+.env
+.env.*
+!.env.example
+channel.env
+agent.env
+config.json
+bot.pid
+
+# ── per-agent / channel runtime state ────────────────────────────
+logs/
+state/
+inbox/
+*.log
+
+# ── python ───────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.venv-test/
+
+# ── node / bun ───────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+coverage/
+.bun/
+bun.lockb.bak
+
+# ── os / editors ─────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,23 @@
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+# secrets / runtime (NEVER commit)
+secrets/
+*.token
+channel.env
+agent.env
+*.key
+*.pem
+# per-agent runtime state
+logs/
+state/
+bot.pid
+config.json
+# node (skills may pull deps)
+node_modules/
+# os
+.DS_Store
+.idea/
+.vscode/
