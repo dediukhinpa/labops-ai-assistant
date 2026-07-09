@@ -171,10 +171,10 @@ SHARED="${LAB_DIR}/shared"
 
 log "Creating directory structure..."
 
-mkdir -p "${WORKSPACE}/core/warm"
-mkdir -p "${WORKSPACE}/core/hot/archive"
-mkdir -p "${WORKSPACE}/core/hot/pre-compact"
-mkdir -p "${WORKSPACE}/core/archive"
+mkdir -p "${WORKSPACE}/core/passive"
+mkdir -p "${WORKSPACE}/core/active/archived"
+mkdir -p "${WORKSPACE}/core/active/pre-compact"
+mkdir -p "${WORKSPACE}/core/archived"
 mkdir -p "${WORKSPACE}/tools"
 mkdir -p "${WORKSPACE}/agents"
 mkdir -p "${WORKSPACE}/scripts"
@@ -185,7 +185,7 @@ mkdir -p "${SHARED}/skills"
 mkdir -p "${SHARED}/scripts"
 mkdir -p "${GLOBAL_DIR}/rules"
 
-echo "# Hot context -- last 10 entries" > "${WORKSPACE}/core/hot/handoff.md"
+echo "# Active context -- last 10 entries" > "${WORKSPACE}/core/active/handoff.md"
 
 # ============================================================
 # Step 5: Render templates (envsubst-style {{VAR}} and ${VAR})
@@ -240,8 +240,8 @@ fill_template "${TEMPLATES_DIR}/agents.md.template"    "${WORKSPACE}/core/AGENTS
 fill_template "${TEMPLATES_DIR}/USER.md.template"      "${WORKSPACE}/core/USER.md"
 fill_template "${TEMPLATES_DIR}/rules.md.template"     "${WORKSPACE}/core/rules.md"
 fill_template "${TEMPLATES_DIR}/tools.md.template"     "${WORKSPACE}/tools/TOOLS.md"
-fill_template "${TEMPLATES_DIR}/decisions.md.template" "${WORKSPACE}/core/warm/decisions.md"
-fill_template "${TEMPLATES_DIR}/recent.md.template"    "${WORKSPACE}/core/hot/recent.md"
+fill_template "${TEMPLATES_DIR}/decisions.md.template" "${WORKSPACE}/core/passive/decisions.md"
+fill_template "${TEMPLATES_DIR}/recent.md.template"    "${WORKSPACE}/core/active/recent.md"
 fill_template "${TEMPLATES_DIR}/MEMORY.md.template"    "${WORKSPACE}/core/MEMORY.md"
 fill_template "${TEMPLATES_DIR}/LEARNINGS.md.template" "${WORKSPACE}/core/LEARNINGS.md"
 fill_template "${TEMPLATES_DIR}/mcp.json.template"     "${WORKSPACE}/.mcp.json"
@@ -255,7 +255,7 @@ fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_DIR}/CLAUDE
 # ============================================================
 
 log "Copying memory-management scripts..."
-for script in trim-hot.sh compress-warm.sh rotate-warm.sh memory-rotate.sh second_brain-memory_router-on-start.sh; do
+for script in trim-active.sh compress-passive.sh rotate-passive.sh memory-rotate.sh second_brain-memory_router-on-start.sh; do
     if [ -f "${SCRIPTS_DIR}/${script}" ]; then
         if [ ! -f "${WORKSPACE}/scripts/${script}" ]; then
             cp "${SCRIPTS_DIR}/${script}" "${WORKSPACE}/scripts/${script}"
@@ -429,9 +429,9 @@ echo "       source ${AGENT_RC} && claude --project ${WORKSPACE}"
 echo ""
 echo "    4. (Optional) Cron for memory rotation:"
 echo "       crontab -e"
-echo "       30 4 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/rotate-warm.sh"
-echo "       0  5 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/trim-hot.sh"
-echo "       0  6 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/compress-warm.sh"
+echo "       30 4 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/rotate-passive.sh"
+echo "       0  5 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/trim-active.sh"
+echo "       0  6 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/compress-passive.sh"
 echo "       0 21 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/memory-rotate.sh"
 echo ""
 echo "    5. (Optional) Add more agents:"

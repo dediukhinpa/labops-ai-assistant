@@ -100,7 +100,7 @@ bash plugin/scripts/install-hooks.sh \
 
 ## Memory hooks (опционально)
 
-Чтобы плагин писал turn'ы в `<workspace>/core/hot/recent.md` + `<workspace_parent>/logs/verbose-YYYY-MM-DD.jsonl` (cognee cron подхватит автоматически), добавь в `config.json`:
+Чтобы плагин писал turn'ы в `<workspace>/core/active/recent.md` + `<workspace_parent>/logs/verbose-YYYY-MM-DD.jsonl` (cognee cron подхватит автоматически), добавь в `config.json`:
 
 ```json
 {
@@ -150,7 +150,7 @@ chats:
     edit_message_progress: true               # rolling editMessageText для ProgressReporter
     delivery: streamed                        # streamed | final_only
     persona_file: chats/personas/operator.md  # per-chat persona overlay (относительно workspace_dir)
-    handoff_file: core/hot/handoff.md
+    handoff_file: core/active/handoff.md
     system_reminder: "Это личный DM вождя."
     idle_ttl_ms: 1800000                      # 30 мин до выгрузки tmux-сессии (default)
     max_queue_depth: 1                        # сколько inbound сообщений можно поставить в очередь (default 1)

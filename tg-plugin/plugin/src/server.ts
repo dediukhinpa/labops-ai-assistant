@@ -647,7 +647,7 @@ const inboundWatcher = new InboundWatcher({
   progressReporter,
 })
 
-// Phase 8 / T7: MemoryWriter persists turns to <workspace>/core/hot/recent.md
+// Phase 8 / T7: MemoryWriter persists turns to <workspace>/core/active/recent.md
 // and <workspace_parent>/logs/verbose-YYYY-MM-DD.jsonl. Only instantiated
 // when config.memory.enabled === true AND workspace_path is set — schema
 // refine already guarantees the second condition when enabled is true, but
@@ -666,7 +666,7 @@ if (config.memory.enabled === true && config.memory.workspace_path !== undefined
     // assistant's tool-handle (e.g. 'fridayhumanbot') rather than the
     // human-readable agent name ('nova') that goes into recent.md.
     agentLabel: config.memory.agent_label ?? 'Agent',
-    maxHotBytes: config.memory.max_hot_bytes,
+    maxActiveBytes: config.memory.max_active_bytes,
     trimKeepLines: config.memory.trim_keep_lines,
     bufferTtlMs: config.memory.buffer_ttl_ms,
     bufferMaxEntries: config.memory.buffer_max_entries,

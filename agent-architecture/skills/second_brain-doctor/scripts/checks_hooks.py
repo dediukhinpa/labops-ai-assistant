@@ -1239,10 +1239,10 @@ def _check_stop_fresh(
         return _r(
             "stop_hook_recent_fresh",
             "skip",
-            "no resolved workspace; cannot locate core/hot/recent.md "
+            "no resolved workspace; cannot locate core/active/recent.md "
             "(pass --agent from the agent workspace)",
         )
-    recent_md = ws / "core" / "hot" / "recent.md"
+    recent_md = ws / "core" / "active" / "recent.md"
     max_age = 24.0
     if isinstance(manifest.freshness.get("recent_stop_hook_max_age_hours"), (int, float)):
         max_age = float(manifest.freshness["recent_stop_hook_max_age_hours"])
@@ -1298,9 +1298,9 @@ def _check_precompact_snapshot(ctx: "DoctorContext", manifest: Manifest) -> Chec
             "no resolved workspace; cannot locate pre-compact snapshots "
             "(pass --agent from the agent workspace)",
         )
-    glob = manifest.freshness.get("precompact_snapshot_glob") or "core/hot/pre-compact/recent-*.md"
+    glob = manifest.freshness.get("precompact_snapshot_glob") or "core/active/pre-compact/recent-*.md"
     if not isinstance(glob, str):
-        glob = "core/hot/pre-compact/recent-*.md"
+        glob = "core/active/pre-compact/recent-*.md"
 
     # Snapshot directory is the parent of the glob's last path segment.
     snap_dir = ws / Path(glob).parent

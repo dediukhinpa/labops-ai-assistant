@@ -7,7 +7,7 @@
 ```bash
 AGENT_NAME="jarvis"  # ← replace with your agent name
 
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/{warm,hot}
+mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/{passive,active}
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/tools
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/agents
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/scripts
@@ -16,9 +16,9 @@ mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/scripts
 ln -s ~/.claude-lab/shared/skills ~/.claude-lab/${AGENT_NAME}/.claude/skills
 
 # Initialize memory files with headers
-echo "# WARM DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/warm/decisions.md
-echo "# Hot memory -- last 24h rolling journal" > ~/.claude-lab/${AGENT_NAME}/.claude/core/hot/recent.md
-echo "# MEMORY -- Cold Archive" > ~/.claude-lab/${AGENT_NAME}/.claude/core/MEMORY.md
+echo "# PASSIVE DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/decisions.md
+echo "# Active memory -- last 24h rolling journal" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/recent.md
+echo "# MEMORY -- Archive Archive" > ~/.claude-lab/${AGENT_NAME}/.claude/core/MEMORY.md
 echo "# LEARNINGS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/LEARNINGS.md
 ```
 
@@ -92,16 +92,16 @@ SECOND_BRAIN_BEARER=$(cat ~/.claude-lab/shared/secrets/second_brain.key)
 ## 7. Setup Cron Jobs
 
 ```bash
-# Order matters! rotate-warm first, then trim-hot, then compress-warm
-30 4 * * * /path/to/scripts/rotate-warm.sh      # 04:30 -- move WARM >14d to COLD
-0 5 * * * /path/to/scripts/trim-hot.sh           # 05:00 -- compress HOT >24h -> WARM (Sonnet)
-0 6 * * * /path/to/scripts/compress-warm.sh      # 06:00 -- re-compress WARM >10KB (Sonnet)
-0 21 * * * /path/to/scripts/memory-rotate.sh     # 21:00 -- archive COLD >5KB
+# Order matters! rotate-passive first, then trim-active, then compress-passive
+30 4 * * * /path/to/scripts/rotate-passive.sh      # 04:30 -- move PASSIVE >14d to ARCHIVE
+0 5 * * * /path/to/scripts/trim-active.sh           # 05:00 -- compress ACTIVE >24h -> PASSIVE (Sonnet)
+0 6 * * * /path/to/scripts/compress-passive.sh      # 06:00 -- re-compress PASSIVE >10KB (Sonnet)
+0 21 * * * /path/to/scripts/memory-rotate.sh     # 21:00 -- archive ARCHIVE >5KB
 ```
 
 ## 8. Test
 
 1. Send message to Telegram bot
 2. Verify response arrives
-3. Check `core/hot/recent.md` has the entry
+3. Check `core/active/recent.md` has the entry
 4. Verify other agent can message via inbox

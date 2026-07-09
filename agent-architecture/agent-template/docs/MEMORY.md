@@ -8,15 +8,15 @@
 │  CLAUDE.md + AGENTS + USER + rules        │
 │  Always in context                        │
 ├──────────────────────────────────────────┤
-│  WARM (rolling 14 days)                   │
-│  core/warm/decisions.md                   │
-│  Always in context, auto-rotate to COLD   │
+│  PASSIVE (rolling 14 days)                   │
+│  core/passive/decisions.md                   │
+│  Always in context, auto-rotate to ARCHIVE   │
 ├──────────────────────────────────────────┤
-│  HOT (handoff at startup)                │
-│  core/hot/handoff.md (last 10 entries)    │
+│  ACTIVE (handoff at startup)                │
+│  core/active/handoff.md (last 10 entries)    │
 │  In context; recent.md NOT loaded         │
 ├──────────────────────────────────────────┤
-│  COLD (archive, grows)                   │
+│  ARCHIVE (archive, grows)                   │
 │  MEMORY.md, LEARNINGS.md                  │
 │  NOT in context, Read tool on demand      │
 ├──────────────────────────────────────────┤
@@ -38,23 +38,23 @@
 | rules.md | Boundaries, permissions | Manual only |
 | TOOLS.md | Servers, Docker, services | Manual only |
 
-### WARM (rolling 14 days)
+### PASSIVE (rolling 14 days)
 
-- File: `core/warm/decisions.md`
+- File: `core/passive/decisions.md`
 - Contains: architectural and operational decisions
-- Rotation: entries older than 14 days move to COLD (MEMORY.md)
+- Rotation: entries older than 14 days move to ARCHIVE (MEMORY.md)
 - Always in context via @include
 
-### HOT (rolling 24 hours)
+### ACTIVE (rolling 24 hours)
 
-- File: `core/hot/recent.md`
+- File: `core/active/recent.md`
 - Contains: conversation journal (every message + response)
 - Written by: Gateway process (auto-write after each interaction)
 - Trim: cron job removes entries older than 24h
 - Always in context via @include
 - WARNING: without cron, can grow to 80KB+ before trimming. After cron runs, typical size is 8-30 KB
 
-### HOT Format
+### ACTIVE Format
 
 ```markdown
 ### 2026-04-08 15:03 [own_voice]
@@ -66,9 +66,9 @@
 **Agent:** response summary here
 ```
 
-### COLD (archive)
+### ARCHIVE (archive)
 
-- Files: `MEMORY.md`, `LEARNINGS.md`, `archive/`
+- Files: `MEMORY.md`, `LEARNINGS.md`, `archived/`
 - NOT loaded at startup
 - Accessed via Read tool when needed
 - Grows indefinitely
@@ -85,12 +85,12 @@
 
 ## Memory Operations (Flush, Compaction, Rotation)
 
-### HOT write (every message)
+### ACTIVE write (every message)
 
 Gateway calls `append_to_hot_memory()` after **every** interaction:
 
 ```
-User sends message -> Claude responds -> append to core/hot/recent.md
+User sends message -> Claude responds -> append to core/active/recent.md
 ```
 
 - Format: `### YYYY-MM-DD HH:MM [source_tag]` + user snippet (200 chars) + agent snippet (200 chars)
@@ -102,7 +102,7 @@ User sends message -> Claude responds -> append to core/hot/recent.md
 If `recent.md` exceeds **20 KB** after a write:
 
 ```
-hot file > 20KB → keep last 600 lines (~150 entries) → find first ### header → rewrite
+active file > 20KB → keep last 600 lines (~150 entries) → find first ### header → rewrite
 ```
 
 - Trigger: checked on every `append_to_hot_memory()` call
@@ -114,13 +114,13 @@ hot file > 20KB → keep last 600 lines (~150 entries) → find first ### header
 Operator sends `/compact` in Telegram:
 
 ```
-1. Read core/hot/recent.md
+1. Read core/active/recent.md
 2. Extract key facts from last 24h (decisions, preferences, pending actions)
-3. ADD extracted facts to beginning of core/warm/decisions.md as:
+3. ADD extracted facts to beginning of core/passive/decisions.md as:
    ## YYYY-MM-DD
    - fact 1
    - fact 2
-4. Trim hot/recent.md: keep last 24h only
+4. Trim active/recent.md: keep last 24h only
 ```
 
 - Model: Sonnet (cheaper, fast enough for extraction)
@@ -133,7 +133,7 @@ Operator sends `/reset` in Telegram:
 
 ```
 1. Claude reads current context (via --resume old session)
-2. Saves important info to core/MEMORY.md (COLD):
+2. Saves important info to core/MEMORY.md (ARCHIVE):
    - current focus, decisions, pending actions, user preferences
 3. Deletes session ID file (state/sid-{agent}-{chat}.txt)
 4. Next message starts a fresh session
@@ -143,13 +143,13 @@ Operator sends `/reset` in Telegram:
 - Model: Sonnet (for the save step)
 - After reset, first message injects latest MEMORY.md section as context bridge
 
-### WARM -> COLD rotation (rotate-warm.sh, cron 04:30 UTC)
+### PASSIVE -> ARCHIVE rotation (rotate-passive.sh, cron 04:30 UTC)
 
-Entries older than 14 days in `core/warm/decisions.md` move to `core/MEMORY.md`.
+Entries older than 14 days in `core/passive/decisions.md` move to `core/MEMORY.md`.
 
 ```
-# Cron: daily at 04:30 UTC (runs BEFORE trim-hot adds new entries to WARM)
-30 4 * * * /path/to/rotate-warm.sh
+# Cron: daily at 04:30 UTC (runs BEFORE trim-active adds new entries to PASSIVE)
+30 4 * * * /path/to/rotate-passive.sh
 ```
 
 Script logic (pure bash, no model):
@@ -157,22 +157,22 @@ Script logic (pure bash, no model):
 2. Sections older than 14 days -- append to `MEMORY.md`
 3. Remove from `decisions.md`
 
-### HOT -> WARM compression (trim-hot.sh, cron 05:00 UTC)
+### ACTIVE -> PASSIVE compression (trim-active.sh, cron 05:00 UTC)
 
-Entries older than 24h are collected and sent to **Sonnet** for smart summarization, then appended to WARM.
+Entries older than 24h are collected and sent to **Sonnet** for smart summarization, then appended to PASSIVE.
 
 ```
 # Cron: daily at 05:00 UTC
-0 5 * * * /path/to/trim-hot.sh
+0 5 * * * /path/to/trim-active.sh
 ```
 
 How it works:
-1. If HOT (`recent.md`) is under 10 KB -- skip entirely
-2. Acquire `flock` on HOT file (prevents conflicts with gateway writes)
+1. If ACTIVE (`recent.md`) is under 10 KB -- skip entirely
+2. Acquire `flock` on ACTIVE file (prevents conflicts with gateway writes)
 3. Collect all entries with timestamps older than 24h
 4. If more than 40 entries remain after removing old ones -- also collect the oldest entries
 5. Send collected entries to **Sonnet** with prompt: extract key facts as `- YYYY-MM-DD HH:MM: fact/decision/result`
-6. Append Sonnet output to `core/warm/decisions.md`
+6. Append Sonnet output to `core/passive/decisions.md`
 7. Rewrite `recent.md` with remaining (recent) entries only
 
 Key details:
@@ -180,20 +180,20 @@ Key details:
 - **Bash fallback:** if Sonnet is unavailable (rate limit, timeout), falls back to extracting first 120 characters of each entry
 - Uses `flock` for safe concurrent access with gateway process
 
-### WARM compression (compress-warm.sh, cron 06:00 UTC)
+### PASSIVE compression (compress-passive.sh, cron 06:00 UTC)
 
-After trim-hot.sh adds new entries to WARM daily, WARM can grow large with raw per-entry facts. compress-warm.sh uses **Sonnet** to re-compress WARM by grouping related events into topic-based key facts.
+After trim-active.sh adds new entries to PASSIVE daily, PASSIVE can grow large with raw per-entry facts. compress-passive.sh uses **Sonnet** to re-compress PASSIVE by grouping related events into topic-based key facts.
 
 ```
-# Cron: daily at 06:00 UTC (runs AFTER trim-hot adds new entries)
-0 6 * * * /path/to/compress-warm.sh
+# Cron: daily at 06:00 UTC (runs AFTER trim-active adds new entries)
+0 6 * * * /path/to/compress-passive.sh
 ```
 
 How it works:
-1. If WARM (`decisions.md`) is under 10 KB or under 50 lines -- skip
-2. Send full WARM content to Sonnet: "group related events into topic-based key facts"
+1. If PASSIVE (`decisions.md`) is under 10 KB or under 50 lines -- skip
+2. Send full PASSIVE content to Sonnet: "group related events into topic-based key facts"
 3. If Sonnet returns fewer than 3 lines -- skip (garbage protection)
-4. Replace WARM content with compressed output
+4. Replace PASSIVE content with compressed output
 5. Typical result: 110 raw entries -- 15-20 key facts
 
 Safety:
@@ -201,9 +201,9 @@ Safety:
 - **Sonnet returns < 3 lines** -- skip, do not overwrite (garbage protection)
 - Original content is backed up before overwrite
 
-### COLD archival (memory-rotate.sh, cron 21:00 UTC)
+### ARCHIVE archival (memory-rotate.sh, cron 21:00 UTC)
 
-When COLD (`MEMORY.md`) exceeds 5 KB, older content is moved to monthly archives.
+When ARCHIVE (`MEMORY.md`) exceeds 5 KB, older content is moved to monthly archives.
 
 ```
 # Cron: daily at 21:00 UTC
@@ -212,29 +212,29 @@ When COLD (`MEMORY.md`) exceeds 5 KB, older content is moved to monthly archives
 
 Script logic (pure bash, no model):
 1. If `MEMORY.md` is under 5 KB -- skip
-2. Move content to `archive/YYYY-MM.md` (grouped by month)
+2. Move content to `archived/YYYY-MM.md` (grouped by month)
 3. Keep only recent entries in `MEMORY.md`
 
 ### Recommended cron schedule
 
 ```crontab
-# 1. Rotate WARM: move >14d entries to COLD (bash, no model)
-30 4 * * * /path/to/rotate-warm.sh
+# 1. Rotate PASSIVE: move >14d entries to ARCHIVE (bash, no model)
+30 4 * * * /path/to/rotate-passive.sh
 
-# 2. Trim HOT: entries >24h -> Sonnet summary -> WARM
-0 5 * * * /path/to/trim-hot.sh
+# 2. Trim ACTIVE: entries >24h -> Sonnet summary -> PASSIVE
+0 5 * * * /path/to/trim-active.sh
 
-# 3. Compress WARM: Sonnet re-compression by topic (>10KB only)
-0 6 * * * /path/to/compress-warm.sh
+# 3. Compress PASSIVE: Sonnet re-compression by topic (>10KB only)
+0 6 * * * /path/to/compress-passive.sh
 
-# 4. Sync to second_brain: HOT+WARM -> semantic search (bash + curl)
+# 4. Sync to second_brain: ACTIVE+PASSIVE -> semantic search (bash + curl)
 30 6 * * * /path/to/second_brain-memory_router-on-start.sh
 
-# 5. Archive COLD: MEMORY.md >5KB -> archive/YYYY-MM.md (bash)
+# 5. Archive ARCHIVE: MEMORY.md >5KB -> archived/YYYY-MM.md (bash)
 0 21 * * * /path/to/memory-rotate.sh
 ```
 
-Order matters: rotate-warm first (clears old WARM entries), then trim-hot (adds new entries to WARM), then compress-warm (re-compresses if WARM grew too large), then second_brain-memory_router-on-start (uploads compressed state to second_brain).
+Order matters: rotate-passive first (clears old PASSIVE entries), then trim-active (adds new entries to PASSIVE), then compress-passive (re-compresses if PASSIVE grew too large), then second_brain-memory_router-on-start (uploads compressed state to second_brain).
 
 ## second_brain: Triggers and Data Flow
 
@@ -242,7 +242,7 @@ second_brain data is synced via two mechanisms: **batch sync** (recommended) and
 
 ### Method 1: Batch sync via cron + Stop hook (recommended)
 
-A shell script (`second_brain-memory_router-on-start.sh`) collects HOT + WARM memory and uploads to second_brain as a single resource. Runs on two triggers:
+A shell script (`second_brain-memory_router-on-start.sh`) collects ACTIVE + PASSIVE memory and uploads to second_brain as a single resource. Runs on two triggers:
 
 | Trigger | When | How |
 |---------|------|-----|
@@ -253,7 +253,7 @@ A shell script (`second_brain-memory_router-on-start.sh`) collects HOT + WARM me
 
 ```
 1. Health check → second_brain reachable?
-2. Build markdown summary from HOT (last 10 entries) + WARM (full)
+2. Build markdown summary from ACTIVE (last 10 entries) + PASSIVE (full)
 3. POST ${SECOND_BRAIN_MEMORY_URL} (create_external_note via JSON-RPC) → upload markdown as temp file
 4. POST ${SECOND_BRAIN_MEMORY_URL} → add_resource with target URI + wait=true
 5. second_brain indexes content, creates embeddings automatically
@@ -278,7 +278,7 @@ A shell script (`second_brain-memory_router-on-start.sh`) collects HOT + WARM me
 }
 ```
 
-**Why batch sync over real-time:** Simpler, no threading issues, no session lifecycle to manage. HOT+WARM already contain compressed context — uploading once per session (or daily) is sufficient for semantic search.
+**Why batch sync over real-time:** Simpler, no threading issues, no session lifecycle to manage. ACTIVE+PASSIVE already contain compressed context — uploading once per session (or daily) is sufficient for semantic search.
 
 ### Method 2: Real-time push from gateway (optional)
 
@@ -289,7 +289,7 @@ Gateway can push to second_brain after **every message** where:
 | `own_text` | Yes | Operator's own words — extract preferences, decisions |
 | `own_voice` | Yes | Same as text (after Groq transcription) |
 | `forwarded` | Yes (with guard) | Third-party content — extract events, NOT user preferences |
-| `external_media` | No | Media only goes to HOT, not OV (avoids pollution) |
+| `external_media` | No | Media only goes to ACTIVE, not OV (avoids pollution) |
 | transcription failed | No | Broken audio — skip to avoid garbage |
 
 **Anti-pollution guards** for forwarded content:
@@ -318,8 +318,8 @@ curl -X POST "${SECOND_BRAIN_MEMORY_ROUTER_URL}" \
 ## Data Priority
 
 1. Real system checks (exec) — ground truth
-2. HOT/WARM (in context) — navigation
-3. COLD (Read tool) — archive
+2. ACTIVE/PASSIVE (in context) — navigation
+3. ARCHIVE (Read tool) — archive
 4. second_brain L4 (curl) — semantic search
 5. Web search (Perplexity) — internet
 
@@ -349,42 +349,42 @@ This means a 10 KB file in Russian consumes ~4,500 tokens, while the same 10 KB 
 | TOOLS.md | ~6 KB | ~2,700 | ~1,800 |
 | Language rules (rules/*.md) | ~3 KB | ~1,350 | ~900 |
 | **IDENTITY subtotal** | **~38 KB** | **~17,100** | **~11,400** |
-| WARM decisions.md | 3-15 KB | 1,350-6,750 | 900-4,500 |
-| HOT recent.md | 5-80 KB | 2,250-36,000 | 1,500-24,000 |
+| PASSIVE decisions.md | 3-15 KB | 1,350-6,750 | 900-4,500 |
+| ACTIVE recent.md | 5-80 KB | 2,250-36,000 | 1,500-24,000 |
 
-IDENTITY is fixed cost -- it loads every session regardless. WARM and HOT are variable and controlled by the compression cron jobs.
+IDENTITY is fixed cost -- it loads every session regardless. PASSIVE and ACTIVE are variable and controlled by the compression cron jobs.
 
 ### Three load scenarios
 
 **Scenario 1: After all cron jobs (optimal)**
 
-All 4 cron scripts ran successfully. HOT trimmed to ~20 KB, WARM compressed to ~3 KB.
+All 4 cron scripts ran successfully. ACTIVE trimmed to ~20 KB, PASSIVE compressed to ~3 KB.
 
 ```
-IDENTITY: 17,100 + WARM: 1,350 + HOT: 9,000 = 27,450 tokens (~7% of 400K working context)
+IDENTITY: 17,100 + PASSIVE: 1,350 + ACTIVE: 9,000 = 27,450 tokens (~7% of 400K working context)
 ```
 
 This is the target operating state. The agent starts each session with clean, focused context.
 
 **Scenario 2: End of day, before cron (loaded)**
 
-Active day with 150+ messages. HOT grew to ~80 KB, WARM accumulated entries from trim-hot.
+Active day with 150+ messages. ACTIVE grew to ~80 KB, PASSIVE accumulated entries from trim-active.
 
 ```
-IDENTITY: 17,100 + WARM: 6,750 + HOT: 36,000 = 59,850 tokens (~15% of 400K working context)
+IDENTITY: 17,100 + PASSIVE: 6,750 + ACTIVE: 36,000 = 59,850 tokens (~15% of 400K working context)
 ```
 
 Still within acceptable range but agent quality starts degrading. The operator should run `/compact` manually or wait for cron.
 
 **Scenario 3: Cron broken, gateway writing for a week (worst case)**
 
-Cron jobs failed silently. No compression for 7 days. HOT has accumulated ~200 KB of raw logs.
+Cron jobs failed silently. No compression for 7 days. ACTIVE has accumulated ~200 KB of raw logs.
 
 ```
-IDENTITY: 17,100 + WARM: 6,750 + HOT: 90,000 = 113,850 tokens (~29% of 400K working context)
+IDENTITY: 17,100 + PASSIVE: 6,750 + ACTIVE: 90,000 = 113,850 tokens (~29% of 400K working context)
 ```
 
-Agent noticeably ignores instructions buried in IDENTITY. Emergency trim (>20 KB) will eventually cap HOT at ~600 lines, but quality is already degraded.
+Agent noticeably ignores instructions buried in IDENTITY. Emergency trim (>20 KB) will eventually cap ACTIVE at ~600 lines, but quality is already degraded.
 
 ### Key insight
 
@@ -396,4 +396,4 @@ The base context window is 1M tokens, but we set `CLAUDE_CODE_AUTO_COMPACT_WINDO
 - Working context (via CLAUDE_CODE_AUTO_COMPACT_WINDOW): 400,000 tokens
 - CLAUDE.md recommended size: under 200 lines (beyond that Claude starts ignoring instructions)
 - @import max recursion depth: 5 hops
-- Sonnet compression (compress-warm.sh) keeps WARM compact at ~3 KB even with daily additions from trim-hot.sh
+- Sonnet compression (compress-passive.sh) keeps PASSIVE compact at ~3 KB even with daily additions from trim-active.sh

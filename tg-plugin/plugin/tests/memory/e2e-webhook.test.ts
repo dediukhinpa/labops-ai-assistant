@@ -68,7 +68,7 @@ function memCfg(overrides: Partial<MemoryConfig> = {}): MemoryConfig {
     logsPath: logsDir,
     sourceTag: 'tg',
     agentLabel: 'nova',
-    maxHotBytes: 20480,
+    maxActiveBytes: 20480,
     trimKeepLines: 600,
     bufferTtlMs: 5 * 60 * 1000,
     bufferMaxEntries: 100,
@@ -86,7 +86,7 @@ function enabledConfig(): AppConfig {
       logs_path: logsDir,
       source_tag: 'tg',
       agent_label: 'nova',
-      max_hot_bytes: 20480,
+      max_active_bytes: 20480,
       trim_keep_lines: 600,
       buffer_ttl_ms: 5 * 60 * 1000,
       buffer_max_entries: 100,
@@ -171,11 +171,11 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
     expect(stop.status).toBe(200)
 
     // recent.md
-    const hotPath = join(workspaceDir, 'core', 'hot', 'recent.md')
-    const hot = readFileSync(hotPath, 'utf8')
-    expect(hot).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} \[tg\]/)
-    expect(hot).toContain('**User:** end-to-end user prompt\n')
-    expect(hot).toContain('**nova:** agent answered the question\n')
+    const activePath = join(workspaceDir, 'core', 'active', 'recent.md')
+    const active = readFileSync(activePath, 'utf8')
+    expect(active).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} \[tg\]/)
+    expect(active).toContain('**User:** end-to-end user prompt\n')
+    expect(active).toContain('**nova:** agent answered the question\n')
 
     // verbose-YYYY-MM-DD.jsonl
     const files = readdirSync(logsDir).filter(f => f.startsWith('verbose-'))
@@ -251,10 +251,10 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
     for (const r of stopResults) expect(r.status).toBe(200)
 
     // Every user-prompt-NNN must appear in recent.md.
-    const hot = readFileSync(join(workspaceDir, 'core', 'hot', 'recent.md'), 'utf8')
+    const active = readFileSync(join(workspaceDir, 'core', 'active', 'recent.md'), 'utf8')
     for (let i = 0; i < N; i++) {
       const id = i.toString().padStart(3, '0')
-      expect(hot).toContain(`**User:** user-prompt-${id}\n`)
+      expect(active).toContain(`**User:** user-prompt-${id}\n`)
     }
     // And all 50 records must be in the day's verbose file.
     const vFiles = readdirSync(logsDir).filter(f => f.startsWith('verbose-'))
@@ -278,7 +278,7 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
         workspace_path: workspaceDir,
         logs_path: logsDir,
         source_tag: 'tg',
-        max_hot_bytes: 20480,
+        max_active_bytes: 20480,
         trim_keep_lines: 600,
         buffer_ttl_ms: 5 * 60 * 1000,
         buffer_max_entries: 100,
@@ -311,9 +311,9 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
     })
     expect(resp.status).toBe(200)
 
-    let hotExists = true
-    try { readFileSync(join(workspaceDir, 'core', 'hot', 'recent.md'), 'utf8') } catch { hotExists = false }
-    expect(hotExists).toBe(false)
+    let activeExists = true
+    try { readFileSync(join(workspaceDir, 'core', 'active', 'recent.md'), 'utf8') } catch { activeExists = false }
+    expect(activeExists).toBe(false)
     let logsExist = true
     try { readdirSync(logsDir) } catch { logsExist = false }
     expect(logsExist).toBe(false)

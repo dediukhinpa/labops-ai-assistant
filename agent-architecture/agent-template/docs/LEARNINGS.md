@@ -53,7 +53,7 @@ Each agent maintains a LEARNINGS.md with this table:
 | tool | New/broken tool | Update TOOLS.md |
 | behavior | Behavioral correction | Create feedback_*.md in auto-memory |
 | workflow | Process/ordering fix | Update AGENTS.md |
-| architecture | Design decision | Record in warm/decisions.md |
+| architecture | Design decision | Record in passive/decisions.md |
 | communication | Interaction pattern | Update rules.md (via operator) |
 
 ## Triggers
@@ -73,7 +73,7 @@ Not all files can be self-modified. Zones prevent agents from accidentally break
 | Zone | Files | Who changes |
 |------|-------|------------|
 | **RED (read-only)** | CLAUDE.md, rules.md | Operator only |
-| **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, warm/decisions.md, hot/recent.md | Agent on trigger |
+| **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, passive/decisions.md, active/recent.md | Agent on trigger |
 | **GREEN (full autonomy)** | LEARNINGS.md, MEMORY.md, skills/*, agents/*.md, feedback_*.md | Agent freely |
 
 **Key principle:** Agent never modifies its own SOUL (CLAUDE.md). Operator iterates high-level instructions, agent optimizes within those constraints -- like Karpathy's `prepare.py` (read-only) vs `train.py` (agent-modifiable).
@@ -149,7 +149,7 @@ Add this to the agent's Workflow Orchestration section:
 - At session start -- review core/LEARNINGS.md (last 10 entries)
 - Metric: Repeats column. >0 = rule not working, strengthen
 - RED zone (CLAUDE.md, rules.md) -- only operator changes
-- YELLOW zone (USER.md, AGENTS.md, TOOLS.md, warm/, hot/) -- agent on trigger
+- YELLOW zone (USER.md, AGENTS.md, TOOLS.md, passive/, active/) -- agent on trigger
 ```
 
 ## Integration with AGENTS.md
@@ -166,7 +166,7 @@ Local-only learning system. No external databases.
 | Zone | Files | Who changes |
 |------|-------|------------|
 | **RED (read-only)** | CLAUDE.md, rules.md | Operator only |
-| **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, warm/, hot/ | Agent on trigger |
+| **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, passive/, active/ | Agent on trigger |
 | **GREEN (autonomy)** | LEARNINGS.md, MEMORY.md, skills/*, feedback_*.md | Agent freely |
 
 ### Flow

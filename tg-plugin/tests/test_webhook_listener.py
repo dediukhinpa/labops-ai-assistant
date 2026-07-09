@@ -1,4 +1,4 @@
-"""Unit tests for webhook-listener/listener.py (v6.3 hot-patch).
+"""Unit tests for webhook-listener/listener.py (v6.3 active-patch).
 
 Covers:
 - Module loads cleanly when WEBHOOK_BEARER_FILE / WEBHOOK_LOG_DIR are set.

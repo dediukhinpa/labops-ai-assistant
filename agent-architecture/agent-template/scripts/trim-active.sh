@@ -4,27 +4,27 @@
 # ls/grep patterns here are equivalent to globbing for this controlled input.
 set -euo pipefail
 
-# trim-hot.sh -- Compress HOT memory via Sonnet
+# trim-active.sh -- Compress ACTIVE memory via Sonnet
 # Strategy:
 #   1. Entries >24h: collect full text
 #   2. Send to Sonnet for smart summary extraction
-#   3. Summaries -> WARM (decisions.md)
-#   4. Old entries -> archive/hot-YYYY-MM-DD.md
+#   3. Summaries -> PASSIVE (decisions.md)
+#   4. Old entries -> archived/active-YYYY-MM-DD.md
 #   5. If still >40 entries: compress oldest via Sonnet too
 # Fallback: if Sonnet unavailable, use bash extraction (first 120 chars)
 # IMPORTANT: runs claude from /tmp to avoid loading project CLAUDE.md context
 
 # Resolve workspace: honor AGENT_WORKSPACE env, otherwise derive from script path
-# (script lives at $WORKSPACE/scripts/trim-hot.sh).
+# (script lives at $WORKSPACE/scripts/trim-active.sh).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
-HOT="$WS/core/hot/recent.md"
-WARM="$WS/core/warm/decisions.md"
-ARCHIVE_DIR="$WS/core/hot/archive"
-LOCKFILE="/tmp/trim-hot-${AGENT_ID}.lock"
+ACTIVE="$WS/core/active/recent.md"
+PASSIVE="$WS/core/passive/decisions.md"
+ARCHIVE_DIR="$WS/core/active/archived"
+LOCKFILE="/tmp/trim-active-${AGENT_ID}.lock"
 LOGDIR="${HOME}/.claude-lab/${AGENT_ID}/logs"
-LOG="$LOGDIR/trim-hot.log"
+LOG="$LOGDIR/trim-active.log"
 MAX_AGE_HOURS=24
 MAX_ENTRIES=40
 SONNET_BUDGET="0.15"
@@ -33,15 +33,15 @@ mkdir -p "$ARCHIVE_DIR" "$LOGDIR"
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $1" >> "$LOG"; }
 
-log "=== trim-hot.sh START ==="
+log "=== trim-active.sh START ==="
 
-[ ! -f "$HOT" ] && log "No recent.md, skip" && exit 0
+[ ! -f "$ACTIVE" ] && log "No recent.md, skip" && exit 0
 
-SIZE=$(wc -c < "$HOT")
-log "HOT size: ${SIZE} bytes"
+SIZE=$(wc -c < "$ACTIVE")
+log "ACTIVE size: ${SIZE} bytes"
 
 if [ "$SIZE" -lt 10240 ]; then
-    log "HOT < 10KB, skip"
+    log "ACTIVE < 10KB, skip"
     exit 0
 fi
 
@@ -67,7 +67,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     elif [ -n "$CURRENT_FILE" ]; then
         echo "$line" >> "$CURRENT_FILE"
     fi
-done < "$HOT"
+done < "$ACTIVE"
 
 TOTAL_BLOCKS=$BLOCK_IDX
 log "Total blocks: ${TOTAL_BLOCKS}"
@@ -117,7 +117,7 @@ TOTAL_TO_COMPRESS=$((OLD_COUNT + EXTRA_COUNT))
 
 # --- Phase 3.5: Archive old entries raw ---
 if [ -s "$OLD_TEXT" ]; then
-    ARCHIVE_FILE="$ARCHIVE_DIR/hot-${TODAY}.md"
+    ARCHIVE_FILE="$ARCHIVE_DIR/active-${TODAY}.md"
     if [ -f "$ARCHIVE_FILE" ]; then
         echo "" >> "$ARCHIVE_FILE"
     fi
@@ -168,42 +168,42 @@ $(cat "$OLD_TEXT")"
 fi
 rm -f "$OLD_TEXT"
 
-# --- Phase 5: Write summaries to WARM ---
+# --- Phase 5: Write summaries to PASSIVE ---
 if [ -s "$SUMMARIES" ]; then
     SUMMARY_COUNT=$(wc -l < "$SUMMARIES")
     {
         echo ""
-        echo "## ${TODAY} (auto-compressed from HOT)"
+        echo "## ${TODAY} (auto-compressed from ACTIVE)"
         echo ""
         cat "$SUMMARIES"
-    } >> "$WARM"
-    log "Added ${SUMMARY_COUNT} summaries to WARM"
+    } >> "$PASSIVE"
+    log "Added ${SUMMARY_COUNT} summaries to PASSIVE"
 
-    # --- Phase 5.5: Auto-compress WARM if too large ---
-    WARM_SIZE=$(wc -c < "$WARM")
-    WARM_MAX=5120  # 5KB limit
-    if [ "$WARM_SIZE" -gt "$WARM_MAX" ]; then
-        log "WARM ${WARM_SIZE}b > ${WARM_MAX}b limit, triggering compress-warm.sh"
-        COMPRESS_SCRIPT="$(dirname "$0")/compress-warm.sh"
+    # --- Phase 5.5: Auto-compress PASSIVE if too large ---
+    PASSIVE_SIZE=$(wc -c < "$PASSIVE")
+    PASSIVE_MAX=5120  # 5KB limit
+    if [ "$PASSIVE_SIZE" -gt "$PASSIVE_MAX" ]; then
+        log "PASSIVE ${PASSIVE_SIZE}b > ${PASSIVE_MAX}b limit, triggering compress-passive.sh"
+        COMPRESS_SCRIPT="$(dirname "$0")/compress-passive.sh"
         if [ -x "$COMPRESS_SCRIPT" ]; then
-            bash "$COMPRESS_SCRIPT" >> "$LOG" 2>&1 || log "compress-warm.sh failed (non-fatal)"
+            bash "$COMPRESS_SCRIPT" >> "$LOG" 2>&1 || log "compress-passive.sh failed (non-fatal)"
         fi
     fi
 fi
 rm -f "$SUMMARIES"
 
-# --- Phase 6: Rebuild HOT ---
+# --- Phase 6: Rebuild ACTIVE ---
 {
-    echo "# Hot memory -- last 72h rolling journal"
+    echo "# Active memory -- last 72h rolling journal"
     echo ""
     for FILE in $(ls "$BLOCKS_DIR"/[0-9]* 2>/dev/null | grep -v "\.meta$" | sort); do
         cat "$FILE"
         echo ""
     done
-} > "$HOT"
+} > "$ACTIVE"
 
-NEW_SIZE=$(wc -c < "$HOT")
+NEW_SIZE=$(wc -c < "$ACTIVE")
 FINAL_BLOCKS=$(ls "$BLOCKS_DIR"/*.meta 2>/dev/null | wc -l)
 log "Final: ${FINAL_BLOCKS} blocks, ${NEW_SIZE} bytes"
-log "HOT: ${SIZE}b -> ${NEW_SIZE}b (saved $((SIZE - NEW_SIZE))b)"
-log "=== trim-hot.sh DONE ==="
+log "ACTIVE: ${SIZE}b -> ${NEW_SIZE}b (saved $((SIZE - NEW_SIZE))b)"
+log "=== trim-active.sh DONE ==="

@@ -11,7 +11,7 @@
 // Mutex-serialised: `appendFile` is NOT atomic for buffers > PIPE_BUF
 // (4 KB) on Darwin — concurrent multi-KB writes can interleave and
 // corrupt JSONL. gateway.py uses `fcntl.LOCK_EX`; we reuse the same
-// `lockFor(path)` primitive as hot-writer so a single per-file mutex
+// `lockFor(path)` primitive as active-writer so a single per-file mutex
 // serialises every append on the plugin process.
 
 import { appendFile, mkdir } from 'node:fs/promises'

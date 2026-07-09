@@ -35,7 +35,7 @@ beforeEach(() => {
   baseDir = mkdtempSync(join(tmpdir(), 'labops-memory-writer-'))
   workspacePath = join(baseDir, 'workspace')
   logsPath = join(baseDir, 'logs')
-  // workspace itself exists; core/hot/ is auto-mkdir'd by hot-writer.
+  // workspace itself exists; core/active/ is auto-mkdir'd by active-writer.
   mkdirSync(workspacePath, { recursive: true })
 })
 
@@ -49,7 +49,7 @@ function cfg(overrides: Partial<MemoryConfig> = {}): MemoryConfig {
     logsPath,
     sourceTag: 'tg',
     agentLabel: 'nova',
-    maxHotBytes: 20480,
+    maxActiveBytes: 20480,
     trimKeepLines: 600,
     bufferTtlMs: 5 * 60 * 1000,
     bufferMaxEntries: 100,
@@ -95,9 +95,9 @@ describe('MemoryWriter.onHook', () => {
     await w.onHook(payload('UserPromptSubmit', { prompt: 'hi from user' }))
 
     // No files written yet.
-    let hotExists = true
-    try { readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8') } catch { hotExists = false }
-    expect(hotExists).toBe(false)
+    let activeExists = true
+    try { readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8') } catch { activeExists = false }
+    expect(activeExists).toBe(false)
     let logsExist = true
     try { readdirSync(logsPath) } catch { logsExist = false }
     expect(logsExist).toBe(false)
@@ -116,11 +116,11 @@ describe('MemoryWriter.onHook', () => {
     c.advance(2500) // 2.5s "compute time"
     await w.onHook(payload('Stop', { transcript_path: transcript }))
 
-    const hot = readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8')
-    expect(hot).toContain('**User:** user question?\n')
-    expect(hot).toContain('**nova:** agent reply here\n')
+    const active = readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8')
+    expect(active).toContain('**User:** user question?\n')
+    expect(active).toContain('**nova:** agent reply here\n')
     // Local-tz ts format: 'YYYY-MM-DD HH:MM' — just assert shape.
-    expect(hot).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} \[tg\]/)
+    expect(active).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} \[tg\]/)
 
     // verbose: derive day from record.ts (UTC ISO). fakeClock starts
     // at 2026-05-15 10:00 UTC + 2.5s, so day = 2026-05-15.
@@ -143,9 +143,9 @@ describe('MemoryWriter.onHook', () => {
 
     await w.onHook(payload('Stop'))
 
-    const hot = readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8')
-    expect(hot).toContain('**User:** (no prompt)\n')
-    expect(hot).toContain('**nova:** (inline)\n')
+    const active = readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8')
+    expect(active).toContain('**User:** (no prompt)\n')
+    expect(active).toContain('**nova:** (inline)\n')
 
     const v = JSON.parse(readFileSync(join(logsPath, 'verbose-2026-05-15.jsonl'), 'utf8').trim())
     expect(v.user).toBe('(no prompt)')
@@ -165,8 +165,8 @@ describe('MemoryWriter.onHook', () => {
     await w.onHook(payload('UserPromptSubmit', { prompt: 'q' }))
     await w.onHook(payload('Stop', { transcript_path: '/path/that/does/not/exist.jsonl' }))
 
-    const hot = readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8')
-    expect(hot).toContain('**nova:** (inline)\n')
+    const active = readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8')
+    expect(active).toContain('**nova:** (inline)\n')
     const v = JSON.parse(readFileSync(join(logsPath, 'verbose-2026-05-15.jsonl'), 'utf8').trim())
     expect(v.agent).toBe('')
   })
@@ -180,9 +180,9 @@ describe('MemoryWriter.onHook', () => {
     await w.onHook(payload('PostToolUse', { tool_name: 'Read', tool_use_id: 'u1', tool_input: {} }))
     await w.onHook(payload('SessionStart'))
 
-    let hotExists = true
-    try { readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8') } catch { hotExists = false }
-    expect(hotExists).toBe(false)
+    let activeExists = true
+    try { readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8') } catch { activeExists = false }
+    expect(activeExists).toBe(false)
     let logsExist = true
     try { readdirSync(logsPath) } catch { logsExist = false }
     expect(logsExist).toBe(false)
@@ -201,10 +201,10 @@ describe('MemoryWriter.onHook', () => {
     await w.onHook(payload('UserPromptSubmit', { prompt: longPrompt }))
     await w.onHook(payload('Stop', { transcript_path: transcript }))
 
-    const hot = readFileSync(join(workspacePath, 'core', 'hot', 'recent.md'), 'utf8')
+    const active = readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8')
     // snippet() slices to 200 chars
-    expect(hot).toContain('**User:** ' + 'P'.repeat(200) + '\n')
-    expect(hot).toContain('**nova:** ' + 'A'.repeat(200) + '\n')
+    expect(active).toContain('**User:** ' + 'P'.repeat(200) + '\n')
+    expect(active).toContain('**nova:** ' + 'A'.repeat(200) + '\n')
 
     const v = JSON.parse(readFileSync(join(logsPath, 'verbose-2026-05-15.jsonl'), 'utf8').trim())
     expect(v.user.length).toBe(500)

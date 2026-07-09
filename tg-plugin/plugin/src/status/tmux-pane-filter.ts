@@ -12,7 +12,7 @@
 // every chunk of the pane into exactly one of five segment types. The
 // scanner is deterministic and linear in the number of lines — important
 // because TmuxMirror polls every few seconds and the filter sits on the
-// hot path. We do NOT use multi-line regular expressions (they are easy
+// active path. We do NOT use multi-line regular expressions (they are easy
 // to make catastrophic-backtracking).
 //
 // Anchors are picked from the actual Claude Code v2.1.144 layout (the

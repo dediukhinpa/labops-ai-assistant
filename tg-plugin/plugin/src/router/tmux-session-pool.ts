@@ -543,7 +543,7 @@ export class TmuxSessionPool {
     if (handle === undefined) return
     handle.lastMessageAt = Date.now()
     // Async-fire-and-forget — touch happens per message, blocking the
-    // hot path on disk flush would add latency for no benefit.
+    // active path on disk flush would add latency for no benefit.
     void this.atomicSaveSessions().catch((err) => {
       this.logger.warn('sessions.json save failed after touch', {
         chatId,

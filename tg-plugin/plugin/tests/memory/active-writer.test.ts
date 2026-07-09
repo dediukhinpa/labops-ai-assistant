@@ -1,27 +1,27 @@
-// Phase 8 / T2 — hot-writer tests.
+// Phase 8 / T2 — active-writer tests.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { appendHotEntry, snippet } from '../../src/memory/hot-writer.js'
+import { appendActiveEntry, snippet } from '../../src/memory/active-writer.js'
 
 let dir: string
-let hotPath: string
+let activePath: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'labops-hot-writer-'))
-  hotPath = join(dir, 'core', 'hot', 'recent.md')
+  dir = mkdtempSync(join(tmpdir(), 'labops-active-writer-'))
+  activePath = join(dir, 'core', 'active', 'recent.md')
 })
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-function defaultInput(overrides: Partial<Parameters<typeof appendHotEntry>[0]> = {}): Parameters<typeof appendHotEntry>[0] {
+function defaultInput(overrides: Partial<Parameters<typeof appendActiveEntry>[0]> = {}): Parameters<typeof appendActiveEntry>[0] {
   return {
-    path: hotPath,
+    path: activePath,
     ts: '2026-05-15 12:00',
     agentLabel: 'nova',
     sourceTag: 'tg',
@@ -78,34 +78,34 @@ describe('snippet', () => {
   })
 })
 
-describe('appendHotEntry', () => {
+describe('appendActiveEntry', () => {
   test('writes 4-line entry with gateway.py-format header (newline + ### + tag, **User:**, **Agent:**)', async () => {
-    await appendHotEntry(defaultInput())
-    const text = readFileSync(hotPath, 'utf8')
+    await appendActiveEntry(defaultInput())
+    const text = readFileSync(activePath, 'utf8')
     // First char is a leading newline (per gateway.py format spec).
     expect(text.startsWith('\n### 2026-05-15 12:00 [tg]\n')).toBe(true)
     expect(text).toContain('**User:** hello\n')
     expect(text).toContain('**nova:** hi there\n')
   })
 
-  test('mkdir -p creates core/hot/ on first write', async () => {
+  test('mkdir -p creates core/active/ on first write', async () => {
     // sanity — parent doesn't exist yet
     let parentExisted = true
     try {
-      readdirSync(dirname(hotPath))
+      readdirSync(dirname(activePath))
     } catch {
       parentExisted = false
     }
     expect(parentExisted).toBe(false)
-    await appendHotEntry(defaultInput())
+    await appendActiveEntry(defaultInput())
     // file now exists
-    expect(readFileSync(hotPath, 'utf8').length).toBeGreaterThan(0)
+    expect(readFileSync(activePath, 'utf8').length).toBeGreaterThan(0)
   })
 
   test('appends across multiple calls (no overwrite)', async () => {
-    await appendHotEntry(defaultInput({ userSnippet: 'first' }))
-    await appendHotEntry(defaultInput({ userSnippet: 'second' }))
-    const text = readFileSync(hotPath, 'utf8')
+    await appendActiveEntry(defaultInput({ userSnippet: 'first' }))
+    await appendActiveEntry(defaultInput({ userSnippet: 'second' }))
+    const text = readFileSync(activePath, 'utf8')
     expect(text).toContain('**User:** first\n')
     expect(text).toContain('**User:** second\n')
   })
@@ -115,7 +115,7 @@ describe('appendHotEntry', () => {
     const tasks: Promise<void>[] = []
     for (let i = 0; i < N; i++) {
       tasks.push(
-        appendHotEntry(
+        appendActiveEntry(
           defaultInput({
             userSnippet: `u${i.toString().padStart(4, '0')}`,
             agentSnippet: `a${i.toString().padStart(4, '0')}`,
@@ -124,7 +124,7 @@ describe('appendHotEntry', () => {
       )
     }
     await Promise.all(tasks)
-    const text = readFileSync(hotPath, 'utf8')
+    const text = readFileSync(activePath, 'utf8')
     for (let i = 0; i < N; i++) {
       const id = i.toString().padStart(4, '0')
       expect(text).toContain(`**User:** u${id}\n`)
@@ -148,14 +148,14 @@ describe('appendHotEntry', () => {
       '**nova:** ' + 'b'.repeat(180) + '\n'
     // mkdir-p so we can pre-seed before the writer ever runs.
     const fs = await import('node:fs/promises')
-    await fs.mkdir(dirname(hotPath), { recursive: true })
+    await fs.mkdir(dirname(activePath), { recursive: true })
     let seed = ''
     while (seed.length < 30 * 1024) seed += pre
-    writeFileSync(hotPath, seed, 'utf8')
+    writeFileSync(activePath, seed, 'utf8')
 
-    await appendHotEntry(defaultInput({ maxBytes: 20480, trimKeepLines: 50 }))
+    await appendActiveEntry(defaultInput({ maxBytes: 20480, trimKeepLines: 50 }))
 
-    const text = readFileSync(hotPath, 'utf8')
+    const text = readFileSync(activePath, 'utf8')
     expect(text.length).toBeLessThanOrEqual(20480 + 256) // small slack for header
     // First non-empty line after the header section must start with `### `
     const lines = text.split('\n')
@@ -165,26 +165,26 @@ describe('appendHotEntry', () => {
     }
     expect(firstEntryIdx).toBeGreaterThanOrEqual(0)
     // Header is preserved at the top — ASCII `--`, byte-parity with
-    // gateway.py:1973 + scripts/trim-hot.sh. NOT em-dash (review HIGH).
-    expect(text.startsWith('# Hot memory -- last 24h rolling journal\n\n')).toBe(true)
+    // gateway.py:1973 + scripts/trim-active.sh. NOT em-dash (review HIGH).
+    expect(text.startsWith('# Active memory -- last 24h rolling journal\n\n')).toBe(true)
     // Exact-byte check on the first 42 bytes (length of the header).
-    const headerLiteral = '# Hot memory -- last 24h rolling journal\n\n'
+    const headerLiteral = '# Active memory -- last 24h rolling journal\n\n'
     expect(text.slice(0, headerLiteral.length)).toBe(headerLiteral)
   })
 
   test('trim leaves no orphan .recent.md.tmp.* file in target dir', async () => {
     const fs = await import('node:fs/promises')
-    await fs.mkdir(dirname(hotPath), { recursive: true })
+    await fs.mkdir(dirname(activePath), { recursive: true })
     const pre = '\n### 2026-05-15 11:00 [tg]\n' +
       '**User:** ' + 'a'.repeat(180) + '\n' +
       '**nova:** ' + 'b'.repeat(180) + '\n'
     let seed = ''
     while (seed.length < 30 * 1024) seed += pre
-    writeFileSync(hotPath, seed, 'utf8')
+    writeFileSync(activePath, seed, 'utf8')
 
-    await appendHotEntry(defaultInput({ maxBytes: 20480, trimKeepLines: 50 }))
+    await appendActiveEntry(defaultInput({ maxBytes: 20480, trimKeepLines: 50 }))
 
-    const siblings = readdirSync(dirname(hotPath))
+    const siblings = readdirSync(dirname(activePath))
     for (const name of siblings) {
       expect(name.startsWith('.recent.md.tmp.')).toBe(false)
     }
@@ -197,13 +197,13 @@ describe('appendHotEntry', () => {
     // distinct .recent.md.tmp.* orphans. After the fix, any throw
     // between writeFile and rename triggers an unlink on tmp.
     const fs = await import('node:fs/promises')
-    await fs.mkdir(dirname(hotPath), { recursive: true })
+    await fs.mkdir(dirname(activePath), { recursive: true })
     const pre = '\n### 2026-05-15 11:00 [tg]\n' +
       '**User:** ' + 'a'.repeat(180) + '\n' +
       '**nova:** ' + 'b'.repeat(180) + '\n'
     let seed = ''
     while (seed.length < 30 * 1024) seed += pre
-    writeFileSync(hotPath, seed, 'utf8')
+    writeFileSync(activePath, seed, 'utf8')
 
     // Inject deps: writeFile real, rename throws EBUSY once, unlink real.
     let renameCalls = 0
@@ -220,35 +220,35 @@ describe('appendHotEntry', () => {
         unlinkCalls++
         return fs.unlink(p)
       },
-    } as unknown as Parameters<typeof appendHotEntry>[1]
+    } as unknown as Parameters<typeof appendActiveEntry>[1]
 
     let caught: unknown
     try {
-      await appendHotEntry(
+      await appendActiveEntry(
         defaultInput({ maxBytes: 20480, trimKeepLines: 50 }),
         deps,
       )
     } catch (err) {
       caught = err
     }
-    // (a) trim threw — the appendHotEntry call propagated the rename error.
+    // (a) trim threw — the appendActiveEntry call propagated the rename error.
     expect(caught).toBeInstanceOf(Error)
     expect((caught as Error & { code?: string }).code).toBe('EBUSY')
     expect(renameCalls).toBe(1)
     expect(unlinkCalls).toBe(1)
     // (b) no orphan .recent.md.tmp.* file remains in the directory.
-    const siblings = readdirSync(dirname(hotPath))
+    const siblings = readdirSync(dirname(activePath))
     for (const name of siblings) {
       expect(name.startsWith('.recent.md.tmp.')).toBe(false)
     }
   })
 
   test('newlines in snippets are caller responsibility (writer does not collapse — uses snippet() upstream)', async () => {
-    // The hot-writer takes already-flattened snippets; embedding a raw
+    // The active-writer takes already-flattened snippets; embedding a raw
     // newline produces multi-line entries by design. snippet() is the
     // helper callers must use. This locks the contract.
-    await appendHotEntry(defaultInput({ userSnippet: 'line1\nline2' }))
-    const text = readFileSync(hotPath, 'utf8')
+    await appendActiveEntry(defaultInput({ userSnippet: 'line1\nline2' }))
+    const text = readFileSync(activePath, 'utf8')
     expect(text).toContain('**User:** line1\nline2\n')
   })
 })

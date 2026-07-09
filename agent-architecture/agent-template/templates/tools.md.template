@@ -3,7 +3,7 @@
 ## My Workspace
 
 - **CLAUDE.md**: `~/.claude-lab/{{AGENT_ID}}/.claude/CLAUDE.md` (identity)
-- **Core**: `~/.claude-lab/{{AGENT_ID}}/.claude/core/` (AGENTS, USER, rules, warm, hot, MEMORY)
+- **Core**: `~/.claude-lab/{{AGENT_ID}}/.claude/core/` (AGENTS, USER, rules, passive, active, MEMORY)
 - **Skills**: `~/.claude-lab/{{AGENT_ID}}/.claude/skills/` (symlink to shared)
 - **Secrets**: `~/.claude-lab/shared/secrets/` (chmod 700, shared)
 
@@ -13,9 +13,9 @@
 |-------|------|------------|
 | IDENTITY | CLAUDE.md, rules.md | manual only |
 | YELLOW | USER.md, AGENTS.md, TOOLS.md | agent on trigger |
-| WARM 14d | core/warm/decisions.md | auto-rotate |
-| HOT 24h | core/hot/recent.md | gateway auto |
-| COLD | core/MEMORY.md | on-demand Read |
+| PASSIVE 14d | core/passive/decisions.md | auto-rotate |
+| ACTIVE 24h | core/active/recent.md | gateway auto |
+| ARCHIVE | core/MEMORY.md | on-demand Read |
 | L4 | second_brain shared semantic memory | curl on-demand |
 
 ## 10 Base Skills

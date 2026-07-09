@@ -16,8 +16,8 @@
             +-- core/AGENTS.md             <-- модели, субагенты, память
             +-- core/USER.md               <-- профиль владельца
             +-- core/rules.md              <-- границы этого агента
-            +-- core/warm/decisions.md     <-- решения за 14 дней
-            +-- core/hot/recent.md         <-- журнал за 24 часа
+            +-- core/passive/decisions.md     <-- решения за 14 дней
+            +-- core/active/recent.md         <-- журнал за 24 часа
             +-- core/MEMORY.md             <-- архив (не в контексте)
             +-- tools/TOOLS.md             <-- серверы, порты, скиллы
             +-- skills/                    <-- симлинки на shared скиллы
@@ -145,11 +145,11 @@ Claude Code загружает оба уровня. Глобальный все�
 |------|------|-----------|------------|
 | **IDENTITY** | CLAUDE.md, AGENTS.md, USER.md | Кто ты, кто владелец | Вручную |
 | **RULES** | core/rules.md | Границы и запреты | Вручную |
-| **WARM** | core/warm/decisions.md | Решения за 14 дней | Авто-ротация |
-| **HOT** | core/hot/handoff.md | Последние 10 записей из журнала | Авто-запись (recent.md НЕ грузится) |
-| **COLD** | core/MEMORY.md | Архив | По запросу |
+| **PASSIVE** | core/passive/decisions.md | Решения за 14 дней | Авто-ротация |
+| **ACTIVE** | core/active/handoff.md | Последние 10 записей из журнала | Авто-запись (recent.md НЕ грузится) |
+| **ARCHIVE** | core/MEMORY.md | Архив | По запросу |
 
-Правило: IDENTITY/RULES/WARM/HOT (handoff.md) -- всегда в контексте. recent.md и COLD -- только по запросу.
+Правило: IDENTITY/RULES/PASSIVE/ACTIVE (handoff.md) -- всегда в контексте. recent.md и ARCHIVE -- только по запросу.
 
 ---
 

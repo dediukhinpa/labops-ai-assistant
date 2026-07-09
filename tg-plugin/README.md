@@ -113,7 +113,7 @@ A naive Telegram bot for an LLM spins up a fresh headless process (`claude -p` /
 | **Permission prompt** | confirm dangerous actions (sudo, etc.) via buttons | `channel/permissions.ts` |
 | **Progress mirror** | live "what the agent is doing now" status (terminal/tmux filter) | `status/`, `status/tmux-mirror.ts` |
 | **Multichat** | one server serves several chats/threads | `router/multichat-router.ts` |
-| **Turn memory** | writes turns to `hot/recent.md` + verbose-jsonl (optional) | `memory/` |
+| **Turn memory** | writes turns to `active/recent.md` + verbose-jsonl (optional) | `memory/` |
 | **HTML filter** | safe conversion of terminal output to Telegram HTML | `safety/html-validator.ts`, `format/html.ts` |
 | **Rate-limit & redact** | respects Telegram API limits, masks secrets | `safety/rate-limited-telegram-api.ts`, `safety/redact.ts` |
 
@@ -233,7 +233,7 @@ Full example — [`examples/channel.env.example`](examples/channel.env.example).
 | `AGENT_ID` | agent identifier (routing in multi-agent + logs) |
 | `TELEGRAM_STATE_DIR` | agent state: `bot.pid`, `config.json`, inbox, logs (isolate per agent) |
 | `TELEGRAM_WEBHOOK_HOST` / `_PORT` | local host/port for Claude hooks (a dedicated port per agent, `6000+`) |
-| `TELEGRAM_MEMORY_ENABLED` | write turns to `hot/recent.md` + verbose-jsonl |
+| `TELEGRAM_MEMORY_ENABLED` | write turns to `active/recent.md` + verbose-jsonl |
 | `TELEGRAM_MEMORY_WORKSPACE` / `_AGENT_LABEL` / `_SOURCE_TAG` | turn-memory write parameters |
 
 ### Commands

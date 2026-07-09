@@ -17,8 +17,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
-HOT="$WS/core/hot/recent.md"
-SNAP_DIR="$WS/core/hot/pre-compact"
+ACTIVE="$WS/core/active/recent.md"
+SNAP_DIR="$WS/core/active/pre-compact"
 LOGDIR="$WS/logs"
 HOOK_LOG="$LOGDIR/hooks.log"
 KEEP_SNAPSHOTS="${KEEP_SNAPSHOTS:-10}"
@@ -28,14 +28,14 @@ touch "$HOOK_LOG"
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [precompact] $1" >> "$HOOK_LOG"; }
 
-if [ ! -f "$HOT" ] || [ ! -s "$HOT" ]; then
+if [ ! -f "$ACTIVE" ] || [ ! -s "$ACTIVE" ]; then
     log "no recent.md to snapshot"
     exit 0
 fi
 
 TS=$(date -u +%Y%m%d-%H%M%S)
 SNAP="$SNAP_DIR/recent-${TS}.md"
-cp "$HOT" "$SNAP" || { log "snapshot copy failed"; exit 0; }
+cp "$ACTIVE" "$SNAP" || { log "snapshot copy failed"; exit 0; }
 log "snapshot saved: $SNAP ($(wc -c <"$SNAP") bytes)"
 
 # Rotate: keep newest N

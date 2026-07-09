@@ -12,7 +12,7 @@ your agent) before running `install.sh` here.
 ## Architecture in one paragraph
 
 `agent-template/install.sh` creates `~/.claude-lab/<agent-id>/.claude/`. Inside,
-a four-layer memory pyramid (IDENTITY -> WARM -> HOT -> COLD) lives as Markdown
+a four-layer memory pyramid (IDENTITY -> PASSIVE -> ACTIVE -> ARCHIVE) lives as Markdown
 files. A `.mcp.json` points Claude Code at three remote MCP servers --
 **memory** (write decisions / knowledge / external notes, default port 5001),
 **memory_router** (read shared semantic memory, default port 5002),
@@ -70,17 +70,17 @@ Copy the printed token into the installer prompt.
 |   |-- USER.md                # operator profile
 |   |-- rules.md               # operational rules (RED zone, security)
 |   |-- AGENTS.md              # team / models / pipelines
-|   |-- MEMORY.md              # COLD archive (>14d, on-demand Read)
+|   |-- MEMORY.md              # ARCHIVE archive (>14d, on-demand Read)
 |   |-- LEARNINGS.md           # structured log of corrections
-|   |-- warm/decisions.md      # last 14d decisions (auto-rotated)
-|   `-- hot/
+|   |-- passive/decisions.md      # last 14d decisions (auto-rotated)
+|   `-- active/
 |       |-- recent.md          # 24h rolling journal (Stop hook appends)
 |       |-- handoff.md         # last-N entries used by SessionStart
-|       |-- archive/           # old recent.md slices
+|       |-- archived/           # old recent.md slices
 |       `-- pre-compact/       # PreCompact snapshots (rotated)
 |-- tools/TOOLS.md             # infra map
-|-- scripts/                   # memory-rotate, trim-hot, rotate-warm,
-|                              # compress-warm, second_brain-memory_router-on-start
+|-- scripts/                   # memory-rotate, trim-active, rotate-passive,
+|                              # compress-passive, second_brain-memory_router-on-start
 |-- hooks/                     # session-start, stop, precompact
 |-- logs/                      # hooks.log, verbose-YYYY-MM-DD.jsonl
 `-- skills/                    # symlink to ../skills/ (shared bundle)
@@ -111,28 +111,28 @@ source ~/.claude-lab/<agent-id>/.claude/agent.env
 claude --project ~/.claude-lab/<agent-id>/.claude
 ```
 
-On session start, the `SessionStart` hook reads `core/hot/handoff.md`, and if
+On session start, the `SessionStart` hook reads `core/active/handoff.md`, and if
 `SECOND_BRAIN_MEMORY_ROUTER_URL` / `AGENT_BEARER` are set, runs
 `scripts/second_brain-memory_router-on-start.sh` which posts a JSON-RPC
 `tools/call recall` to `${SECOND_BRAIN_MEMORY_ROUTER_URL}` and prepends a
-`### YYYY-MM-DD HH:MM [second_brain-memory_router]` block to `core/hot/recent.md`.
+`### YYYY-MM-DD HH:MM [second_brain-memory_router]` block to `core/active/recent.md`.
 
 On each turn end, `Stop` hook appends a 200-char snippet to `recent.md` and a
 full JSON envelope to `logs/verbose-YYYY-MM-DD.jsonl`.
 
 Before Claude Code auto-compacts context, `PreCompact` hook snapshots
-`recent.md` to `core/hot/pre-compact/recent-<ts>.md`.
+`recent.md` to `core/active/pre-compact/recent-<ts>.md`.
 
 ## Memory rotation cron (optional)
 
 ```cron
-30 4 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/rotate-warm.sh
- 0 5 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/trim-hot.sh
- 0 6 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/compress-warm.sh
+30 4 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/rotate-passive.sh
+ 0 5 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/trim-active.sh
+ 0 6 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/compress-passive.sh
  0 21 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/memory-rotate.sh
 ```
 
-`trim-hot.sh` and `compress-warm.sh` shell out to `claude --model sonnet --print`
+`trim-active.sh` and `compress-passive.sh` shell out to `claude --model sonnet --print`
 for smart summarization; if Sonnet is unreachable they fall back to a bash
 extraction so memory still gets pruned.
 
@@ -167,7 +167,7 @@ in `Authorization` header, JSON-RPC 2.0 in the body.
 | recall returns `403` | token has no `inbox` (or relevant) scope, or wrong agent | re-issue with `issue-agent-token.py --scopes ...` |
 | recall returns empty results | second_brain DB has no notes yet | use `create_decision_note` first, or backfill from existing decisions.md |
 | `Stop` hook never fires | `settings.json` not picked up | confirm `claude --project` points at the workspace dir that contains `settings.json` |
-| `trim-hot.sh` skips silently | HOT < 10KB | by design; only compresses once the file grows |
+| `trim-active.sh` skips silently | ACTIVE < 10KB | by design; only compresses once the file grows |
 
 ## Where to look next
 

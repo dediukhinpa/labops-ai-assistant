@@ -28,10 +28,10 @@ Claude Code launch
 └── {agent}/.claude/CLAUDE.md     agent SOUL
     ├── @core/USER.md             operator profile
     ├── @core/rules.md            boundaries
-    ├── @core/warm/decisions.md   rolling 14 days
-    └── @core/hot/handoff.md      compact extract (last 10 entries)
+    ├── @core/passive/decisions.md   rolling 14 days
+    └── @core/active/handoff.md      compact extract (last 10 entries)
 
-~10-25K tokens depending on HOT size
+~10-25K tokens depending on ACTIVE size
 ```
 
 ## Session Management
@@ -40,7 +40,7 @@ Claude Code launch
 Session lifecycle:
   1. First message   → new session ID (UUID), saved in state/sid-{agent}-{chat}.txt
   2. Subsequent msgs → claude --resume <session_id> (preserves context)
-  3. /reset          → save to COLD, delete session file, next msg = new session
+  3. /reset          → save to ARCHIVE, delete session file, next msg = new session
   4. /reset force    → delete session file immediately, no save
   5. Post-reset      → first message injects latest MEMORY.md section as context bridge
 ```
@@ -56,7 +56,7 @@ Checkpoints are created on every Claude action and persist across sessions.
 ## On-Demand (NOT in context)
 
 ```
-COLD memory    → Read tool (MEMORY.md, LEARNINGS.md)
+ARCHIVE memory    → Read tool (MEMORY.md, LEARNINGS.md)
 Skills         → Skill tool (shared/skills/)
 second_brain L4  → curl ${SECOND_BRAIN_MEMORY_ROUTER_URL} (or set MCP_HOST to Tailscale IP for multi-VPS)
 Web search     → Perplexity / DuckDuckGo
@@ -89,7 +89,7 @@ GATEWAY (systemd service, always running)
     |
     v
 MEMORY WRITE (parallel, after every message)
-    | A. HOT: append to core/hot/recent.md (ALWAYS, all source tags)
+    | A. ACTIVE: append to core/active/recent.md (ALWAYS, all source tags)
     |    - fcntl.LOCK_EX for concurrent safety
     |    - Format: ### YYYY-MM-DD HH:MM [source_tag]
     |    - Snippet: 200 chars user + 200 chars agent
@@ -98,7 +98,7 @@ MEMORY WRITE (parallel, after every message)
     | B. second_brain: synced via Stop hook + daily cron (NOT per-message)
     |    - Stop hook: runs second_brain-memory_router-on-start.sh on session end (background)
     |    - Cron: 06:30 UTC daily (after memory rotation scripts)
-    |    - Uploads HOT (last 10 entries) + WARM (full) as markdown
+    |    - Uploads ACTIVE (last 10 entries) + PASSIVE (full) as markdown
     |    - Method: temp_upload -> add_resource to second_brain://notes/
     |    - Idempotent: same date = same URI = overwrites previous
     |
@@ -110,16 +110,16 @@ This is the critical path. Every message follows this exact sequence. Memory wri
 
 ## Why Memory Compression Matters
 
-Without compression, HOT memory grows to 80KB+ per day (before cron runs). After daily cron rotation, HOT is typically 8-20KB. At 150+ messages per day with ~500 bytes each, this is expected. The problem: 80KB of raw conversation logs equals ~36,000 tokens -- roughly 70% of the total startup context at Opus level.
+Without compression, ACTIVE memory grows to 80KB+ per day (before cron runs). After daily cron rotation, ACTIVE is typically 8-20KB. At 150+ messages per day with ~500 bytes each, this is expected. The problem: 80KB of raw conversation logs equals ~36,000 tokens -- roughly 70% of the total startup context at Opus level.
 
-Quality degrades when context is bloated with raw logs. The agent spends most of its attention on unstructured conversation history instead of identity, rules, and tools. This is measurable -- an agent with 80KB of raw HOT performs noticeably worse at following instructions than one with 20KB of structured facts.
+Quality degrades when context is bloated with raw logs. The agent spends most of its attention on unstructured conversation history instead of identity, rules, and tools. This is measurable -- an agent with 80KB of raw ACTIVE performs noticeably worse at following instructions than one with 20KB of structured facts.
 
-Sonnet compression solves this: 110 raw entries compress into 15-20 key facts (80% reduction). The 4 cron scripts (rotate-warm, trim-hot, compress-warm, memory-rotate) run daily and keep memory clean.
+Sonnet compression solves this: 110 raw entries compress into 15-20 key facts (80% reduction). The 4 cron scripts (rotate-passive, trim-active, compress-passive, memory-rotate) run daily and keep memory clean.
 
 | Metric | Without compression | With compression |
 |--------|--------------------|--------------------|
-| HOT size (end of day) | 80 KB+ | 10-20 KB |
-| Tokens consumed by HOT | ~36,000 | ~4,500-9,000 |
+| ACTIVE size (end of day) | 80 KB+ | 10-20 KB |
+| Tokens consumed by ACTIVE | ~36,000 | ~4,500-9,000 |
 | Startup context used | ~70% | ~10-15% |
 | Sonnet cost | n/a | $0 (Max subscription) |
 | Agent instruction-following | Degraded | Optimal |
@@ -139,8 +139,8 @@ Gateway (systemd service)
     │ 4. Transcribe voice ([Groq](https://groq.com) Whisper — whisper-large-v3-turbo)
     │ 5. Launch Claude Code (claude -p --resume <session_id>)
     │ 6. Stream progress (real-time status in Telegram: plan, tools, subagents)
-    │ 7. Write to HOT (core/hot/recent.md — fcntl lock, 200 char snippets)
-    │ 8. Write to HOT completes (second_brain synced separately via Stop hook + cron)
+    │ 7. Write to ACTIVE (core/active/recent.md — fcntl lock, 200 char snippets)
+    │ 8. Write to ACTIVE completes (second_brain synced separately via Stop hook + cron)
     │ 9. Reply in Telegram (markdown → HTML, chunked at 4000 chars)
     ▼
 Claude Code (model)
@@ -179,7 +179,7 @@ MCP_HOST = host/IP only (set to Tailscale IP for multi-VPS — check ss -tlnp)
 │     POST ${SECOND_BRAIN_MEMORY_URL} (create_external_note via JSON-RPC) → upload markdown
 │     POST ${SECOND_BRAIN_MEMORY_URL}                 → add_resource (indexes + embeds)
 │   Target: second_brain://notes/{agent}-sessions/{YYYY-MM-DD}
-│   Content: last 10 HOT entries + full WARM decisions
+│   Content: last 10 ACTIVE entries + full PASSIVE decisions
 │
 └── Search: when old context needed (>24h)
     POST ${SECOND_BRAIN_MEMORY_ROUTER_URL} (JSON-RPC tools/call recall)
@@ -193,35 +193,35 @@ Install: `pip install second_brain --upgrade`
 Complete data flow with Sonnet-based compression:
 
 ```
-Gateway (every message) -> HOT (recent.md)
+Gateway (every message) -> ACTIVE (recent.md)
   |
   +-- Emergency trim (auto, >20KB, bash)
   |     Keeps last 600 lines, trims from top
   |
-  +-- trim-hot.sh (cron 05:00 UTC, Sonnet)
-  |     Entries >24h -> Sonnet summary -> WARM
+  +-- trim-active.sh (cron 05:00 UTC, Sonnet)
+  |     Entries >24h -> Sonnet summary -> PASSIVE
   |     >40 entries remaining -> oldest also compressed
   |     Fallback: bash (first 120 chars if Sonnet unavailable)
   |     Runs from /tmp to avoid loading CLAUDE.md (~35K tokens saved)
   |     flock for safe concurrent access with gateway
   |
-  +-- compress-warm.sh (cron 06:00 UTC, Sonnet)
-  |     WARM >10KB -> Sonnet re-compression by topic
+  +-- compress-passive.sh (cron 06:00 UTC, Sonnet)
+  |     PASSIVE >10KB -> Sonnet re-compression by topic
   |     110 raw entries -> 15-20 key facts
   |     Skip if <10KB or <50 lines or Sonnet unavailable
   |     Garbage protection: skip if Sonnet returns <3 lines
   |
-  +-- rotate-warm.sh (cron 04:30 UTC, bash)
-  |     WARM >14d -> COLD (pure bash, no model)
+  +-- rotate-passive.sh (cron 04:30 UTC, bash)
+  |     PASSIVE >14d -> ARCHIVE (pure bash, no model)
   |
   +-- memory-rotate.sh (cron 21:00 UTC, bash)
-  |     COLD >5KB -> archive/YYYY-MM.md (pure bash)
+  |     ARCHIVE >5KB -> archived/YYYY-MM.md (pure bash)
   |
   +-- /compact command (manual, Sonnet)
-  |     Extract key facts from last 24h HOT -> WARM, trim HOT to 24h
+  |     Extract key facts from last 24h ACTIVE -> PASSIVE, trim ACTIVE to 24h
   |
   +-- /reset command (manual, Sonnet)
-        Save important context to COLD, start new session
+        Save important context to ARCHIVE, start new session
 
 L4     -> second_brain, batch sync via Stop hook + daily cron (06:30 UTC)
          Method: temp_upload + add_resource to second_brain://notes/
@@ -230,32 +230,32 @@ L4     -> second_brain, batch sync via Stop hook + daily cron (06:30 UTC)
 ### Recommended crontab
 
 ```crontab
-# 1. Rotate WARM: move >14d entries to COLD (bash, no model)
-30 4 * * * /path/to/rotate-warm.sh
+# 1. Rotate PASSIVE: move >14d entries to ARCHIVE (bash, no model)
+30 4 * * * /path/to/rotate-passive.sh
 
-# 2. Trim HOT: entries >24h -> Sonnet summary -> WARM
-0 5 * * * /path/to/trim-hot.sh
+# 2. Trim ACTIVE: entries >24h -> Sonnet summary -> PASSIVE
+0 5 * * * /path/to/trim-active.sh
 
-# 3. Compress WARM: Sonnet re-compression by topic (>10KB only)
-0 6 * * * /path/to/compress-warm.sh
+# 3. Compress PASSIVE: Sonnet re-compression by topic (>10KB only)
+0 6 * * * /path/to/compress-passive.sh
 
-# 4. Sync to second_brain: HOT+WARM -> semantic search (bash + curl)
+# 4. Sync to second_brain: ACTIVE+PASSIVE -> semantic search (bash + curl)
 30 6 * * * /path/to/second_brain-memory_router-on-start.sh
 
-# 5. Archive COLD: MEMORY.md >5KB -> archive/YYYY-MM.md (bash)
+# 5. Archive ARCHIVE: MEMORY.md >5KB -> archived/YYYY-MM.md (bash)
 0 21 * * * /path/to/memory-rotate.sh
 ```
 
-Order: rotate-warm (clear old) -> trim-hot (add new to WARM) -> compress-warm (re-compress) -> second_brain-memory_router-on-start (upload to L4).
+Order: rotate-passive (clear old) -> trim-active (add new to PASSIVE) -> compress-passive (re-compress) -> second_brain-memory_router-on-start (upload to L4).
 
 ### Gateway commands for memory
 
 | Command | What it does |
 |---------|-------------|
-| `/compact` | Extract key facts from last 24h HOT → WARM, trim HOT to 24h |
-| `/reset` | Save important context to COLD (MEMORY.md), start new session |
+| `/compact` | Extract key facts from last 24h ACTIVE → PASSIVE, trim ACTIVE to 24h |
+| `/reset` | Save important context to ARCHIVE (MEMORY.md), start new session |
 | `/reset force` | Delete session immediately, no save |
-| `/status` | Show session age, memory file sizes (rules, warm, hot, cold) |
+| `/status` | Show session age, memory file sizes (rules, passive, active, archive) |
 | `/new` | Save handoff + start new session |
 | `/stop` | Stop current Claude response |
 | `/help` | Show available commands |

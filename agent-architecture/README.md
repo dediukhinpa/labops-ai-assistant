@@ -215,8 +215,8 @@ An agent has four memory layers: the first three are local files in its workspac
 flowchart LR
   subgraph local["Agent local memory (workspace files)"]
     L1["L1 IDENTITY<br/>CLAUDE.md · rules.md · USER.md<br/>(always in context)"]
-    L2["L2 HOT<br/>hot/recent.md (24h) · hot/handoff.md<br/>(handoff placed by the boot hook)"]
-    L3["L3 WARM<br/>warm/decisions.md (rotates >14d → COLD)<br/>COLD: MEMORY.md · LEARNINGS.md (on demand)"]
+    L2["L2 ACTIVE<br/>active/recent.md (24h) · active/handoff.md<br/>(handoff placed by the boot hook)"]
+    L3["L3 PASSIVE<br/>passive/decisions.md (rotates >14d → ARCHIVE)<br/>ARCHIVE: MEMORY.md · LEARNINGS.md (on demand)"]
   end
   L4["L4 SHARED BRAIN<br/>labops-second-brain · memory_router/memory/agent_router over MCP"]
   L1 --> L2 --> L3 --> L4
@@ -232,12 +232,12 @@ flowchart LR
 | Layer | Files / source | In context | Who edits |
 |---|---|---|---|
 | **L1 Identity** | `CLAUDE.md`, `rules.md`, `USER.md` | always (`@import`) | Operator only (RED zone) |
-| **L2 Hot** | `hot/recent.md` (rolling 24 h), `hot/handoff.md` | yes (handoff placed by the boot hook) | agent autonomously (GREEN) |
-| **L3 Warm** | `warm/decisions.md` (last ~14 d, rotates into COLD) | yes | agent with justification (YELLOW) |
-| **COLD** | `MEMORY.md`, `LEARNINGS.md` | no — on demand (Read) | agent (GREEN) |
+| **L2 Active** | `active/recent.md` (rolling 24 h), `active/handoff.md` | yes (handoff placed by the boot hook) | agent autonomously (GREEN) |
+| **L3 Passive** | `passive/decisions.md` (last ~14 d, rotates into ARCHIVE) | yes | agent with justification (YELLOW) |
+| **ARCHIVE** | `MEMORY.md`, `LEARNINGS.md` | no — on demand (Read) | agent (GREEN) |
 | **L4 Shared** | second_brain `memory_router` / `memory` / `agent_router` | no — on demand (MCP) | per RBAC scopes |
 
-File access zones: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — Operator only; **YELLOW** (`decisions.md`, `AGENTS.md`, `TOOLS.md`) — agent with justification; **GREEN** (`LEARNINGS.md`, `hot/recent.md`, `feedback_*`) — agent autonomously.
+File access zones: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — Operator only; **YELLOW** (`decisions.md`, `AGENTS.md`, `TOOLS.md`) — agent with justification; **GREEN** (`LEARNINGS.md`, `active/recent.md`, `feedback_*`) — agent autonomously.
 
 The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SECONDBRAIN_WRITE_RULES.md) — a single canonical file (RED zone) that is symlinked into every agent's `core/` and **@-imported into its `CLAUDE.md`** (`@core/SECONDBRAIN_WRITE_RULES.md`). Edit one file → every agent picks it up. Four disciplines: (1) `recall` **before** writing — don't breed duplicates; (2) **dual-write** what matters — both to the local `.md` and to second_brain (idempotent by sha256); (3) write **immediately**, not "later" (knowledge compaction does not flush); (4) write into your own `scope`. The write tools are hard-fixed in code: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_personal_note` (→ `personal`), `create_project_note` (→ `projects`), `create_handoff`, `append_daily_log`, `supersede_decision`.
 
@@ -259,8 +259,8 @@ The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SEC
 ├── agent.env            # source before launch: MCP_HOST / SECOND_BRAIN_*_URL / AGENT_BEARER
 ├── core/
 │   ├── USER.md · rules.md · AGENTS.md · MEMORY.md · LEARNINGS.md
-│   ├── warm/decisions.md           # WARM (last 14d)
-│   └── hot/{recent.md, handoff.md, archive/, pre-compact/}
+│   ├── passive/decisions.md           # PASSIVE (last 14d)
+│   └── active/{recent.md, handoff.md, archived/, pre-compact/}
 ├── tools/TOOLS.md
 ├── scripts/             # memory rotation + second_brain-memory_router-on-start
 ├── hooks/               # session-start, stop, precompact
@@ -272,7 +272,7 @@ The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SEC
 |---|---|
 | `templates/` | `CLAUDE.md`, `rules.md`, `USER.md`, `tools.md`, `agents.md`, `decisions.md`, `recent.md`, `MEMORY.md`, `LEARNINGS.md`, `mcp.json`, `settings.json` |
 | `hooks/` | `session-start-hook.sh`, `stop-hook.sh`, `precompact-hook.sh` |
-| `scripts/` | `memory-rotate.sh`, `trim-hot.sh`, `rotate-warm.sh`, `compress-warm.sh`, `second_brain-memory_router-on-start.sh` |
+| `scripts/` | `memory-rotate.sh`, `trim-active.sh`, `rotate-passive.sh`, `compress-passive.sh`, `second_brain-memory_router-on-start.sh` |
 | `docs/` | `ARCHITECTURE.md`, `MEMORY.md`, `HOOKS.md`, `MULTI-AGENT.md`, `SETUP-GUIDE.md`, `AGENT-LAWS.md`, … (16 files) |
 
 Important: `mcp.json.template` connects the agent to **only** second_brain (3 servers). The channel (`labops-channel`) is loaded separately at launch via `claude … server:labops-channel`, and the task-board MCP (`:5003`) is deliberately **not** wired to agents (the heartbeat runs as a separate cron).
@@ -338,9 +338,9 @@ A hook is **not a server**: the Claude Code engine emits an event at a defined m
 
 | Event | Hook (`agent-template/hooks/`) | What it does |
 |---|---|---|
-| **SessionStart** | `session-start-hook.sh` | logs the start; if `SECOND_BRAIN_MEMORY_ROUTER_URL`+`AGENT_BEARER` are present — calls `second_brain-memory_router-on-start.sh` (appends a block of relevant recall to `hot/recent.md`); surfaces `handoff.md`. In a swarm, also `agent-boot-sequence.sh`: 👀 on fresh messages + `agent_router.list_my_pending()` (pull delegated tasks — a pull safeguard) |
-| **Stop** | `stop-hook.sh` | appends a 200-char turn snippet to `hot/recent.md` and a detailed JSON line to `logs/verbose-YYYY-MM-DD.jsonl`. In a swarm, also `read-receipt-hook.ts` (POST `/hooks/react` → 👌) and `reflect-error-pattern.sh` (if the Operator corrected something → nudge to record an error-pattern via `decision:"block"`) |
-| **PreCompact** | `precompact-hook.sh` | snapshots `hot/recent.md` into `hot/pre-compact/` before auto-compaction, keeps the last `KEEP_SNAPSHOTS` (10) |
+| **SessionStart** | `session-start-hook.sh` | logs the start; if `SECOND_BRAIN_MEMORY_ROUTER_URL`+`AGENT_BEARER` are present — calls `second_brain-memory_router-on-start.sh` (appends a block of relevant recall to `active/recent.md`); surfaces `handoff.md`. In a swarm, also `agent-boot-sequence.sh`: 👀 on fresh messages + `agent_router.list_my_pending()` (pull delegated tasks — a pull safeguard) |
+| **Stop** | `stop-hook.sh` | appends a 200-char turn snippet to `active/recent.md` and a detailed JSON line to `logs/verbose-YYYY-MM-DD.jsonl`. In a swarm, also `read-receipt-hook.ts` (POST `/hooks/react` → 👌) and `reflect-error-pattern.sh` (if the Operator corrected something → nudge to record an error-pattern via `decision:"block"`) |
+| **PreCompact** | `precompact-hook.sh` | snapshots `active/recent.md` into `active/pre-compact/` before auto-compaction, keeps the last `KEEP_SNAPSHOTS` (10) |
 
 All hooks carry an `sdk-guard`: on `CLAUDE_SDK_CHILD=1` (or `entrypoint=sdk-ts`) they exit immediately, so they don't loop inside child Agent-SDK sessions.
 

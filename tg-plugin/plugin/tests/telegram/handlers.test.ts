@@ -53,7 +53,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     memory: {
       enabled: false,
       source_tag: 'tg',
-      max_hot_bytes: 20480,
+      max_active_bytes: 20480,
       trim_keep_lines: 600,
       buffer_ttl_ms: 5 * 60 * 1000,
       buffer_max_entries: 100,

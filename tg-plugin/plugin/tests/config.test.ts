@@ -206,7 +206,7 @@ describe('loadConfig', () => {
     expect(cfg.memory.workspace_path).toBeUndefined()
     expect(cfg.memory.logs_path).toBeUndefined()
     expect(cfg.memory.source_tag).toBe('tg')
-    expect(cfg.memory.max_hot_bytes).toBe(20480)
+    expect(cfg.memory.max_active_bytes).toBe(20480)
     expect(cfg.memory.trim_keep_lines).toBe(600)
     expect(cfg.memory.buffer_ttl_ms).toBe(5 * 60 * 1000)
     expect(cfg.memory.buffer_max_entries).toBe(100)

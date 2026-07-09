@@ -1,6 +1,6 @@
 // Phase 8 — shared intra-process async mutex.
 //
-// Extracted from hot-writer.ts so verbose-writer can share the exact same
+// Extracted from active-writer.ts so verbose-writer can share the exact same
 // primitive without duplicating the class. Underscore prefix marks this
 // module as internal to the memory/ barrel; callers outside memory/ should
 // not import it directly.

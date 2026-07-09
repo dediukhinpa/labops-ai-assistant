@@ -58,8 +58,8 @@ Project `CLAUDE.md` может включать другие файлы:
 
 @core/USER.md
 @core/rules.md
-@core/warm/decisions.md
-@core/hot/handoff.md
+@core/passive/decisions.md
+@core/active/handoff.md
 ```
 
 Пути относительны **директории, где лежит project CLAUDE.md**, не относительно CWD.
@@ -141,7 +141,7 @@ External imports:
 - Когда контекст приближается к лимиту — auto-compact (Claude Code сжимает старые сообщения в summary)
 
 После рестарта сервиса — **новая** сессия с нуля. Контекст потерян. Поэтому:
-- Используйте memory hooks плагина (`<workspace>/core/hot/recent.md` + `verbose.jsonl`)
+- Используйте memory hooks плагина (`<workspace>/core/active/recent.md` + `verbose.jsonl`)
 - Принимайте что после рестарта агент «забывает» текущий разговор — но может прочитать `recent.md` если ему это сказать в CLAUDE.md
 - Для production: минимизируйте рестарты, используйте `Restart=on-failure` (не `always`), мониторьте uptime
 
@@ -156,8 +156,8 @@ External imports:
 ├── core/                                  ← разделённая память (@-include)
 │   ├── USER.md
 │   ├── rules.md
-│   ├── hot/{recent.md, handoff.md}
-│   ├── warm/{decisions.md}
+│   ├── active/{recent.md, handoff.md}
+│   ├── passive/{decisions.md}
 │   └── ...
 └── labops-tg-plugin/              ← плагин (внутри workspace!)
     ├── plugin/                            ← CWD при systemd запуске

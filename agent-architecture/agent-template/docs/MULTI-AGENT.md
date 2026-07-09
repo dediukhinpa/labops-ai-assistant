@@ -151,9 +151,9 @@ Telegram
 │       │   ├── AGENTS.md              # Models, routing rules, agent registry
 │       │   ├── USER.md               # Operator profile
 │       │   ├── rules.md              # Boundaries, permissions
-│       │   ├── warm/decisions.md     # 14d rolling decisions
-│       │   ├── hot/recent.md         # 24h rolling journal
-│       │   └── MEMORY.md             # COLD archive
+│       │   ├── passive/decisions.md     # 14d rolling decisions
+│       │   ├── active/recent.md         # 24h rolling journal
+│       │   └── MEMORY.md             # ARCHIVE archive
 │       ├── tools/TOOLS.md            # Servers, Docker, services
 │       ├── skills/                    # Agent-specific + symlinks to shared
 │       └── agents/                   # Subagent definitions
@@ -201,9 +201,9 @@ The gateway handles much more than simple message routing. Full feature list:
 | **Session management** | `--resume` for context continuity, `--resume` for context continuity, `/reset` for fresh start |
 | **Voice transcription** | Auto-transcribe `.ogg` via Groq Whisper before passing to agent |
 | **Source classification** | Tags every message: `own_text`, `own_voice`, `forwarded`, `external_media` |
-| **HOT memory write** | Appends every interaction to `core/hot/recent.md` (file-locked) |
+| **ACTIVE memory write** | Appends every interaction to `core/active/recent.md` (file-locked) |
 | **second_brain push** | Background push to semantic memory with anti-pollution guards |
-| **Emergency trim** | Auto-trims HOT when >20KB (keeps last 600 lines) |
+| **Emergency trim** | Auto-trims ACTIVE when >20KB (keeps last 600 lines) |
 | **Media download** | Photos, documents, stickers -- downloaded to `media-inbound/` |
 
 ### Advanced Features
@@ -513,7 +513,7 @@ STEPS:
 
 ## Privacy Rules
 
-1. **Agent workspaces are private** -- Homer cannot read Edith's hot/recent.md
+1. **Agent workspaces are private** -- Homer cannot read Edith's active/recent.md
 2. **second_brain is shared** -- any agent can search, writes are namespaced
 3. **Message bus inbox is per-agent** -- only the recipient reads their inbox
 4. **Gateway state is per-agent** -- session IDs isolated per (agent, chat)
@@ -549,19 +549,19 @@ GATEWAY → route by bot_token → agent workspace
     │
     ▼
 AGENT SESSION
-    ├── Reads: SOUL + AGENTS + USER + rules + WARM + HOT + TOOLS
+    ├── Reads: SOUL + AGENTS + USER + rules + PASSIVE + ACTIVE + TOOLS
     ├── Works: code / research / organize / coordinate
     ├── Writes: response to Telegram
     │
     ▼
 POST-RESPONSE (parallel)
-    ├── Gateway: append to HOT (hot/recent.md, file lock)
+    ├── Gateway: append to ACTIVE (active/recent.md, file lock)
     └── Gateway: push to second_brain (background)
               │
               ▼
 CRON SCRIPTS (daily)
-    ├── trim-hot.sh    → compress HOT >24h entries
-    ├── rotate-warm.sh → move WARM >14d to COLD
-    ├── compress-warm.sh → re-compress WARM if >10KB
-    └── memory-gc.sh   → archive COLD >5KB to monthly files
+    ├── trim-active.sh    → compress ACTIVE >24h entries
+    ├── rotate-passive.sh → move PASSIVE >14d to ARCHIVE
+    ├── compress-passive.sh → re-compress PASSIVE if >10KB
+    └── memory-gc.sh   → archive ARCHIVE >5KB to monthly files
 ```

@@ -696,7 +696,7 @@ sudo systemctl restart channel-<agent>
 - `inbox/` — голосовые/медиа от пользователя (downloaded files)
 - `logs/permissions.jsonl` — лог permission запросов
 
-Плюс — `<workspace>/core/hot/recent.md` (если memory hooks включены) — там хвост разговора.
+Плюс — `<workspace>/core/active/recent.md` (если memory hooks включены) — там хвост разговора.
 
 При переезде эти файлы должны переехать вместе с плагином, иначе агент стартует с пустой памятью.
 
@@ -719,7 +719,7 @@ sudo tar czf /var/backups/<agent>-pre-migration-$(date +%Y%m%d).tgz \
 ```bash
 # 2. Перед стартом — verify state есть на месте
 ls -la $TELEGRAM_STATE_DIR/{bot.pid,config.json,inbox,logs}
-ls -la <workspace>/core/hot/recent.md
+ls -la <workspace>/core/active/recent.md
 
 # Только если оба есть — start
 sudo systemctl start channel-<agent>
@@ -743,7 +743,7 @@ sudo systemctl start channel-<agent>
 
 Claude Code читает **project settings** (`<project>/.claude/settings.json`) относительно **cwd сессии**, а не относительно workspace-каталога агента. Сервис плагина обычно стартует с `WorkingDirectory=<...>/labops-tg-plugin/plugin` — значит «project» для живой сессии это **репозиторий плагина**, а не `~/.claude-lab/<agent>/`.
 
-Если хук зарегистрировать в `~/.claude-lab/<agent>/.claude/settings.json`, ошибочно считая это «project settings» сессии, — живая сессия этот файл **не читает**, и хук не выполняется. Диагностический признак: **ни один** Stop-хук из этого settings не отрабатывает — `core/hot/handoff.md` и `recent.md` не обновляются, heartbeat-файл пустой/старый.
+Если хук зарегистрировать в `~/.claude-lab/<agent>/.claude/settings.json`, ошибочно считая это «project settings» сессии, — живая сессия этот файл **не читает**, и хук не выполняется. Диагностический признак: **ни один** Stop-хук из этого settings не отрабатывает — `core/active/handoff.md` и `recent.md` не обновляются, heartbeat-файл пустой/старый.
 
 Реальный инцидент (2026-05-29): read-receipt хук положили в workspace-settings; сессия стартует из `labops-tg-plugin/plugin` → читает только глобальный `~/.claude/settings.json` → 👀 пропали полностью.
 
@@ -756,7 +756,7 @@ systemctl show channel-<agent> -p WorkingDirectory
 cd <WorkingDirectory> && git rev-parse --show-toplevel   # это и есть "project" для сессии
 
 # 2. Убедиться что workspace-хуки НЕ срабатывают (косвенный признак):
-stat -c '%y' ~/.claude-lab/<agent>/.claude/core/hot/handoff.md   # не обновляется = settings не читается
+stat -c '%y' ~/.claude-lab/<agent>/.claude/core/active/handoff.md   # не обновляется = settings не читается
 
 # 3. Перенести хук в ГЛОБАЛЬНЫЙ ~/.claude/settings.json (бэкап обязателен)
 cp ~/.claude/settings.json ~/.claude/settings.json.bak.$(date +%Y%m%d-%H%M%S)

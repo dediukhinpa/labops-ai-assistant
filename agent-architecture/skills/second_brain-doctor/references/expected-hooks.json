@@ -8,6 +8,6 @@
   ],
   "freshness": {
     "recent_stop_hook_max_age_hours": 24,
-    "precompact_snapshot_glob": "core/hot/pre-compact/recent-*.md"
+    "precompact_snapshot_glob": "core/active/pre-compact/recent-*.md"
   }
 }

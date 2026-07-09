@@ -38,19 +38,19 @@
     │       ├── CLAUDE.md              SOUL (identity, character)
     │       │   @core/USER.md
     │       │   @core/rules.md
-    │       │   @core/warm/decisions.md
-    │       │   @core/hot/handoff.md
+    │       │   @core/passive/decisions.md
+    │       │   @core/active/handoff.md
     │       │
     │       ├── core/
     │       │   ├── AGENTS.md          models, subagents config
     │       │   ├── USER.md            operator profile
     │       │   ├── rules.md           boundaries, permissions
-    │       │   ├── warm/
+    │       │   ├── passive/
     │       │   │   └── decisions.md   rolling 14 days
-    │       │   ├── hot/
+    │       │   ├── active/
     │       │   │   ├── recent.md      rolling 24 hours (full journal)
     │       │   │   └── handoff.md    compact extract (last 10 entries, @include)
-    │       │   ├── MEMORY.md          COLD archive
+    │       │   ├── MEMORY.md          ARCHIVE archive
     │       │   └── LEARNINGS.md       lessons from mistakes
     │       │
     │       ├── tools/
@@ -59,10 +59,10 @@
     │       ├── skills/ → ../../shared/skills (symlink)
     │       ├── agents/                subagent .md definitions
     │       └── scripts/
-    │           ├── trim-hot.sh        cron: compress HOT >24h
-    │           ├── compress-warm.sh   cron: compress WARM >10KB
-    │           ├── rotate-warm.sh     cron: move WARM >14d to COLD
-    │           └── memory-rotate.sh   cron: archive COLD >5KB
+    │           ├── trim-active.sh        cron: compress ACTIVE >24h
+    │           ├── compress-passive.sh   cron: compress PASSIVE >10KB
+    │           ├── rotate-passive.sh     cron: move PASSIVE >14d to ARCHIVE
+    │           └── memory-rotate.sh   cron: archive ARCHIVE >5KB
     │
     └── jarvis/                        WORKSPACE: Agent 2 (example name)
         └── .claude/
@@ -83,8 +83,8 @@
 | CLAUDE.md (SOUL) | ~/.claude/CLAUDE.md (global) |
 | rules.md (boundaries) | ~/.claude/rules/*.md |
 | TOOLS.md (servers) | shared/skills/ |
-| HOT recent.md (journal) | shared/gateway/ |
-| WARM decisions.md | shared/secrets/ |
-| COLD MEMORY.md | second_brain (namespaced) |
+| ACTIVE recent.md (journal) | shared/gateway/ |
+| PASSIVE decisions.md | shared/secrets/ |
+| ARCHIVE MEMORY.md | second_brain (namespaced) |
 | Subagents | |
 | Scripts (per-agent cron) | |

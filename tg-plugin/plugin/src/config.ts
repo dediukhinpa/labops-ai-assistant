@@ -89,7 +89,7 @@ export const AppConfigSchema = z.object({
   }).default({}),
   // Phase 8: Memory hooks parity with gateway.py:1938-2035. When a Claude
   // hook (UserPromptSubmit / Stop) fires, the plugin writes a turn entry to
-  // <workspace_path>/core/hot/recent.md and a lossless record to
+  // <workspace_path>/core/active/recent.md and a lossless record to
   // <workspace_parent>/logs/verbose-YYYY-MM-DD.jsonl.
   //
   // Deviation from PLAN.md T1: `enabled` defaults to false (plan said true).
@@ -106,7 +106,7 @@ export const AppConfigSchema = z.object({
     logs_path: z.string().optional(),
     source_tag: z.string().default('tg'),
     agent_label: z.string().optional(),
-    max_hot_bytes: z.number().int().positive().default(20480),
+    max_active_bytes: z.number().int().positive().default(20480),
     trim_keep_lines: z.number().int().positive().default(600),
     buffer_ttl_ms: z.number().int().positive().default(5 * 60 * 1000),
     buffer_max_entries: z.number().int().positive().default(100),

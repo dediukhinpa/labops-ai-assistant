@@ -368,7 +368,7 @@ def main() -> int:
     # tool / pure thinking) simply exhausts the budget and delivers nothing —
     # this never invents a reply, it only waits for one already on its way.
     # Cost: a genuinely text-less turn-end pays the full (attempts-1)*delay
-    # (~360ms with defaults) before exiting 0 — acceptable since the hot path
+    # (~360ms with defaults) before exiting 0 — acceptable since the active path
     # always ends on a reply. Knobs are upper-clamped so an oversized value
     # cannot hang the synchronous hook.
     attempts = _env_int("STOP_OUTBOX_RETRY_ATTEMPTS", 4, minimum=1, maximum=50)

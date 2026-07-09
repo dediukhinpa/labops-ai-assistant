@@ -10,7 +10,7 @@
 // Atomicity contract: writers create a `.tmp` sibling and `rename()`
 // it into the final filename. Readers therefore never observe a
 // half-written JSON (rename is atomic on the same filesystem). This
-// is the same pattern used by `src/memory/hot-writer.ts`.
+// is the same pattern used by `src/memory/active-writer.ts`.
 //
 // Two-phase outbox delivery (H2 fix, 2026-05-23): pollOutboxOnce used
 // to read + delete each file in one pass; a transient Telegram error

@@ -1,4 +1,4 @@
-// Phase 8 / T2 — append to <workspace>/core/hot/recent.md.
+// Phase 8 / T2 — append to <workspace>/core/active/recent.md.
 //
 // Ports gateway.py:1938-1987 (append_to_hot_memory) to TS. Python uses
 // fcntl.LOCK_EX for cross-process safety; we run one plugin process per
@@ -25,7 +25,7 @@ import { lockFor } from './_mutex.js'
 // Public surface
 // ─────────────────────────────────────────────────────────────────────
 
-export interface AppendHotInput {
+export interface AppendActiveInput {
   path: string
   // Local-tz timestamp formatted as 'YYYY-MM-DD HH:MM'. Caller owns
   // formatting so a fake clock in tests stays deterministic.
@@ -62,8 +62,8 @@ const defaultTrimDeps: TrimFsDeps = { writeFile, rename, unlink }
  * @param _trimDeps internal — test-only injection of fs ops for the
  *   trim path. Production callers must omit this.
  */
-export async function appendHotEntry(
-  input: AppendHotInput,
+export async function appendActiveEntry(
+  input: AppendActiveInput,
   _trimDeps: TrimFsDeps = defaultTrimDeps,
 ): Promise<void> {
   const entry =
@@ -73,7 +73,7 @@ export async function appendHotEntry(
 
   await lockFor(input.path).run(async () => {
     // mkdir-on-first-write so the writer doesn't crash on a workspace
-    // that exists but has no core/hot/ subtree yet. recursive=true is
+    // that exists but has no core/active/ subtree yet. recursive=true is
     // idempotent; EEXIST is swallowed by Node.
     await mkdir(dirname(input.path), { recursive: true })
 
@@ -91,7 +91,7 @@ export async function appendHotEntry(
         break
       }
     }
-    const header = '# Hot memory -- last 24h rolling journal\n\n'
+    const header = '# Active memory -- last 24h rolling journal\n\n'
     // Same-dir tmp so rename() is a metadata-only move (no EXDEV when
     // workspace lives on a different filesystem than /tmp). PID + ms
     // disambiguate parallel trims in the unlikely case the mutex is
@@ -103,7 +103,7 @@ export async function appendHotEntry(
     // Cleanup orphan tmp on rename failure (review MEDIUM). Pre-fix: if
     // writeFile succeeded but rename failed (EBUSY, EIO, kill between
     // awaits) the tmp would stay forever. After enough faulted trims the
-    // agent's core/hot/ would accumulate stale .recent.md.tmp.* files.
+    // agent's core/active/ would accumulate stale .recent.md.tmp.* files.
     // unlink swallows ENOENT so a writeFile-side failure (no tmp on
     // disk) is a no-op.
     try {

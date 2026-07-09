@@ -180,7 +180,7 @@ cd tg-plugin && ./install.sh && cd ..
 
 > Рантайм и жизненный цикл — как агент *живёт*. Полная документация: [`agent-architecture/README.ru.md`](agent-architecture/README.ru.md).
 
-- **`agent-template/`** — скаффолдер: `install.sh` рендерит `templates/*.template` в воркспейс агента `~/.claude-lab/<agent-id>/.claude/` (`CLAUDE.md` = идентичность, `settings.json` = хуки + `model`, `.mcp.json` = эндпоинты second_brain). Память слоистая: идентичность + правила `core/` + рабочий набор `hot/recent.md` + общий second_brain по MCP.
+- **`agent-template/`** — скаффолдер: `install.sh` рендерит `templates/*.template` в воркспейс агента `~/.claude-lab/<agent-id>/.claude/` (`CLAUDE.md` = идентичность, `settings.json` = хуки + `model`, `.mcp.json` = эндпоинты second_brain). Память слоистая: идентичность + правила `core/` + рабочий набор `active/recent.md` + общий second_brain по MCP.
 - **`orchestration/`** — работающий рой: `watchdog.sh <agent>` — это systemd `ExecStart`; он запускает `start-agent.sh`, который сорсит `channel.env`, вычисляет порт webhook агента (база `6000 + индекс в ростере`) и стартует tmux-сессию `labops-<agent>`. `lib/agents.sh` резолвит ростер динамически; `lib/notify.sh` шлёт троттлированные Telegram-алерты.
 - **`skills/`** — бандл-скиллы Claude Code; ключевой — **`create-agent`** — он ведёт весь деплой (роль → scaffold → бот → голос → токен → systemd → smoke), так что рой растёт сам.
 

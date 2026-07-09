@@ -29,8 +29,8 @@ We use **1 CLAUDE.md + @include** -- best of both:
 CLAUDE.md                    # SOUL: personality, principles (entry point)
   @core/USER.md              # operator profile
   @core/rules.md             # boundaries, security
-  @core/warm/decisions.md    # rolling 14-day memory
-  @core/hot/handoff.md       # compact extract (last 10 entries)
+  @core/passive/decisions.md    # rolling 14-day memory
+  @core/active/handoff.md       # compact extract (last 10 entries)
   # On-demand (Read tool, NOT @include -- saves ~18KB):
   # core/AGENTS.md            # models, subagents, pipelines
   # tools/TOOLS.md            # servers, services, paths
@@ -42,31 +42,31 @@ CLAUDE.md                    # SOUL: personality, principles (entry point)
 
 | Concept | OpenClaw | Claude Code (official) | Our Architecture |
 |---------|----------|----------------------|-----------------|
-| Short-term journal | `memory/YYYY-MM-DD.md` (daily) | _(auto memory)_ | `core/hot/recent.md` (24h rolling) |
-| Medium-term decisions | _(inside MEMORY.md)_ | _(auto memory)_ | `core/warm/decisions.md` (14d rolling) |
-| Long-term archive | `MEMORY.md` (manual curated) | `~/.claude/projects/*/memory/MEMORY.md` | `core/MEMORY.md` (cold, on-demand) |
+| Short-term journal | `memory/YYYY-MM-DD.md` (daily) | _(auto memory)_ | `core/active/recent.md` (24h rolling) |
+| Medium-term decisions | _(inside MEMORY.md)_ | _(auto memory)_ | `core/passive/decisions.md` (14d rolling) |
+| Long-term archive | `MEMORY.md` (manual curated) | `~/.claude/projects/*/memory/MEMORY.md` | `core/MEMORY.md` (archive, on-demand) |
 | Lessons from mistakes | _(inside MEMORY.md)_ | _(auto memory)_ | `core/LEARNINGS.md` (on-demand) |
 | Semantic search | _(none)_ | _(none)_ | second_brain L4 (HTTP API) |
 
 ### How memory compression works
 
 ```
-Gateway writes -> HOT (24h, full dialogue)
+Gateway writes -> ACTIVE (24h, full dialogue)
                     |
-              trim-hot.sh (cron 05:00 UTC)
-                    |
-                    v
-               WARM (14d, compressed key facts)
-                    |
-              rotate-warm.sh (cron 04:30 UTC)
+              trim-active.sh (cron 05:00 UTC)
                     |
                     v
-               COLD (archive, on-demand Read)
+               PASSIVE (14d, compressed key facts)
+                    |
+              rotate-passive.sh (cron 04:30 UTC)
+                    |
+                    v
+               ARCHIVE (archive, on-demand Read)
                     |
               memory-rotate.sh (cron 21:00 UTC)
                     |
                     v
-               archive/YYYY-MM.md (monthly files)
+               archived/YYYY-MM.md (monthly files)
 ```
 
 OpenClaw uses daily files (`memory/YYYY-MM-DD.md`) and a silent pre-compaction flush.
@@ -122,8 +122,8 @@ We use **cron + Sonnet compression** -- automated, predictable, agent-independen
 | `~/.claude-lab/shared/` | Resources shared across agents | Our convention |
 | `~/.claude-lab/{agent}/.claude/` | Per-agent project directory | Claude Code project scope |
 | `core/` | Identity + memory files | Our convention (core = essential) |
-| `core/warm/` | 14-day rolling memory | Our convention (warm = recent) |
-| `core/hot/` | 24h rolling journal | Our convention (hot = very recent) |
+| `core/passive/` | 14-day rolling memory | Our convention (passive = recent) |
+| `core/active/` | 24h rolling journal | Our convention (active = very recent) |
 | `tools/` | Infrastructure descriptions | OpenClaw convention (TOOLS.md) |
 | `skills/` | Callable commands | Claude Code official |
 | `agents/` | Subagent definitions | Claude Code official |
@@ -147,7 +147,7 @@ We use **cron + Sonnet compression** -- automated, predictable, agent-independen
 - `settings.json` for hooks, permissions, config
 
 ### What we added
-- **4-layer memory** (HOT -> WARM -> COLD -> L4 semantic) with cron compression
+- **4-layer memory** (ACTIVE -> PASSIVE -> ARCHIVE -> L4 semantic) with cron compression
 - **Shared resources** (`shared/secrets/`, `shared/skills/`, `shared/gateway/`)
 - **Telegram gateway** routing multiple bots to multiple agents
 - **Sonnet compression** for memory management (not just truncation)

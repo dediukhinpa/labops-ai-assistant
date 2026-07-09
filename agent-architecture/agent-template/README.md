@@ -58,13 +58,13 @@ and never block the harness on failure.
 |   |-- USER.md
 |   |-- rules.md
 |   |-- AGENTS.md
-|   |-- MEMORY.md              # COLD archive
+|   |-- MEMORY.md              # ARCHIVE archive
 |   |-- LEARNINGS.md
-|   |-- warm/decisions.md      # last 14d
-|   `-- hot/
+|   |-- passive/decisions.md      # last 14d
+|   `-- active/
 |       |-- recent.md          # 24h rolling
 |       |-- handoff.md
-|       |-- archive/
+|       |-- archived/
 |       `-- pre-compact/
 |-- tools/TOOLS.md
 |-- scripts/                   # memory rotation + second_brain-memory_router-on-start
@@ -93,10 +93,10 @@ agent-template/
 |   |-- mcp.json.template              .mcp.json with 3 second_brain servers
 |   `-- settings.json.template         hooks wiring
 |-- scripts/
-|   |-- memory-rotate.sh               archive COLD when >5KB
-|   |-- trim-hot.sh                    compress HOT via Sonnet
-|   |-- rotate-warm.sh                 move WARM >14d to COLD
-|   |-- compress-warm.sh               Sonnet-compress WARM
+|   |-- memory-rotate.sh               archive ARCHIVE when >5KB
+|   |-- trim-active.sh                    compress ACTIVE via Sonnet
+|   |-- rotate-passive.sh                 move PASSIVE >14d to ARCHIVE
+|   |-- compress-passive.sh               Sonnet-compress PASSIVE
 |   `-- second_brain-memory_router-on-start.sh      pull top-N recalls at SessionStart
 |-- hooks/
 |   |-- session-start-hook.sh
@@ -128,7 +128,7 @@ agent-template/
 |---|---|
 | Upstream semantic-memory backend (HTTP REST `/api/v1/...`) | second_brain MCPs (HTTP MCP transport, JSON-RPC 2.0, Bearer auth) |
 | Bearer/API key under `~/.claude-lab/shared/secrets/` (file on disk) | Bearer in `.mcp.json` `Authorization: Bearer ${AGENT_BEARER}` (chmod 600) |
-| Upstream session-sync script (uploads HOT+WARM to the memory server) | `scripts/second_brain-memory_router-on-start.sh` (pulls top-N recalls into HOT) |
+| Upstream session-sync script (uploads ACTIVE+PASSIVE to the memory server) | `scripts/second_brain-memory_router-on-start.sh` (pulls top-N recalls into ACTIVE) |
 | Standalone install | Lives inside the public-second_brain-agentos distro alongside the server, inbox-agent, and skills bundle |
 | Hooks described in docs only | Concrete `hooks/*.sh` shipped, wired via `templates/settings.json.template` |
 

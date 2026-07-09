@@ -1,19 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
-# rotate-warm.sh -- Move WARM entries >14 days to COLD
+# rotate-passive.sh -- Move PASSIVE entries >14 days to ARCHIVE
 # Pure bash, no model calls
 
 WS="${AGENT_WORKSPACE:-.claude}"
-WARM="$WS/core/warm/decisions.md"
-COLD="$WS/core/MEMORY.md"
-LOG="/tmp/rotate-warm.log"
+PASSIVE="$WS/core/passive/decisions.md"
+ARCHIVE="$WS/core/MEMORY.md"
+LOG="/tmp/rotate-passive.log"
 MAX_AGE_DAYS=14
 
 log() { echo "$(date -u +%H:%M:%S) $1" >> "$LOG"; }
-echo "=== rotate-warm.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >> "$LOG"
+echo "=== rotate-passive.sh $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >> "$LOG"
 
-[ ! -f "$WARM" ] && log "No decisions.md, skip" && exit 0
+[ ! -f "$PASSIVE" ] && log "No decisions.md, skip" && exit 0
 
 CUTOFF=$(date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%d)
 
@@ -49,7 +49,7 @@ $line"
             echo "$line" >> "$KEEP"
         fi
     fi
-done < "$WARM"
+done < "$PASSIVE"
 
 if [ -n "$CURRENT_DATE" ]; then
     if [[ "$CURRENT_DATE" < "$CUTOFF" ]]; then
@@ -62,10 +62,10 @@ if [ -n "$CURRENT_DATE" ]; then
 fi
 
 if [ -s "$ARCHIVE" ]; then
-    { echo ""; echo "## Archived from WARM ($(date -u +%Y-%m-%d))"; echo ""; cat "$ARCHIVE"; } >> "$COLD"
-    log "Rotated ${ROTATED} sections to COLD"
+    { echo ""; echo "## Archived from PASSIVE ($(date -u +%Y-%m-%d))"; echo ""; cat "$ARCHIVE"; } >> "$ARCHIVE"
+    log "Rotated ${ROTATED} sections to ARCHIVE"
 fi
 
-cp "$KEEP" "$WARM"
+cp "$KEEP" "$PASSIVE"
 log "Kept: ${KEPT}, Rotated: ${ROTATED}"
 log "Done."

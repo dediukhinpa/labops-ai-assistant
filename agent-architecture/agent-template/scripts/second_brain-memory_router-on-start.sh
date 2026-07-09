@@ -3,7 +3,7 @@ set -euo pipefail
 
 # second_brain-memory_router-on-start.sh -- session-start helper
 # Pulls top-N recalls from shared second_brain MCP that match the last handoff topic,
-# prepends a summary block to core/hot/recent.md.
+# prepends a summary block to core/active/recent.md.
 #
 # Replaces the upstream session-sync script from public-architecture-claude-code.
 #
@@ -22,8 +22,8 @@ WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
 LOGDIR="${HOME}/.claude-lab/${AGENT_ID}/logs"
 LOG="$LOGDIR/second_brain-memory_router.log"
-HANDOFF="$WS/core/hot/handoff.md"
-RECENT="$WS/core/hot/recent.md"
+HANDOFF="$WS/core/active/handoff.md"
+RECENT="$WS/core/active/recent.md"
 LIMIT="${RECALL_LIMIT:-5}"
 
 mkdir -p "$LOGDIR" "$(dirname "$RECENT")"

@@ -43,32 +43,32 @@ Per-agent identity. Loaded every session via `@include` directives in CLAUDE.md.
 
 ---
 
-## Layer 3: Memory -- WARM (`core/warm/`)
+## Layer 3: Memory -- PASSIVE (`core/passive/`)
 
 Rolling 14-day memory. Auto-compressed. Loaded every session.
 
 | File | Role | Loads | Writer | Access |
 |------|------|-------|--------|--------|
-| **warm/decisions.md** | Recent architectural/operational decisions. Topic-based key facts, auto-compressed by Sonnet | always (@include) | **trim-hot.sh** (cron, appends summaries from HOT), **compress-warm.sh** (cron, re-compresses), agent (during session for important decisions) | agent reads, cron writes, operator can edit |
+| **passive/decisions.md** | Recent architectural/operational decisions. Topic-based key facts, auto-compressed by Sonnet | always (@include) | **trim-active.sh** (cron, appends summaries from ACTIVE), **compress-passive.sh** (cron, re-compresses), agent (during session for important decisions) | agent reads, cron writes, operator can edit |
 
 **Lifecycle:**
-1. `trim-hot.sh` (05:00 UTC) extracts old HOT entries -> appends to WARM as `## YYYY-MM-DD (auto-compressed)` sections
-2. `compress-warm.sh` (06:00 UTC) re-compresses WARM if >10KB using Sonnet -> topic-based key facts
-3. `rotate-warm.sh` (04:30 UTC) moves entries >14 days to COLD (MEMORY.md)
+1. `trim-active.sh` (05:00 UTC) extracts old ACTIVE entries -> appends to PASSIVE as `## YYYY-MM-DD (auto-compressed)` sections
+2. `compress-passive.sh` (06:00 UTC) re-compresses PASSIVE if >10KB using Sonnet -> topic-based key facts
+3. `rotate-passive.sh` (04:30 UTC) moves entries >14 days to ARCHIVE (MEMORY.md)
 4. Agent can write important decisions during session
 
 **Who can touch:** Cron scripts (automated), agent (append only), operator (full access).
 
 ---
 
-## Layer 4: Memory -- HOT (`core/hot/`)
+## Layer 4: Memory -- ACTIVE (`core/active/`)
 
 Rolling 24h journal. Every conversation turn recorded. Loaded every session.
 
 | File | Role | Loads | Writer | Access |
 |------|------|-------|--------|--------|
-| **hot/handoff.md** | Compact extract from recent.md: last 10 conversation entries. Injected at session start for continuity without loading the full journal | always (@include) | **hook** (extracts last 10 from recent.md at session start) | agent reads, hook writes |
-| **hot/recent.md** | Full conversation journal: timestamp, source tag, user snippet (200 chars), agent snippet (200 chars). Emergency trim at 20KB/600 lines | on-demand (Read tool) | **gateway.py** (`append_to_hot_memory()` with fcntl lock), **trim-hot.sh** (cron, compresses old entries) | agent reads, gateway writes, cron trims |
+| **active/handoff.md** | Compact extract from recent.md: last 10 conversation entries. Injected at session start for continuity without loading the full journal | always (@include) | **hook** (extracts last 10 from recent.md at session start) | agent reads, hook writes |
+| **active/recent.md** | Full conversation journal: timestamp, source tag, user snippet (200 chars), agent snippet (200 chars). Emergency trim at 20KB/600 lines | on-demand (Read tool) | **gateway.py** (`append_to_hot_memory()` with fcntl lock), **trim-active.sh** (cron, compresses old entries) | agent reads, gateway writes, cron trims |
 
 **Entry format:**
 ```
@@ -83,15 +83,15 @@ Rolling 24h journal. Every conversation turn recorded. Loaded every session.
 
 ---
 
-## Layer 5: Memory -- COLD (`core/`)
+## Layer 5: Memory -- ARCHIVE (`core/`)
 
 Archive. NOT loaded into session context. Accessed via Read tool when needed.
 
 | File | Role | Loads | Writer | Access |
 |------|------|-------|--------|--------|
-| **MEMORY.md** | Permanent archive of decisions rotated from WARM (>14 days). May contain months of history | on-demand (Read tool) | **rotate-warm.sh** (cron, appends old WARM entries), **memory-rotate.sh** (cron, archives to monthly files) | agent reads on-demand, cron writes |
+| **MEMORY.md** | Permanent archive of decisions rotated from PASSIVE (>14 days). May contain months of history | on-demand (Read tool) | **rotate-passive.sh** (cron, appends old PASSIVE entries), **memory-rotate.sh** (cron, archives to monthly files) | agent reads on-demand, cron writes |
 | **LEARNINGS.md** | Lessons from mistakes: context, what went wrong, correct approach, rule | on-demand (Read tool) | agent (during session when learning occurs) | agent reads/writes, operator reads |
-| **archive/*.md** | Monthly archives (`2026-04.md`, `2026-03.md`). MEMORY.md archived here when >5KB | never (manual Read) | **memory-rotate.sh** (cron) | read-only archive |
+| **archived/*.md** | Monthly archives (`2026-04.md`, `2026-03.md`). MEMORY.md archived here when >5KB | never (manual Read) | **memory-rotate.sh** (cron) | read-only archive |
 
 **Who can touch:** Cron scripts (automated archival), agent (append learnings), operator (full access).
 
@@ -148,10 +148,10 @@ Cron jobs, utilities, automation. NOT loaded into context. Executed by cron or m
 
 | File | Role | Runs | Writer |
 |------|------|------|--------|
-| **trim-hot.sh** | Compress HOT >24h entries via Sonnet | cron 05:00 UTC daily | developer |
-| **compress-warm.sh** | Re-compress WARM via Sonnet if >10KB | cron 06:00 UTC daily | developer |
-| **rotate-warm.sh** | Move WARM >14d to COLD | cron 04:30 UTC daily | developer |
-| **memory-rotate.sh** | Archive COLD >5KB to monthly files | cron 21:00 UTC daily | developer |
+| **trim-active.sh** | Compress ACTIVE >24h entries via Sonnet | cron 05:00 UTC daily | developer |
+| **compress-passive.sh** | Re-compress PASSIVE via Sonnet if >10KB | cron 06:00 UTC daily | developer |
+| **rotate-passive.sh** | Move PASSIVE >14d to ARCHIVE | cron 04:30 UTC daily | developer |
+| **memory-rotate.sh** | Archive ARCHIVE >5KB to monthly files | cron 21:00 UTC daily | developer |
 
 **Who can touch:** Developer/operator creates and maintains. Cron executes. Agent can read but should not modify without permission.
 
@@ -200,8 +200,8 @@ Telegram router. Shared across agents. NOT loaded into agent context.
 | CLAUDE.md (SOUL) | 8 KB | 3,500 |
 | core/USER.md | 2 KB | 765 |
 | core/rules.md | 4 KB | 1,935 |
-| core/warm/decisions.md | 3 KB | 1,400 |
-| core/hot/handoff.md | 1-4 KB | 450-1,800 |
+| core/passive/decisions.md | 3 KB | 1,400 |
+| core/active/handoff.md | 1-4 KB | 450-1,800 |
 | **TOTAL** | **26-29 KB** | **11,680-13,030** |
 
 ### On-demand (not in startup context)
@@ -210,8 +210,8 @@ Telegram router. Shared across agents. NOT loaded into agent context.
 |----------|------|------|
 | core/AGENTS.md | 5 KB | Agent needs models, subagents, pipelines (on-demand Read) |
 | tools/TOOLS.md | 6 KB | Agent needs servers, infrastructure (on-demand Read) |
-| core/hot/recent.md | 8-30 KB | Full journal, loaded by gateway (on-demand Read) |
-| MEMORY.md (COLD) | 5+ KB | Agent needs old decisions |
+| core/active/recent.md | 8-30 KB | Full journal, loaded by gateway (on-demand Read) |
+| MEMORY.md (ARCHIVE) | 5+ KB | Agent needs old decisions |
 | LEARNINGS.md | varies | Agent needs past mistakes |
 | Skills (15) | ~50 KB total | Skill tool invocation |
 | Scripts (30) | ~70 KB total | Never in context |
@@ -230,8 +230,8 @@ Telegram router. Shared across agents. NOT loaded into agent context.
 | USER.md | RW | R | - | - | **NO** |
 | rules.md | RW | R | - | - | **NO** |
 | TOOLS.md | RW | R (suggest) | - | - | **NO** |
-| warm/decisions.md | RW | R+append | - | RW | **NO** |
-| hot/recent.md | RW | R | W (append) | RW | **NO** |
+| passive/decisions.md | RW | R+append | - | RW | **NO** |
+| active/recent.md | RW | R | W (append) | RW | **NO** |
 | MEMORY.md | RW | R+append | - | W | **NO** |
 | LEARNINGS.md | RW | RW | - | - | **NO** |
 | Skills | RW | R+execute | - | - | shared |
@@ -239,4 +239,4 @@ Telegram router. Shared across agents. NOT loaded into agent context.
 | gateway.py | RW | R | execute | - | - |
 | config.json | RW | R | R | - | - |
 
-**Key rule:** Each agent's workspace is **private**. Other agents CANNOT read another agent's core/, hot/, warm/, MEMORY.md, LEARNINGS.md without explicit operator permission.
+**Key rule:** Each agent's workspace is **private**. Other agents CANNOT read another agent's core/, active/, passive/, MEMORY.md, LEARNINGS.md without explicit operator permission.

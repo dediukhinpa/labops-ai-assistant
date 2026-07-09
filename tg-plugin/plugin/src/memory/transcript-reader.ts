@@ -15,7 +15,7 @@
 //
 // All errors are swallowed and surface as `null` — the caller treats
 // "no agent text" as "(inline)". Missing files, permission denied,
-// malformed JSON, schema drift — none of them should block the hot/
+// malformed JSON, schema drift — none of them should block the active/
 // verbose writes for the user side.
 
 import { open, type FileHandle } from 'node:fs/promises'

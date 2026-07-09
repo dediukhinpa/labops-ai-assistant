@@ -9,7 +9,7 @@ AGENT_NAME="${1:-unknown}"
 CLAUDE_DIR="${2:-.claude}"
 RULES_FILE="$CLAUDE_DIR/core/rules.md"
 LEARNINGS_FILE="$CLAUDE_DIR/core/LEARNINGS.md"
-DECISIONS_FILE="$CLAUDE_DIR/core/warm/decisions.md"
+DECISIONS_FILE="$CLAUDE_DIR/core/passive/decisions.md"
 
 # Если files нет — пропусти
 [ ! -f "$LEARNINGS_FILE" ] && exit 0

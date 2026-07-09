@@ -10,14 +10,14 @@ A **code reviewer** agent that:
 - Lives in its own workspace
 - Has its own SOUL (identity, style, rules)
 - Connects to Telegram (you message it, it reviews your code)
-- Remembers your conversations (HOT/WARM/COLD memory)
+- Remembers your conversations (ACTIVE/PASSIVE/ARCHIVE memory)
 
 ## Step 1: Create the Workspace
 
 ```bash
 AGENT_NAME="reviewer"  # ← your agent name (any name you want)
 
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/{warm,hot}
+mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/{passive,active}
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/tools
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/agents
 mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/scripts
@@ -26,9 +26,9 @@ mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/scripts
 ln -s ~/.claude-lab/shared/skills ~/.claude-lab/${AGENT_NAME}/.claude/skills
 
 # Create empty memory files
-echo "# WARM DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/warm/decisions.md
-echo "# Hot memory -- last 24h rolling journal" > ~/.claude-lab/${AGENT_NAME}/.claude/core/hot/recent.md
-echo "# MEMORY -- Cold Archive" > ~/.claude-lab/${AGENT_NAME}/.claude/core/MEMORY.md
+echo "# PASSIVE DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/decisions.md
+echo "# Active memory -- last 24h rolling journal" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/recent.md
+echo "# MEMORY -- Archive Archive" > ~/.claude-lab/${AGENT_NAME}/.claude/core/MEMORY.md
 echo "# LEARNINGS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/LEARNINGS.md
 ```
 
@@ -63,8 +63,8 @@ Create `~/.claude-lab/reviewer/.claude/CLAUDE.md`:
 
 @core/USER.md
 @core/rules.md
-@core/warm/decisions.md
-@core/hot/handoff.md
+@core/passive/decisions.md
+@core/active/handoff.md
 ```
 
 > **Key:** The `@core/...` lines tell Claude Code to load those files into context every session. AGENTS.md and TOOLS.md are loaded on-demand via Read tool to save ~18KB tokens.
@@ -156,7 +156,7 @@ Create `~/.claude-lab/reviewer/.claude/tools/TOOLS.md`:
 ## My Workspace
 
 - **CLAUDE.md**: identity
-- **Core**: AGENTS, USER, rules, warm, hot, MEMORY
+- **Core**: AGENTS, USER, rules, passive, active, MEMORY
 - **Skills**: shared (symlinked)
 - **Secrets**: ~/.claude-lab/shared/secrets/
 
@@ -209,7 +209,7 @@ See [jarvis-telegram-gateway](https://github.com/your-org/telegram-gateway) for 
 
 1. Send your bot a message: "Review this code: [paste code]"
 2. Or send a GitHub PR link: "Review this PR"
-3. Check that `core/hot/recent.md` has the conversation entry
+3. Check that `core/active/recent.md` has the conversation entry
 
 ## What You Built
 
@@ -221,8 +221,8 @@ See [jarvis-telegram-gateway](https://github.com/your-org/telegram-gateway) for 
     │   ├── AGENTS.md          ← models, subagents
     │   ├── USER.md            ← your profile
     │   ├── rules.md           ← review rules
-    │   ├── warm/decisions.md  ← recent decisions (auto)
-    │   ├── hot/recent.md      ← conversation log (auto)
+    │   ├── passive/decisions.md  ← recent decisions (auto)
+    │   ├── active/recent.md      ← conversation log (auto)
     │   ├── MEMORY.md          ← archive (auto)
     │   └── LEARNINGS.md       ← lessons from mistakes
     ├── tools/TOOLS.md         ← available tools

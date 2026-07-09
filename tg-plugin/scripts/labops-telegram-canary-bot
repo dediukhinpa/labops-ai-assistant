@@ -721,7 +721,7 @@ def handle_local_command(config: CanaryBotConfig, inbound: InboundMessage) -> st
         paths = session_paths(config, inbound.chat_id)
         if not paths.sid_path.exists():
             return "<b>no session</b> -- nothing to compact"
-        return "<b>compact queued manually only</b>\nCanary has session state, but Jarvis hot/warm memory compaction is not enabled here yet."
+        return "<b>compact queued manually only</b>\nCanary has session state, but Jarvis active/passive memory compaction is not enabled here yet."
     if command in ("/stop", "/cancel"):
         return "<b>nothing to stop</b> -- canary uses a synchronous Claude runner for one message at a time"
     return None

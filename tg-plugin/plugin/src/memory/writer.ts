@@ -16,13 +16,13 @@ import { join } from 'node:path'
 
 import type { Logger } from '../log.js'
 import type { ClaudeHookPayload } from '../schemas.js'
-import { appendHotEntry, snippet } from './hot-writer.js'
+import { appendActiveEntry, snippet } from './active-writer.js'
 import { appendVerbose, type VerboseRecord } from './verbose-writer.js'
 import { PromptBuffer } from './prompt-buffer.js'
 import { readLastAssistantText } from './transcript-reader.js'
 
 export interface MemoryConfig {
-  // <agent-workspace> root. recent.md lands at workspace/core/hot/recent.md.
+  // <agent-workspace> root. recent.md lands at workspace/core/active/recent.md.
   workspacePath: string
   // Pre-resolved logs dir (T7 derives <workspace_parent>/logs as the
   // default when config.memory.logs_path is unset).
@@ -30,7 +30,7 @@ export interface MemoryConfig {
   sourceTag: string
   // Human-friendly capitalised name (e.g. 'nova', 'vega').
   agentLabel: string
-  maxHotBytes: number
+  maxActiveBytes: number
   trimKeepLines: number
   bufferTtlMs: number
   bufferMaxEntries: number
@@ -85,9 +85,9 @@ export class MemoryWriter {
     }
 
     const ts = formatLocalTs(new Date(this.now()))
-    const hotPath = join(this.cfg.workspacePath, 'core', 'hot', 'recent.md')
-    await appendHotEntry({
-      path: hotPath,
+    const activePath = join(this.cfg.workspacePath, 'core', 'active', 'recent.md')
+    await appendActiveEntry({
+      path: activePath,
       ts,
       agentLabel: this.cfg.agentLabel,
       sourceTag: this.cfg.sourceTag,
@@ -96,7 +96,7 @@ export class MemoryWriter {
       // response text was captured. We mirror that to keep recent.md
       // diff-able between the two implementations.
       agentSnippet: snippet(agentText || '(inline)'),
-      maxBytes: this.cfg.maxHotBytes,
+      maxBytes: this.cfg.maxActiveBytes,
       trimKeepLines: this.cfg.trimKeepLines,
     })
 

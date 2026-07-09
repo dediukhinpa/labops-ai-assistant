@@ -5,5 +5,5 @@
 // exported because callers should only ever talk to MemoryWriter.
 
 export { MemoryWriter, type MemoryConfig } from './writer.js'
-export { appendHotEntry, snippet, type AppendHotInput } from './hot-writer.js'
+export { appendActiveEntry, snippet, type AppendActiveInput } from './active-writer.js'
 export { appendVerbose, type AppendVerboseInput, type VerboseRecord } from './verbose-writer.js'

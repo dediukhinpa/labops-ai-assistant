@@ -184,7 +184,7 @@ Title: GitHub - itsrealranky/ghostclaw: Grandfather of Openclaw
 
 ## Features
 - Ultra-Lightweight: ~2MB peak footprint
-- Lightning Fast: 15ms warm start
+- Lightning Fast: 15ms passive start
 ...
 ```
 

@@ -299,7 +299,7 @@ Creates atomic commits after each Claude response. Combine with `claude -w featu
 }
 ```
 
-Uploads HOT+WARM memory to second_brain for semantic search across sessions. The script (`second_brain-memory_router-on-start.sh`) uses `temp_upload` + `add_resource` to create indexed resources at `second_brain://notes/{agent}-sessions/{date}`. Runs in background (`&`) so it doesn't block the session exit. Combine with a daily cron (`30 6 * * *`) for redundancy. See MEMORY.md for full details.
+Uploads ACTIVE+PASSIVE memory to second_brain for semantic search across sessions. The script (`second_brain-memory_router-on-start.sh`) uses `temp_upload` + `add_resource` to create indexed resources at `second_brain://notes/{agent}-sessions/{date}`. Runs in background (`&`) so it doesn't block the session exit. Combine with a daily cron (`30 6 * * *`) for redundancy. See MEMORY.md for full details.
 
 ### Inject context on session start
 
@@ -340,7 +340,7 @@ These hooks form the production memory and safety pipeline for agents running vi
 | activity-logger.sh | PostToolUse | Audit trail (local JSONL) |
 | auto-capture.mjs | Stop | Captures conversation to second_brain |
 | write-handoff.sh | Stop | Generates handoff.md (last 10 entries) |
-| flush-to-second_brain.sh | PreCompact | Saves HOT+WARM to OV before compaction |
+| flush-to-second_brain.sh | PreCompact | Saves ACTIVE+PASSIVE to OV before compaction |
 | compact-notify.sh | PreCompact | Notifies about compaction |
 | close-heartbeat.sh | Stop | Sets agent status offline |
 
@@ -378,7 +378,7 @@ These hooks form the production memory and safety pipeline for agents running vi
 
 | Hook | Purpose |
 |------|---------|
-| **flush-to-second_brain.sh** | Pushes current HOT+WARM memory to second_brain before compaction destroys context. Ensures no knowledge is lost during long sessions. |
+| **flush-to-second_brain.sh** | Pushes current ACTIVE+PASSIVE memory to second_brain before compaction destroys context. Ensures no knowledge is lost during long sessions. |
 | **compact-notify.sh** | Alerts about upcoming compaction — logs a warning and optionally notifies the coordinator. |
 
 ### Stop

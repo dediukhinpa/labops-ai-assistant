@@ -215,8 +215,8 @@ flowchart LR
 flowchart LR
   subgraph local["Локальная память агента (файлы воркспейса)"]
     L1["L1 IDENTITY<br/>CLAUDE.md · rules.md · USER.md<br/>(всегда в контексте)"]
-    L2["L2 HOT<br/>hot/recent.md (24h) · hot/handoff.md<br/>(handoff кладёт boot-хук)"]
-    L3["L3 WARM<br/>warm/decisions.md (ротация >14д → COLD)<br/>COLD: MEMORY.md · LEARNINGS.md (по запросу)"]
+    L2["L2 ACTIVE<br/>active/recent.md (24h) · active/handoff.md<br/>(handoff кладёт boot-хук)"]
+    L3["L3 PASSIVE<br/>passive/decisions.md (ротация >14д → ARCHIVE)<br/>ARCHIVE: MEMORY.md · LEARNINGS.md (по запросу)"]
   end
   L4["L4 ОБЩИЙ МОЗГ<br/>labops-second-brain · memory_router/memory/agent_router по MCP"]
   L1 --> L2 --> L3 --> L4
@@ -232,12 +232,12 @@ flowchart LR
 | Слой | Файлы / источник | В контексте | Кто правит |
 |---|---|---|---|
 | **L1 Идентичность** | `CLAUDE.md`, `rules.md`, `USER.md` | всегда (`@import`) | только оператор (RED-зона) |
-| **L2 Hot** | `hot/recent.md` (скользящие 24 ч), `hot/handoff.md` | да (handoff кладёт boot-хук) | агент автономно (GREEN) |
-| **L3 Warm** | `warm/decisions.md` (последние ~14 д, ротация в COLD) | да | агент с обоснованием (YELLOW) |
-| **COLD** | `MEMORY.md`, `LEARNINGS.md` | нет — по запросу (Read) | агент (GREEN) |
+| **L2 Active** | `active/recent.md` (скользящие 24 ч), `active/handoff.md` | да (handoff кладёт boot-хук) | агент автономно (GREEN) |
+| **L3 Passive** | `passive/decisions.md` (последние ~14 д, ротация в ARCHIVE) | да | агент с обоснованием (YELLOW) |
+| **ARCHIVE** | `MEMORY.md`, `LEARNINGS.md` | нет — по запросу (Read) | агент (GREEN) |
 | **L4 Общий** | second_brain `memory_router` / `memory` / `agent_router` | нет — по запросу (MCP) | по RBAC-scopes |
 
-Зоны доступа к файлам: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — только оператор; **YELLOW** (`decisions.md`, `AGENTS.md`, `TOOLS.md`) — агент с обоснованием; **GREEN** (`LEARNINGS.md`, `hot/recent.md`, `feedback_*`) — агент автономно.
+Зоны доступа к файлам: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — только оператор; **YELLOW** (`decisions.md`, `AGENTS.md`, `TOOLS.md`) — агент с обоснованием; **GREEN** (`LEARNINGS.md`, `active/recent.md`, `feedback_*`) — агент автономно.
 
 **Политика записи в общий мозг** зафиксирована в [`SECONDBRAIN_WRITE_RULES.md`](SECONDBRAIN_WRITE_RULES.md) — это единый canonical-файл (RED-зона), который симлинкуется в `core/` каждого агента и **@-импортится в его `CLAUDE.md`** (`@core/SECONDBRAIN_WRITE_RULES.md`). Правишь один файл → подхватывают все агенты. Четыре дисциплины: (1) `recall` **перед** записью — не плодить дубли; (2) **dual-write** важного — и в локальный `.md`, и в second_brain (идемпотентно по sha256); (3) писать **сразу**, не «потом» (компакция знания не выгружает); (4) писать в свой `scope`. Инструменты записи жёстко зафиксированы кодом: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_personal_note` (→ `personal`), `create_project_note` (→ `projects`), `create_handoff`, `append_daily_log`, `supersede_decision`.
 
@@ -259,8 +259,8 @@ flowchart LR
 ├── agent.env            # source перед запуском: MCP_HOST / SECOND_BRAIN_*_URL / AGENT_BEARER
 ├── core/
 │   ├── USER.md · rules.md · AGENTS.md · MEMORY.md · LEARNINGS.md
-│   ├── warm/decisions.md           # WARM (последние 14д)
-│   └── hot/{recent.md, handoff.md, archive/, pre-compact/}
+│   ├── passive/decisions.md           # PASSIVE (последние 14д)
+│   └── active/{recent.md, handoff.md, archived/, pre-compact/}
 ├── tools/TOOLS.md
 ├── scripts/             # ротация памяти + second_brain-memory_router-on-start
 ├── hooks/               # session-start, stop, precompact
@@ -272,7 +272,7 @@ flowchart LR
 |---|---|
 | `templates/` | `CLAUDE.md`, `rules.md`, `USER.md`, `tools.md`, `agents.md`, `decisions.md`, `recent.md`, `MEMORY.md`, `LEARNINGS.md`, `mcp.json`, `settings.json` |
 | `hooks/` | `session-start-hook.sh`, `stop-hook.sh`, `precompact-hook.sh` |
-| `scripts/` | `memory-rotate.sh`, `trim-hot.sh`, `rotate-warm.sh`, `compress-warm.sh`, `second_brain-memory_router-on-start.sh` |
+| `scripts/` | `memory-rotate.sh`, `trim-active.sh`, `rotate-passive.sh`, `compress-passive.sh`, `second_brain-memory_router-on-start.sh` |
 | `docs/` | `ARCHITECTURE.md`, `MEMORY.md`, `HOOKS.md`, `MULTI-AGENT.md`, `SETUP-GUIDE.md`, `AGENT-LAWS.md`, … (16 файлов) |
 
 Важно: `mcp.json.template` подключает агенту **только** second_brain (3 сервера). Канал (`labops-channel`) грузится отдельно при запуске через `claude … server:labops-channel`, а task-board MCP (`:5003`) агентам намеренно **не** заводится (heartbeat идёт отдельным кроном).
@@ -338,9 +338,9 @@ flowchart LR
 
 | Событие | Хук (`agent-template/hooks/`) | Что делает |
 |---|---|---|
-| **SessionStart** | `session-start-hook.sh` | логирует старт; если есть `SECOND_BRAIN_MEMORY_ROUTER_URL`+`AGENT_BEARER` — зовёт `second_brain-memory_router-on-start.sh` (дописывает блок релевантных recall в `hot/recent.md`); surface `handoff.md`. В рое также `agent-boot-sequence.sh`: 👀 на свежие сообщения + `agent_router.list_my_pending()` (забрать делегированные задачи — pull-страховка) |
-| **Stop** | `stop-hook.sh` | дописывает 200-символьный сниппет хода в `hot/recent.md` и подробную JSON-строку в `logs/verbose-YYYY-MM-DD.jsonl`. В рое также `read-receipt-hook.ts` (POST `/hooks/react` → 👌) и `reflect-error-pattern.sh` (если Оператор поправил → нудж записать error-pattern через `decision:"block"`) |
-| **PreCompact** | `precompact-hook.sh` | снапшотит `hot/recent.md` в `hot/pre-compact/` перед авто-компакцией, держит последние `KEEP_SNAPSHOTS` (10) |
+| **SessionStart** | `session-start-hook.sh` | логирует старт; если есть `SECOND_BRAIN_MEMORY_ROUTER_URL`+`AGENT_BEARER` — зовёт `second_brain-memory_router-on-start.sh` (дописывает блок релевантных recall в `active/recent.md`); surface `handoff.md`. В рое также `agent-boot-sequence.sh`: 👀 на свежие сообщения + `agent_router.list_my_pending()` (забрать делегированные задачи — pull-страховка) |
+| **Stop** | `stop-hook.sh` | дописывает 200-символьный сниппет хода в `active/recent.md` и подробную JSON-строку в `logs/verbose-YYYY-MM-DD.jsonl`. В рое также `read-receipt-hook.ts` (POST `/hooks/react` → 👌) и `reflect-error-pattern.sh` (если Оператор поправил → нудж записать error-pattern через `decision:"block"`) |
+| **PreCompact** | `precompact-hook.sh` | снапшотит `active/recent.md` в `active/pre-compact/` перед авто-компакцией, держит последние `KEEP_SNAPSHOTS` (10) |
 
 Все хуки несут `sdk-guard`: при `CLAUDE_SDK_CHILD=1` (или `entrypoint=sdk-ts`) сразу выходят, чтобы не зацикливаться в дочерних Agent-SDK-сессиях.
 

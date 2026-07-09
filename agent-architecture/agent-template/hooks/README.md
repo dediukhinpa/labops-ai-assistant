@@ -11,9 +11,9 @@ so the harness is never stalled.
 
 | File | Hook event | Purpose |
 |---|---|---|
-| `session-start-hook.sh` | `SessionStart` | Log session start; optionally call `scripts/second_brain-memory_router-on-start.sh` to pull top-N relevant items from shared second_brain into `core/hot/recent.md`. |
-| `stop-hook.sh` | `Stop` (end of each turn) | Append a 200-char snippet to `core/hot/recent.md`; append a verbose JSON line to `logs/verbose-YYYY-MM-DD.jsonl` (full payload, for replay). |
-| `precompact-hook.sh` | `PreCompact` | Snapshot `core/hot/recent.md` to `core/hot/pre-compact/recent-<ts>.md`; keep newest `KEEP_SNAPSHOTS` (default 10). |
+| `session-start-hook.sh` | `SessionStart` | Log session start; optionally call `scripts/second_brain-memory_router-on-start.sh` to pull top-N relevant items from shared second_brain into `core/active/recent.md`. |
+| `stop-hook.sh` | `Stop` (end of each turn) | Append a 200-char snippet to `core/active/recent.md`; append a verbose JSON line to `logs/verbose-YYYY-MM-DD.jsonl` (full payload, for replay). |
+| `precompact-hook.sh` | `PreCompact` | Snapshot `core/active/recent.md` to `core/active/pre-compact/recent-<ts>.md`; keep newest `KEEP_SNAPSHOTS` (default 10). |
 
 ## Environment
 
@@ -49,4 +49,4 @@ from inside the workspace.
 - `logs/hooks.log` -- one line per hook invocation
 - `logs/verbose-YYYY-MM-DD.jsonl` -- one JSON object per turn (Stop hook)
 
-`core/hot/pre-compact/` holds the rotating PreCompact snapshots.
+`core/active/pre-compact/` holds the rotating PreCompact snapshots.
