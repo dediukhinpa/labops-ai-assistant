@@ -71,5 +71,16 @@ fi
 # Episodic entry: delegate to active-writer.sh (snippet extraction + salience tag).
 printf '%s' "$PAYLOAD" | AGENT_WORKSPACE="$WS" bash "$SCRIPT_DIR/../scripts/active-writer.sh" --source stop-hook || true
 
+# Checkpoint: every N turns, nudge in-session consolidation (fail-open, background).
+CHECKPOINT_N="${MEMORY_CHECKPOINT_EVERY_N_TURNS:-20}"
+COUNTER="$WS/core/active/.turn-counter"
+count=$(( $(cat "$COUNTER" 2>/dev/null || echo 0) + 1 ))
+echo "$count" > "$COUNTER"
+NUDGE="$SCRIPT_DIR/../scripts/reflect-nudge.sh"
+if [ -f "$NUDGE" ] && [ "$CHECKPOINT_N" -gt 0 ] && [ $(( count % CHECKPOINT_N )) -eq 0 ]; then
+    log "checkpoint: ${count} turns → nudging consolidation"
+    ( AGENT_WORKSPACE="$WS" AGENT_ID="$AGENT_ID" bash "$NUDGE" --reason checkpoint >/dev/null 2>&1 || true ) &
+fi
+
 log "appended episodic entry and verbose line"
 exit 0

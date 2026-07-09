@@ -270,7 +270,7 @@ for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep
 done
 
 log "Copying hooks..."
-for hook in session-start-hook.sh stop-hook.sh precompact-hook.sh; do
+for hook in session-start-hook.sh stop-hook.sh precompact-hook.sh user-prompt-submit-hook.sh; do
     if [ -f "${HOOKS_DIR}/${hook}" ]; then
         if [ ! -f "${WORKSPACE}/hooks/${hook}" ]; then
             cp "${HOOKS_DIR}/${hook}" "${WORKSPACE}/hooks/${hook}"

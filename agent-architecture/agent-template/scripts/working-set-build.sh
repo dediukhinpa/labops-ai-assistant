@@ -34,9 +34,10 @@ TIMEOUT_S=$(( (TIMEOUT_MS + 999) / 1000 )); [ "$TIMEOUT_S" -lt 1 ] && TIMEOUT_S=
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [working-set] $1" >> "$LOG"; }
 ISO() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# --- 1) build query from last handoff, else episodic tail --------------------
-QUERY=""
-if [ -f "$HANDOFF" ] && [ -s "$HANDOFF" ]; then
+# --- 1) build query: explicit override (e.g. the just-submitted prompt), else
+#        last handoff, else episodic tail ------------------------------------
+QUERY="${WORKING_SET_QUERY:-}"
+if [ -z "$QUERY" ] && [ -f "$HANDOFF" ] && [ -s "$HANDOFF" ]; then
     QUERY=$(grep -vE '^[[:space:]]*$' "$HANDOFF" | tail -n 3 | tr '\n' ' ' | head -c 300)
 fi
 if [ -z "$QUERY" ] && [ -f "$EPISODIC" ] && [ -s "$EPISODIC" ]; then

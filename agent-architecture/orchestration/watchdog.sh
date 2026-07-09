@@ -9,6 +9,14 @@ SESSION="labops-$AGENT"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 START_SCRIPT="$SCRIPT_DIR/start-agent.sh"
 
+# Idle-triggered memory consolidation: after the agent sits on a clean idle prompt
+# for MEMORY_IDLE_CONSOLIDATE_MIN minutes, nudge the session to reflect (once per
+# idle period). Reflection runs in-session (no headless claude); this only pings it.
+CLAUDE_LAB="${CLAUDE_LAB:-$HOME/.claude-lab}"
+AGENT_WS="$CLAUDE_LAB/$AGENT/.claude"
+REFLECT_NUDGE="$AGENT_WS/scripts/reflect-nudge.sh"
+IDLE_CYCLES=$(( ${MEMORY_IDLE_CONSOLIDATE_MIN:-10} * 60 / 30 ))   # 30s per loop cycle
+
 # Best-effort Telegram alerts to the Operator on failures/restarts. Opt-in via
 # WATCHDOG_TG_ALERTS (default 1); never fatal; throttled. See lib/notify.sh.
 # shellcheck source=lib/notify.sh
@@ -49,13 +57,15 @@ PROMPT_RE='Listening for channel|❯|bypass permissions'
 PREV_TAIL=""
 FROZEN_COUNT=0
 NUDGE_STAGE=0
+IDLE_COUNT=0
+IDLE_CONSOLIDATED=0
 
 restart_session() {
   log "restarting ($1)"
   notify_op "$AGENT" "⚠️ перезапуск tmux-сессии — причина: $1"
   "$START_SCRIPT" "$AGENT"
   notify_op "$AGENT" "✅ сессия снова в строю (после: $1)"
-  PREV_TAIL=""; FROZEN_COUNT=0; NUDGE_STAGE=0
+  PREV_TAIL=""; FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
 }
 
 while true; do
@@ -83,7 +93,7 @@ while true; do
 
   # Pane moved since last cycle → agent is progressing; reset and move on
   if [ "$TAIL" != "$PREV_TAIL" ]; then
-    FROZEN_COUNT=0; NUDGE_STAGE=0
+    FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
     PREV_TAIL="$TAIL"
     continue
   fi
@@ -119,6 +129,14 @@ while true; do
   INPUT=$(printf '%s' "$TAIL" | grep -a '❯' | tail -1 | sed -e 's/.*❯//' -e 's/\xc2\xa0//g' -e 's/[[:space:]]//g')
   if [ -z "$INPUT" ]; then
     NUDGE_STAGE=0          # clean idle prompt — healthy, leave it alone
+    # Idle-triggered consolidation: once the agent has been idle long enough,
+    # nudge it to reflect (episodic → passive). Fire once per idle period.
+    IDLE_COUNT=$((IDLE_COUNT + 1))
+    if [ "$IDLE_COUNT" -ge "$IDLE_CYCLES" ] && [ "$IDLE_CONSOLIDATED" -eq 0 ] && [ -f "$REFLECT_NUDGE" ]; then
+      log "idle ${MEMORY_IDLE_CONSOLIDATE_MIN:-10}min → nudging memory consolidation"
+      ( AGENT_WORKSPACE="$AGENT_WS" AGENT_ID="$AGENT" bash "$REFLECT_NUDGE" --reason idle >/dev/null 2>&1 || true ) &
+      IDLE_CONSOLIDATED=1
+    fi
     continue
   fi
 
