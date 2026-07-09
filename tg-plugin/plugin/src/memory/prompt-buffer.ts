@@ -2,7 +2,7 @@
 //
 // Claude's UserPromptSubmit hook fires when the user submits a prompt;
 // Stop fires when the turn ends. We need the prompt text at Stop time
-// to write a turn entry (user line in recent.md, user field in
+// to write a turn entry (user line in episodic.md, user field in
 // verbose.jsonl), but the Stop payload itself doesn't carry the prompt.
 // This buffer holds the most recent UserPromptSubmit per chatId until
 // the matching Stop arrives.

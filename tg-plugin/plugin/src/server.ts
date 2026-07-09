@@ -647,7 +647,7 @@ const inboundWatcher = new InboundWatcher({
   progressReporter,
 })
 
-// Phase 8 / T7: MemoryWriter persists turns to <workspace>/core/active/recent.md
+// Phase 8 / T7: MemoryWriter persists turns to <workspace>/core/active/episodic.md
 // and <workspace_parent>/logs/verbose-YYYY-MM-DD.jsonl. Only instantiated
 // when config.memory.enabled === true AND workspace_path is set — schema
 // refine already guarantees the second condition when enabled is true, but
@@ -664,7 +664,7 @@ if (config.memory.enabled === true && config.memory.workspace_path !== undefined
     // Agent label preference: explicit memory.agent_label > 'Agent' fallback.
     // Telegram bot username is not used here because it's typically the
     // assistant's tool-handle (e.g. 'fridayhumanbot') rather than the
-    // human-readable agent name ('nova') that goes into recent.md.
+    // human-readable agent name ('nova') that goes into episodic.md.
     agentLabel: config.memory.agent_label ?? 'Agent',
     maxActiveBytes: config.memory.max_active_bytes,
     trimKeepLines: config.memory.trim_keep_lines,

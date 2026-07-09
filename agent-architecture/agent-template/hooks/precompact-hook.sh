@@ -7,7 +7,7 @@ if [ "${CLAUDE_SDK_CHILD:-0}" = "1" ]; then
     exit 0
 fi
 
-# PreCompact hook -- snapshot recent.md before Claude Code auto-compacts context.
+# PreCompact hook -- snapshot episodic.md before Claude Code auto-compacts context.
 # Keeps the last N pre-compact snapshots so you can recover state if compaction
 # loses information you cared about.
 #
@@ -17,7 +17,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
-ACTIVE="$WS/core/active/recent.md"
+ACTIVE="$WS/core/active/episodic.md"
 SNAP_DIR="$WS/core/active/pre-compact"
 LOGDIR="$WS/logs"
 HOOK_LOG="$LOGDIR/hooks.log"
@@ -29,7 +29,7 @@ touch "$HOOK_LOG"
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [precompact] $1" >> "$HOOK_LOG"; }
 
 if [ ! -f "$ACTIVE" ] || [ ! -s "$ACTIVE" ]; then
-    log "no recent.md to snapshot"
+    log "no episodic.md to snapshot"
     exit 0
 fi
 

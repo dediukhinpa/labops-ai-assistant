@@ -19,7 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
-ACTIVE="$WS/core/active/recent.md"
+ACTIVE="$WS/core/active/episodic.md"
 PASSIVE="$WS/core/passive/decisions.md"
 ARCHIVE_DIR="$WS/core/active/archived"
 LOCKFILE="/tmp/trim-active-${AGENT_ID}.lock"
@@ -35,7 +35,7 @@ log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $1" >> "$LOG"; }
 
 log "=== trim-active.sh START ==="
 
-[ ! -f "$ACTIVE" ] && log "No recent.md, skip" && exit 0
+[ ! -f "$ACTIVE" ] && log "No episodic.md, skip" && exit 0
 
 SIZE=$(wc -c < "$ACTIVE")
 log "ACTIVE size: ${SIZE} bytes"

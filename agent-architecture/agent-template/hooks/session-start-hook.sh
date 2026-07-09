@@ -9,7 +9,7 @@ fi
 # SessionStart hook -- runs once at the start of a Claude Code session.
 # 1) Logs that a session started.
 # 2) If second_brain MCP credentials are present, calls second_brain-memory_router-on-start.sh to
-#    prepend a "relevant second_brain recalls" block to core/active/recent.md.
+#    prepend a "relevant second_brain recalls" block to core/active/episodic.md.
 #
 # Wire via templates/settings.json.template (SessionStart hook).
 # Non-blocking: any failure exits 0.

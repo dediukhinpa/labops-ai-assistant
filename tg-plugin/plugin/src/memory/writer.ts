@@ -4,7 +4,7 @@
 // onHook(payload) is the single entry point called from the
 // /hooks/agent webhook branch. UserPromptSubmit buffers the prompt
 // by chatId; Stop reads the buffer + tail-reads the transcript for
-// the assistant text + appends one entry each to recent.md and
+// the assistant text + appends one entry each to episodic.md and
 // verbose-YYYY-MM-DD.jsonl.
 //
 // All errors are swallowed — the webhook still returns 200 so Claude
@@ -22,7 +22,7 @@ import { PromptBuffer } from './prompt-buffer.js'
 import { readLastAssistantText } from './transcript-reader.js'
 
 export interface MemoryConfig {
-  // <agent-workspace> root. recent.md lands at workspace/core/active/recent.md.
+  // <agent-workspace> root. episodic.md lands at workspace/core/active/episodic.md.
   workspacePath: string
   // Pre-resolved logs dir (T7 derives <workspace_parent>/logs as the
   // default when config.memory.logs_path is unset).
@@ -85,7 +85,7 @@ export class MemoryWriter {
     }
 
     const ts = formatLocalTs(new Date(this.now()))
-    const activePath = join(this.cfg.workspacePath, 'core', 'active', 'recent.md')
+    const activePath = join(this.cfg.workspacePath, 'core', 'active', 'episodic.md')
     await appendActiveEntry({
       path: activePath,
       ts,
@@ -93,7 +93,7 @@ export class MemoryWriter {
       sourceTag: this.cfg.sourceTag,
       userSnippet: snippet(userText),
       // gateway.py:1950 uses '(inline)' as the agent fallback when no
-      // response text was captured. We mirror that to keep recent.md
+      // response text was captured. We mirror that to keep episodic.md
       // diff-able between the two implementations.
       agentSnippet: snippet(agentText || '(inline)'),
       maxBytes: this.cfg.maxActiveBytes,

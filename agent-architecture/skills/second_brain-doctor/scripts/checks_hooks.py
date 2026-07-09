@@ -567,7 +567,7 @@ def _chmod_allowed(path: Path, approved_roots: list[Path], want_basename: str | 
 
 
 def _parse_stop_marker_age_hours(recent_md: Path) -> tuple[float | None, str | None]:
-    """Find the newest ``[stop-hook]`` marker in recent.md and return its age.
+    """Find the newest ``[stop-hook]`` marker in episodic.md and return its age.
 
     The marker timestamp is written by ``stop-hook.sh`` with ``date -u``, so it
     is UTC. We interpret it as UTC only and compute the age against the current
@@ -1233,16 +1233,16 @@ def _check_stop_fresh(
     manifest: Manifest,
     entries_by_event: dict[str, list[HookEntry]],
 ) -> CheckResult:
-    """C033: assert the Stop hook fired recently via recent.md marker age."""
+    """C033: assert the Stop hook fired recently via episodic.md marker age."""
     ws = ctx.workspace_root
     if ws is None:
         return _r(
             "stop_hook_recent_fresh",
             "skip",
-            "no resolved workspace; cannot locate core/active/recent.md "
+            "no resolved workspace; cannot locate core/active/episodic.md "
             "(pass --agent from the agent workspace)",
         )
-    recent_md = ws / "core" / "active" / "recent.md"
+    recent_md = ws / "core" / "active" / "episodic.md"
     max_age = 24.0
     if isinstance(manifest.freshness.get("recent_stop_hook_max_age_hours"), (int, float)):
         max_age = float(manifest.freshness["recent_stop_hook_max_age_hours"])
@@ -1270,7 +1270,7 @@ def _check_stop_fresh(
         return _r(
             "stop_hook_recent_fresh",
             "warn",
-            "recent.md present but has no [stop-hook] marker "
+            "episodic.md present but has no [stop-hook] marker "
             "(no turn recorded yet, or markers trimmed)",
             "Run a turn so the Stop hook appends a marker.",
         )

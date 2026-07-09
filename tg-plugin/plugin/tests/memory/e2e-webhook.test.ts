@@ -1,5 +1,5 @@
 // Phase 8 / T8 — End-to-end: real webhook + real MemoryWriter + real
-// tmp workspace. POST UserPromptSubmit + Stop and assert recent.md and
+// tmp workspace. POST UserPromptSubmit + Stop and assert episodic.md and
 // verbose-YYYY-MM-DD.jsonl appear with the expected contents.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
@@ -120,7 +120,7 @@ function url(h: WebhookServerHandle, p: string): string {
   return `http://${h.host}:${h.port}${p}`
 }
 
-describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', () => {
+describe('end-to-end: webhook → MemoryWriter → episodic.md + verbose.jsonl', () => {
   test('UserPromptSubmit + Stop produces both files with expected contents', async () => {
     process.env.TELEGRAM_WEBHOOK_TOKEN = WEBHOOK_TOKEN
 
@@ -170,8 +170,8 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
     })
     expect(stop.status).toBe(200)
 
-    // recent.md
-    const activePath = join(workspaceDir, 'core', 'active', 'recent.md')
+    // episodic.md
+    const activePath = join(workspaceDir, 'core', 'active', 'episodic.md')
     const active = readFileSync(activePath, 'utf8')
     expect(active).toMatch(/### \d{4}-\d{2}-\d{2} \d{2}:\d{2} \[tg\]/)
     expect(active).toContain('**User:** end-to-end user prompt\n')
@@ -250,8 +250,8 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
     const stopResults = await Promise.all(stops)
     for (const r of stopResults) expect(r.status).toBe(200)
 
-    // Every user-prompt-NNN must appear in recent.md.
-    const active = readFileSync(join(workspaceDir, 'core', 'active', 'recent.md'), 'utf8')
+    // Every user-prompt-NNN must appear in episodic.md.
+    const active = readFileSync(join(workspaceDir, 'core', 'active', 'episodic.md'), 'utf8')
     for (let i = 0; i < N; i++) {
       const id = i.toString().padStart(3, '0')
       expect(active).toContain(`**User:** user-prompt-${id}\n`)
@@ -312,7 +312,7 @@ describe('end-to-end: webhook → MemoryWriter → recent.md + verbose.jsonl', (
     expect(resp.status).toBe(200)
 
     let activeExists = true
-    try { readFileSync(join(workspaceDir, 'core', 'active', 'recent.md'), 'utf8') } catch { activeExists = false }
+    try { readFileSync(join(workspaceDir, 'core', 'active', 'episodic.md'), 'utf8') } catch { activeExists = false }
     expect(activeExists).toBe(false)
     let logsExist = true
     try { readdirSync(logsDir) } catch { logsExist = false }

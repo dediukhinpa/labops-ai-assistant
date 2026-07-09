@@ -12,7 +12,7 @@ let activePath: string
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'labops-active-writer-'))
-  activePath = join(dir, 'core', 'active', 'recent.md')
+  activePath = join(dir, 'core', 'active', 'episodic.md')
 })
 
 afterEach(() => {
@@ -59,7 +59,7 @@ describe('snippet', () => {
     // Pre-fix `.slice(0, 200)` cut after 100 emojis (200 UTF-16 units),
     // matching Python `s[:200]` semantics only by accident — and could
     // split a surrogate pair on a non-multiple-of-2 max, producing an
-    // invalid UTF-8 sequence in recent.md.
+    // invalid UTF-8 sequence in episodic.md.
     const out = snippet('👋'.repeat(150))
     expect(Array.from(out).length).toBe(150)
     // No broken surrogate pair: every code point must be a full emoji.
@@ -172,7 +172,7 @@ describe('appendActiveEntry', () => {
     expect(text.slice(0, headerLiteral.length)).toBe(headerLiteral)
   })
 
-  test('trim leaves no orphan .recent.md.tmp.* file in target dir', async () => {
+  test('trim leaves no orphan .episodic.md.tmp.* file in target dir', async () => {
     const fs = await import('node:fs/promises')
     await fs.mkdir(dirname(activePath), { recursive: true })
     const pre = '\n### 2026-05-15 11:00 [tg]\n' +
@@ -186,7 +186,7 @@ describe('appendActiveEntry', () => {
 
     const siblings = readdirSync(dirname(activePath))
     for (const name of siblings) {
-      expect(name.startsWith('.recent.md.tmp.')).toBe(false)
+      expect(name.startsWith('.episodic.md.tmp.')).toBe(false)
     }
   })
 
@@ -194,7 +194,7 @@ describe('appendActiveEntry', () => {
     // Pre-fix: writeFile + rename had no try/catch. If rename failed
     // (EBUSY, EIO, kill-between-awaits) the tmp file stayed forever; PID
     // + ms suffixes meant successive faulted trims would accumulate
-    // distinct .recent.md.tmp.* orphans. After the fix, any throw
+    // distinct .episodic.md.tmp.* orphans. After the fix, any throw
     // between writeFile and rename triggers an unlink on tmp.
     const fs = await import('node:fs/promises')
     await fs.mkdir(dirname(activePath), { recursive: true })
@@ -236,10 +236,10 @@ describe('appendActiveEntry', () => {
     expect((caught as Error & { code?: string }).code).toBe('EBUSY')
     expect(renameCalls).toBe(1)
     expect(unlinkCalls).toBe(1)
-    // (b) no orphan .recent.md.tmp.* file remains in the directory.
+    // (b) no orphan .episodic.md.tmp.* file remains in the directory.
     const siblings = readdirSync(dirname(activePath))
     for (const name of siblings) {
-      expect(name.startsWith('.recent.md.tmp.')).toBe(false)
+      expect(name.startsWith('.episodic.md.tmp.')).toBe(false)
     }
   })
 

@@ -15,7 +15,7 @@ Static fixtures for `tests/test_second_brain_doctor_skill.py`. No network, no re
 | `workspace/hooks/session-start-hook.sh` | Executable hook (baseline). |
 | `workspace/hooks/stop-hook.sh` | Non-executable hook for C027 (tests chmod 644 defensively). |
 | `workspace/hooks/precompact-hook.sh` | Executable PreCompact hook. |
-| `workspace/core/active/recent.md` | Stale `[stop-hook]` marker dated 2026-01-01 (C033 freshness warn). |
+| `workspace/core/active/episodic.md` | Stale `[stop-hook]` marker dated 2026-01-01 (C033 freshness warn). |
 | `workspace/core/active/pre-compact/recent-*.md` | A PreCompact snapshot so C034 can pass. |
 
 The executable bit on `stop-hook.sh` is set to 644 at creation, but git does not reliably preserve

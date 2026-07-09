@@ -89,7 +89,7 @@ export const AppConfigSchema = z.object({
   }).default({}),
   // Phase 8: Memory hooks parity with gateway.py:1938-2035. When a Claude
   // hook (UserPromptSubmit / Stop) fires, the plugin writes a turn entry to
-  // <workspace_path>/core/active/recent.md and a lossless record to
+  // <workspace_path>/core/active/episodic.md and a lossless record to
   // <workspace_parent>/logs/verbose-YYYY-MM-DD.jsonl.
   //
   // Deviation from PLAN.md T1: `enabled` defaults to false (plan said true).

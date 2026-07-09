@@ -3,7 +3,7 @@ set -euo pipefail
 
 # second_brain-memory_router-on-start.sh -- session-start helper
 # Pulls top-N recalls from shared second_brain MCP that match the last handoff topic,
-# prepends a summary block to core/active/recent.md.
+# prepends a summary block to core/active/episodic.md.
 #
 # Replaces the upstream session-sync script from public-architecture-claude-code.
 #
@@ -23,7 +23,7 @@ AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
 LOGDIR="${HOME}/.claude-lab/${AGENT_ID}/logs"
 LOG="$LOGDIR/second_brain-memory_router.log"
 HANDOFF="$WS/core/active/handoff.md"
-RECENT="$WS/core/active/recent.md"
+RECENT="$WS/core/active/episodic.md"
 LIMIT="${RECALL_LIMIT:-5}"
 
 mkdir -p "$LOGDIR" "$(dirname "$RECENT")"
@@ -38,7 +38,7 @@ if [ -z "${SECOND_BRAIN_MEMORY_ROUTER_URL:-}" ] || [ -z "${AGENT_BEARER:-}" ]; t
     exit 0
 fi
 
-# 1) Build query from last handoff or last 200 chars of recent.md
+# 1) Build query from last handoff or last 200 chars of episodic.md
 QUERY=""
 if [ -f "$HANDOFF" ] && [ -s "$HANDOFF" ]; then
     # Take last 3 non-empty lines
@@ -131,7 +131,7 @@ fi
 COUNT=$(echo "$HITS" | grep -c '^- ' || echo 0)
 TS=$(date -u +%Y-%m-%d\ %H:%M)
 
-# 5) Prepend block to recent.md
+# 5) Prepend block to episodic.md
 TMP=$(mktemp)
 {
     echo "### ${TS} [second_brain-memory_router]"

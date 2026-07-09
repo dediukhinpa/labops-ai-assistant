@@ -689,12 +689,12 @@ class TestFixturesWellFormed:
         assert (ws / "hooks" / "session-start-hook.sh").is_file()
         assert (ws / "hooks" / "stop-hook.sh").is_file()
         assert (ws / "hooks" / "precompact-hook.sh").is_file()
-        assert (ws / "core" / "active" / "recent.md").is_file()
+        assert (ws / "core" / "active" / "episodic.md").is_file()
         snaps = list((ws / "core" / "active" / "pre-compact").glob("recent-*.md"))
         assert snaps
 
     def test_stale_marker_in_recent(self):
-        text = (_FIXTURES / "workspace" / "core" / "active" / "recent.md").read_text()
+        text = (_FIXTURES / "workspace" / "core" / "active" / "episodic.md").read_text()
         assert "[stop-hook]" in text
         assert "2026-01-01" in text
 
@@ -915,7 +915,7 @@ class TestHooksPhase5:
 
         self._isolated_home(monkeypatch)
         ws = tmp_path / "agent" / ".claude"
-        recent = ws / "core" / "active" / "recent.md"
+        recent = ws / "core" / "active" / "episodic.md"
         recent.parent.mkdir(parents=True)
         stale = datetime.now(timezone.utc) - timedelta(hours=26)
         marker = stale.strftime("%Y-%m-%d %H:%M")
@@ -938,7 +938,7 @@ class TestHooksPhase5:
 
         self._isolated_home(monkeypatch)
         ws = tmp_path / "agent" / ".claude"
-        recent = ws / "core" / "active" / "recent.md"
+        recent = ws / "core" / "active" / "episodic.md"
         recent.parent.mkdir(parents=True)
         recent_ts = datetime.now(timezone.utc) - timedelta(hours=1)
         marker = recent_ts.strftime("%Y-%m-%d %H:%M")

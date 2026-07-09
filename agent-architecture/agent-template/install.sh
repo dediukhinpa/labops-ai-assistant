@@ -241,7 +241,7 @@ fill_template "${TEMPLATES_DIR}/USER.md.template"      "${WORKSPACE}/core/USER.m
 fill_template "${TEMPLATES_DIR}/rules.md.template"     "${WORKSPACE}/core/rules.md"
 fill_template "${TEMPLATES_DIR}/tools.md.template"     "${WORKSPACE}/tools/TOOLS.md"
 fill_template "${TEMPLATES_DIR}/decisions.md.template" "${WORKSPACE}/core/passive/decisions.md"
-fill_template "${TEMPLATES_DIR}/recent.md.template"    "${WORKSPACE}/core/active/recent.md"
+fill_template "${TEMPLATES_DIR}/episodic.md.template"    "${WORKSPACE}/core/active/episodic.md"
 fill_template "${TEMPLATES_DIR}/MEMORY.md.template"    "${WORKSPACE}/core/MEMORY.md"
 fill_template "${TEMPLATES_DIR}/LEARNINGS.md.template" "${WORKSPACE}/core/LEARNINGS.md"
 fill_template "${TEMPLATES_DIR}/mcp.json.template"     "${WORKSPACE}/.mcp.json"

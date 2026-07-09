@@ -1,0 +1,6 @@
+# Episodic memory -- raw append-only journal of turns
+
+_Auto-populated by active-writer.sh (Stop hook). Never model-compressed: the live
+session distils insights from here into passive/ during reflection, and
+archive-roll.sh rolls old slices into archived/episodic/ by size._
+_Format: ### YYYY-MM-DD HH:MM [source_tag] {salience}_

@@ -1,4 +1,4 @@
-// Phase 8 / T2 — append to <workspace>/core/active/recent.md.
+// Phase 8 / T2 — append to <workspace>/core/active/episodic.md.
 //
 // Ports gateway.py:1938-1987 (append_to_hot_memory) to TS. Python uses
 // fcntl.LOCK_EX for cross-process safety; we run one plugin process per
@@ -98,12 +98,12 @@ export async function appendActiveEntry(
     // bypassed by an outside caller.
     const tmp = join(
       dirname(input.path),
-      `.recent.md.tmp.${process.pid}.${Date.now()}`,
+      `.episodic.md.tmp.${process.pid}.${Date.now()}`,
     )
     // Cleanup orphan tmp on rename failure (review MEDIUM). Pre-fix: if
     // writeFile succeeded but rename failed (EBUSY, EIO, kill between
     // awaits) the tmp would stay forever. After enough faulted trims the
-    // agent's core/active/ would accumulate stale .recent.md.tmp.* files.
+    // agent's core/active/ would accumulate stale .episodic.md.tmp.* files.
     // unlink swallows ENOENT so a writeFile-side failure (no tmp on
     // disk) is a no-op.
     try {
@@ -126,7 +126,7 @@ export async function appendActiveEntry(
  * Slicing uses `Array.from` so we count Unicode code points (matches
  * Python `s[:200]`) rather than UTF-16 code units. Emoji-heavy prompts
  * (Telegram!) would otherwise under-truncate or split a surrogate pair
- * mid-codepoint, producing an invalid UTF-8 sequence in recent.md.
+ * mid-codepoint, producing an invalid UTF-8 sequence in episodic.md.
  */
 export function snippet(s: string, max = 200): string {
   return Array.from((s || '').replace(/\n/g, ' ')).slice(0, max).join('')

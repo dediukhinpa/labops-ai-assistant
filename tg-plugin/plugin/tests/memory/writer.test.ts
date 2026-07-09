@@ -96,14 +96,14 @@ describe('MemoryWriter.onHook', () => {
 
     // No files written yet.
     let activeExists = true
-    try { readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8') } catch { activeExists = false }
+    try { readFileSync(join(workspacePath, 'core', 'active', 'episodic.md'), 'utf8') } catch { activeExists = false }
     expect(activeExists).toBe(false)
     let logsExist = true
     try { readdirSync(logsPath) } catch { logsExist = false }
     expect(logsExist).toBe(false)
   })
 
-  test('UserPromptSubmit + Stop writes recent.md and verbose-*.jsonl with buffered prompt and transcript text', async () => {
+  test('UserPromptSubmit + Stop writes episodic.md and verbose-*.jsonl with buffered prompt and transcript text', async () => {
     const c = fakeClock()
     const { log } = makeLog()
     const w = new MemoryWriter(cfg(), log, c.now)
@@ -116,7 +116,7 @@ describe('MemoryWriter.onHook', () => {
     c.advance(2500) // 2.5s "compute time"
     await w.onHook(payload('Stop', { transcript_path: transcript }))
 
-    const active = readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8')
+    const active = readFileSync(join(workspacePath, 'core', 'active', 'episodic.md'), 'utf8')
     expect(active).toContain('**User:** user question?\n')
     expect(active).toContain('**nova:** agent reply here\n')
     // Local-tz ts format: 'YYYY-MM-DD HH:MM' — just assert shape.
@@ -143,7 +143,7 @@ describe('MemoryWriter.onHook', () => {
 
     await w.onHook(payload('Stop'))
 
-    const active = readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8')
+    const active = readFileSync(join(workspacePath, 'core', 'active', 'episodic.md'), 'utf8')
     expect(active).toContain('**User:** (no prompt)\n')
     expect(active).toContain('**nova:** (inline)\n')
 
@@ -165,7 +165,7 @@ describe('MemoryWriter.onHook', () => {
     await w.onHook(payload('UserPromptSubmit', { prompt: 'q' }))
     await w.onHook(payload('Stop', { transcript_path: '/path/that/does/not/exist.jsonl' }))
 
-    const active = readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8')
+    const active = readFileSync(join(workspacePath, 'core', 'active', 'episodic.md'), 'utf8')
     expect(active).toContain('**nova:** (inline)\n')
     const v = JSON.parse(readFileSync(join(logsPath, 'verbose-2026-05-15.jsonl'), 'utf8').trim())
     expect(v.agent).toBe('')
@@ -181,14 +181,14 @@ describe('MemoryWriter.onHook', () => {
     await w.onHook(payload('SessionStart'))
 
     let activeExists = true
-    try { readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8') } catch { activeExists = false }
+    try { readFileSync(join(workspacePath, 'core', 'active', 'episodic.md'), 'utf8') } catch { activeExists = false }
     expect(activeExists).toBe(false)
     let logsExist = true
     try { readdirSync(logsPath) } catch { logsExist = false }
     expect(logsExist).toBe(false)
   })
 
-  test('long prompt is truncated in recent.md but full-length in verbose.jsonl', async () => {
+  test('long prompt is truncated in episodic.md but full-length in verbose.jsonl', async () => {
     const c = fakeClock()
     const { log } = makeLog()
     const w = new MemoryWriter(cfg(), log, c.now)
@@ -201,7 +201,7 @@ describe('MemoryWriter.onHook', () => {
     await w.onHook(payload('UserPromptSubmit', { prompt: longPrompt }))
     await w.onHook(payload('Stop', { transcript_path: transcript }))
 
-    const active = readFileSync(join(workspacePath, 'core', 'active', 'recent.md'), 'utf8')
+    const active = readFileSync(join(workspacePath, 'core', 'active', 'episodic.md'), 'utf8')
     // snippet() slices to 200 chars
     expect(active).toContain('**User:** ' + 'P'.repeat(200) + '\n')
     expect(active).toContain('**nova:** ' + 'A'.repeat(200) + '\n')

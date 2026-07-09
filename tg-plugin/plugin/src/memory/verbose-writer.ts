@@ -27,7 +27,7 @@ export interface VerboseRecord {
   sid: string | null
   // Source-tag (channel discriminator), e.g. 'tg'.
   ch: string
-  // Full user text — no truncation (recent.md is the truncated mirror).
+  // Full user text — no truncation (episodic.md is the truncated mirror).
   user: string
   // Full agent text. Empty string when transcript could not be read.
   agent: string

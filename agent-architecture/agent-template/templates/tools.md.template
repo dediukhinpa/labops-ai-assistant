@@ -14,7 +14,7 @@
 | IDENTITY | CLAUDE.md, rules.md | manual only |
 | YELLOW | USER.md, AGENTS.md, TOOLS.md | agent on trigger |
 | PASSIVE 14d | core/passive/decisions.md | auto-rotate |
-| ACTIVE 24h | core/active/recent.md | gateway auto |
+| ACTIVE 24h | core/active/episodic.md | gateway auto |
 | ARCHIVE | core/MEMORY.md | on-demand Read |
 | L4 | second_brain shared semantic memory | curl on-demand |
 

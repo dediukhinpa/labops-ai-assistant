@@ -135,7 +135,7 @@ export interface WebhookDeps {
   // back-pressure on visibility outages.
   statusManager?: StatusManagerForWebhook
   // Phase 8: optional memory writer. Receives a sibling dispatch of every
-  // hook payload (UserPromptSubmit buffers, Stop writes recent.md +
+  // hook payload (UserPromptSubmit buffers, Stop writes episodic.md +
   // verbose.jsonl). Throws are caught and logged — never block the 200.
   memoryWriter?: MemoryWriter
   // ProgressReporter (2026-05-18): persistent activity thread sibling
