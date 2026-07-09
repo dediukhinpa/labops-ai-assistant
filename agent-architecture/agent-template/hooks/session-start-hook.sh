@@ -8,8 +8,10 @@ fi
 
 # SessionStart hook -- runs once at the start of a Claude Code session.
 # 1) Logs that a session started.
-# 2) If second_brain MCP credentials are present, calls second_brain-memory_router-on-start.sh to
-#    prepend a "relevant second_brain recalls" block to core/active/episodic.md.
+# 2) Rebuilds core/active/working-set.md via working-set-build.sh: fuses shared
+#    second_brain recall (if creds present) with local passive/ lexical recall.
+#    Runs even file-only -- it self-gates the shared half on env. Never edits
+#    episodic.md.
 #
 # Wire via templates/settings.json.template (SessionStart hook).
 # Non-blocking: any failure exits 0.
@@ -33,16 +35,13 @@ if [ -f "$HANDOFF" ] && [ -s "$HANDOFF" ]; then
     log "handoff present: $(wc -l <"$HANDOFF") lines"
 fi
 
-# Optional second_brain recall (only if env is set; install.sh writes these to a
-# per-agent rc file you can `source` before launching Claude Code).
-RECALL_SCRIPT="$WS/scripts/second_brain-memory_router-on-start.sh"
-if [ -x "$RECALL_SCRIPT" ]; then
-    if [ -n "${MCP_HOST:-}" ] && [ -n "${AGENT_BEARER:-}" ]; then
-        log "running second_brain recall"
-        bash "$RECALL_SCRIPT" >>"$HOOK_LOG" 2>&1 || log "second_brain-memory_router returned non-zero"
-    else
-        log "MCP_HOST or AGENT_BEARER unset; skipping recall"
-    fi
+# Rebuild the working set (materialised recall). Runs even without second_brain
+# creds -- it self-gates the shared half and always does local passive recall.
+BUILD_SCRIPT="$WS/scripts/working-set-build.sh"
+if [ -f "$BUILD_SCRIPT" ]; then
+    log "rebuilding working-set"
+    AGENT_WORKSPACE="$WS" AGENT_ID="$AGENT_ID" bash "$BUILD_SCRIPT" >>"$HOOK_LOG" 2>&1 \
+        || log "working-set-build returned non-zero"
 fi
 
 exit 0

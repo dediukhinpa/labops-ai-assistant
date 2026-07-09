@@ -255,7 +255,7 @@ fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_DIR}/CLAUDE
 # ============================================================
 
 log "Copying memory-management scripts..."
-for script in trim-active.sh compress-passive.sh rotate-passive.sh memory-rotate.sh second_brain-memory_router-on-start.sh; do
+for script in active-writer.sh working-set-build.sh reflect-nudge.sh trim-active.sh compress-passive.sh rotate-passive.sh memory-rotate.sh; do
     if [ -f "${SCRIPTS_DIR}/${script}" ]; then
         if [ ! -f "${WORKSPACE}/scripts/${script}" ]; then
             cp "${SCRIPTS_DIR}/${script}" "${WORKSPACE}/scripts/${script}"
