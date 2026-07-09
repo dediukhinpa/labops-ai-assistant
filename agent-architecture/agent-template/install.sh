@@ -255,7 +255,7 @@ fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_DIR}/CLAUDE
 # ============================================================
 
 log "Copying memory-management scripts..."
-for script in active-writer.sh working-set-build.sh reflect-nudge.sh trim-active.sh compress-passive.sh rotate-passive.sh memory-rotate.sh; do
+for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep.sh archive-roll.sh; do
     if [ -f "${SCRIPTS_DIR}/${script}" ]; then
         if [ ! -f "${WORKSPACE}/scripts/${script}" ]; then
             cp "${SCRIPTS_DIR}/${script}" "${WORKSPACE}/scripts/${script}"
@@ -427,12 +427,12 @@ echo ""
 echo "    3. Launch agent (settings.json wires Stop/SessionStart/PreCompact hooks):"
 echo "       source ${AGENT_RC} && claude --project ${WORKSPACE}"
 echo ""
-echo "    4. (Optional) Cron for memory rotation:"
+echo "    4. (Optional) One nightly housekeeping cron (pure bash, no model):"
 echo "       crontab -e"
-echo "       30 4 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/rotate-passive.sh"
-echo "       0  5 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/trim-active.sh"
-echo "       0  6 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/compress-passive.sh"
-echo "       0 21 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/memory-rotate.sh"
+echo "       0 3 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/decay-sweep.sh"
+echo "       5 3 * * * AGENT_WORKSPACE=${WORKSPACE} bash ${WORKSPACE}/scripts/archive-roll.sh"
+echo "       # Reflection/consolidation is NOT a cron -- it is nudged in-session by"
+echo "       # the Stop hook (every N turns) and the watchdog idle trigger."
 echo ""
 echo "    5. (Optional) Add more agents:"
 echo "       bash install.sh   # run again with a different agent name"
