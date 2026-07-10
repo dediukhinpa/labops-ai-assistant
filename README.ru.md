@@ -149,7 +149,7 @@ flowchart LR
 Два подкаталога — **два скрипта `install.sh`** — плюс соседний `second_brain`. Сначала ставим рантайм; он сам клонирует соседей; затем ставим канал.
 
 ```bash
-git clone <this-repo> labops-ai-assistant
+git clone https://github.com/dediukhinpa/labops-ai-assistant.git
 cd labops-ai-assistant
 
 # 1) Рантайм и жизненный цикл — зависимости + Claude Code + self-test + агент Developer.

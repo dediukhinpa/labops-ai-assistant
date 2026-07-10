@@ -149,7 +149,7 @@ flowchart LR
 Two subdirectories, **two `install.sh` scripts** — plus the sibling `second_brain`. Install the runtime first; it clones the siblings for you; then install the channel.
 
 ```bash
-git clone <this-repo> labops-ai-assistant
+git clone https://github.com/dediukhinpa/labops-ai-assistant.git
 cd labops-ai-assistant
 
 # 1) Runtime & lifecycle — deps + Claude Code + self-test + Developer agent.
