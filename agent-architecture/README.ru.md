@@ -19,17 +19,17 @@
 
 <p align="center">
   <b>Система labops:</b>
-  <a href="https://github.com/dediukhinpa/labops-tg-plugin">tg-plugin</a> ·
+  <a href="../tg-plugin">tg-plugin</a> ·
   <a href="https://github.com/dediukhinpa/labops-second-brain">second-brain</a> ·
   <b>agent-architecture</b>
 </p>
 
 **Рантайм- и lifecycle-слой агентной системы labops** — воркспейсы агентов (CLAUDE.md / rules.md / слои памяти), скаффолдер `agent-template`, пер-агентный рантайм (`watchdog.sh → start-agent.sh → tmux → долгоживущая сессия Claude Code`), systemd-юниты, хуки жизненного цикла, автоматизация роя и скилл **`create-agent`**, которым первый агент (Developer / Разработчик) разворачивает остальных агентов «под ключ».
 
-Это один из **трёх** репозиториев системы labops. Он отвечает за то, как агент **живёт** (процессы, память, самовосстановление). Канал и общий мозг — в соседних репозиториях:
+Это **рантайм-/lifecycle-слой** системы labops. Он отвечает за то, как агент **живёт** (процессы, память, самовосстановление). Он собран вместе с Telegram-каналом в **одном монорепозитории** — `labops-ai-assistant` — и ставится единым корневым `install.sh`. Общий мозг остаётся отдельным внешним репозиторием:
 
-- **[`labops-tg-plugin`](https://github.com/dediukhinpa/labops-tg-plugin)** — Telegram-канал: пер-агентный бот, голос, реакции, webhook.
-- **[`labops-second-brain`](https://github.com/dediukhinpa/labops-second-brain)** — общая память: MCP `memory:5001` / `memory_router:5002` / `agent_router:5000` / `task:5003`. Агент получает Bearer-токен и читает/пишет через MCP.
+- **[`labops-tg-plugin`](../tg-plugin)** — Telegram-канал: пер-агентный бот, голос, реакции, webhook. Встроен в этот монорепозиторий (ставится корневым `install.sh`).
+- **[`labops-second-brain`](https://github.com/dediukhinpa/labops-second-brain)** — общая память: MCP `memory:5001` / `memory_router:5002` / `agent_router:5000` / `task:5003`. Отдельный репозиторий (рантайм-зависимость); агент получает Bearer-токен и читает/пишет через MCP.
 
 > [!IMPORTANT]
 > **Платформа:** Linux + systemd + tmux. На macOS/без systemd агент можно гонять вручную в tmux, но не как службу (нет автозапуска/самовосстановления).
@@ -73,9 +73,9 @@ flowchart LR
   Dev -->|скилл create-agent| A2["Агент &lt;agent-2&gt;"]
   Dev -->|скилл create-agent| A3["Агент &lt;agent-3&gt;"]
   Dev -->|скилл create-agent| An["Агент &lt;agent-N&gt;"]
-  subgraph deps["Зависимости (соседние репозитории)"]
-    TG["labops-tg-plugin (канал)"]
-    SB["labops-second-brain (общий мозг)"]
+  subgraph deps["Рантайм-зависимости"]
+    TG["tg-plugin (канал · встроен)"]
+    SB["labops-second-brain (общий мозг · внешний)"]
   end
   Dev -.->|канал + токен| deps
   A2 -.-> deps
@@ -89,13 +89,13 @@ flowchart LR
   class TG,SB ext
 ```
 
-Границы ответственности трёх репозиториев:
+Границы ответственности трёх слоёв:
 
-| Репозиторий | Слой | Отвечает за |
+| Компонент | Слой | Отвечает за |
 |---|---|---|
-| **labops-agent-architecture** (этот) | Рантайм / lifecycle | воркспейсы, память, watchdog, systemd, хуки, автоматизация роя, скилл `create-agent` |
-| **labops-tg-plugin** | Канал | приём из Telegram (long-poll), отправка ответов/реакций, голос, webhook `:6000+` |
-| **labops-second-brain** | Память | Postgres+pgvector, MCP memory/memory_router/agent_router/task, RBAC по Bearer-токенам |
+| **agent-architecture** (этот · встроенный) | Рантайм / lifecycle | воркспейсы, память, watchdog, systemd, хуки, автоматизация роя, скилл `create-agent` |
+| **tg-plugin** (встроен в этот монорепозиторий) | Канал | приём из Telegram (long-poll), отправка ответов/реакций, голос, webhook `:6000+` |
+| **labops-second-brain** (внешний репозиторий) | Память | Postgres+pgvector, MCP memory/memory_router/agent_router/task, RBAC по Bearer-токенам |
 
 ---
 
@@ -103,28 +103,24 @@ flowchart LR
 
 Остальное в README можно читать по мере надобности — для первого агента достаточно:
 
-Это три **отдельных** скрипта `install.sh`, по одному на репозиторий — ни один не запускает установщик другого за вас. `install.sh` из `labops-agent-architecture` ставит только сам себя (зависимости + Claude Code) и **клонирует** (но не устанавливает) два соседних репозитория; их вы ставите каждый своим install.sh сами.
+**Единый корневой `install.sh`** (в корне монорепозитория `labops-ai-assistant`) — единственная точка входа: он ставит **оба** встроенных компонента — `agent-architecture` (этот слой) и `tg-plugin` (канал) — за один прогон и **клонирует** (но не устанавливает) внешний `labops-second-brain`, который вы ставите отдельно.
 
-1. **Ставим этот репозиторий — одна команда делает всё для него:** `bash install.sh` — сначала устанавливает tmux/git/curl/jq/unzip (нужен root/sudo); если запущен от root, дальше предлагает создать отдельного непривилегированного пользователя (агенты работают через `--dangerously-skip-permissions`, под root это небезопасно — а системные пакеты к этому моменту уже стоят, так что остальной установке sudo не нужен) и перезапускает себя от его имени; затем устанавливает Claude Code (нативный установщик, Node.js не нужен), клонирует рядом `labops-tg-plugin`/`labops-second-brain` (не устанавливая их), прогоняет self-test, спрашивает авторизацию (`claude setup-token`, подписка Max/Pro), если вы ещё не входили, и создаёт Developer-агента: спросит имя/модель/Telegram-бота, всё развернёт и прогонит smoke (модель по умолчанию `opus`/Opus 4.8). Если соседние репо ещё не установлены — агент стартует в деградированном режиме, установщик подскажет, чего не хватает. Хотите создать агента позже сами? `bash install.sh --no-agent` останавливается прямо перед авторизацией/созданием агента.
-2. **Ставим `labops-tg-plugin`** — свой репозиторий, свой `install.sh`: см. [его Quickstart](https://github.com/dediukhinpa/labops-tg-plugin#quickstart) (бот через BotFather, `channel.env`, `./install.sh`).
-3. **Ставим `labops-second-brain`** — свой репозиторий, своя установка: см. [его Quickstart](https://github.com/dediukhinpa/labops-second-brain#quickstart) (вручную `scripts/install.sh`, либо отдать Claude Code агенту по `AGENT.md`).
+1. **Запускаем корневой установщик — одна команда делает всё встроенное:** `bash install.sh` — сначала устанавливает tmux/git/curl/jq/unzip (нужен root/sudo); если запущен от root, дальше предлагает создать отдельного непривилегированного пользователя (агенты работают через `--dangerously-skip-permissions`, под root это небезопасно — а системные пакеты к этому моменту уже стоят, так что остальной установке sudo не нужен) и перезапускает себя от его имени; затем устанавливает Claude Code (нативный установщик, Node.js не нужен), ставит встроенный `tg-plugin`, клонирует рядом с монорепозиторием `labops-second-brain` (не устанавливая его), прогоняет self-test, спрашивает авторизацию (`claude setup-token`, подписка Max/Pro), если вы ещё не входили, и создаёт Developer-агента: спросит имя/модель/Telegram-бота, всё развернёт и прогонит smoke (модель по умолчанию `opus`/Opus 4.8). Если `labops-second-brain` ещё не установлен — агент стартует в деградированном режиме, установщик подскажет, чего не хватает. Хотите создать агента позже сами? `bash install.sh --no-agent` останавливается прямо перед авторизацией/созданием агента. (Корневой установщик сам вызывает `install.sh` каждого компонента — руками их запускать не нужно.)
+2. **Ставим `labops-second-brain`** — свой внешний репозиторий, своя установка: см. [его Quickstart](https://github.com/dediukhinpa/labops-second-brain#quickstart) (вручную `scripts/install.sh`, либо отдать Claude Code агенту по `AGENT.md`).
 
 > [!TIP]
 > Для Developer модель по умолчанию `opus` (Opus 4.8). Вы ставите только первого агента — дальше рой растёт сам: Developer разворачивает остальных через скилл `create-agent`.
 
 ```bash
-git clone https://github.com/dediukhinpa/labops-agent-architecture.git
-cd labops-agent-architecture
-
+# Из корня монорепозитория labops-ai-assistant.
 # Одна команда: зависимости + self-test + авторизация (если нужна) +
-# Developer-агент. Она ЖЕ клонирует (но не устанавливает) оба соседа —
-# labops-tg-plugin -> ~/labops-tg-plugin, labops-second-brain -> ~/labops-second-brain —
-# так что после неё на диске уже все три репо. Установка каждого соседа —
-# отдельная команда из его же репозитория, шаги 2-3 выше.
+# Developer-агент. Она ставит ОБА встроенных компонента (agent-architecture +
+# tg-plugin) и клонирует (но не устанавливает) внешний
+# labops-second-brain -> ~/labops-second-brain.
 bash install.sh   # модель → идентичность → скаффолд → бот → голос → токен → systemd → smoke
 ```
 
-Все три репо оказываются на диске после блока выше (`git clone` — этот репо, `bash install.sh` — оба соседа). Но *устанавливает* он только себя — `labops-tg-plugin` и `labops-second-brain` всё ещё нужно поставить их собственными `install.sh` из `~/labops-tg-plugin` и `~/labops-second-brain` (шаги 2-3 выше, там же ссылки на их Quickstart). Если чего-то нет — установка честно перечислит, что **не** настроено (а не покажет ложный зелёный).
+Корневой `install.sh` ставит оба встроенных компонента (`agent-architecture` + `tg-plugin`) и клонирует `labops-second-brain` в `~/labops-second-brain` — единственный внешний репозиторий, который вы ставите сами (шаг 2 выше, там же ссылка на его Quickstart). Если чего-то нет — установка честно перечислит, что **не** настроено (а не покажет ложный зелёный).
 
 ---
 
@@ -389,29 +385,28 @@ flowchart LR
 
 > `install.sh` в корне репозитория авторится параллельно лидом; ниже — его целевое поведение.
 
-Корневой `install.sh` ставит **только сам репозиторий** — базовые зависимости, Claude Code, клонирование (не установку) двух соседних репо — и в одном и том же запуске, если нужно, авторизует и вызывает `skills/create-agent/new-agent.sh`, который скаффолдит **первого агента — Developer / Разработчик** «под ключ» end-to-end, прогоняя тесты/smoke в конце. Соседей можно ставить до или после — порядок не важен, установщик просто подскажет, чего ещё не хватает. Внутри он использует те же примитивы, что и скилл `create-agent`: скаффолд через `agent-template`, регистрация бота, голос, second_brain-токен, systemd-автозапуск.
+Корневой `install.sh` (в корне монорепозитория) ставит **оба встроенных компонента** — `agent-architecture` (этот слой) и `tg-plugin` (канал) — плюс базовые зависимости и Claude Code, и клонирует (не устанавливает) внешний `labops-second-brain`; и в одном и том же запуске, если нужно, авторизует и вызывает `skills/create-agent/new-agent.sh`, который скаффолдит **первого агента — Developer / Разработчик** «под ключ» end-to-end, прогоняя тесты/smoke в конце. `labops-second-brain` можно ставить до или после — порядок не важен, установщик просто подскажет, чего ещё не хватает. Внутри он использует те же примитивы, что и скилл `create-agent`: скаффолд через `agent-template`, регистрация бота, голос, second_brain-токен, systemd-автозапуск.
 
 **Зависимости (скрипт их устанавливает):**
 
 - **Отдельный OS-пользователь** — если `install.sh` запущен от root, после установки системных пакетов (нужен root/sudo) он предлагает создать непривилегированного пользователя (имя выбираете сами — жёсткого дефолта нет) и продолжает установку уже от его имени; агенты работают через `claude --dangerously-skip-permissions` (без подтверждения каждого действия) — держать их под root небезопасно. Пароль задаётся интерактивно через `passwd` (нужен вам для `su`/SSH, самому агенту не требуется). Пропустить: `SKIP_USER_SETUP=1`.
 - **Claude Code** — устанавливается самим `install.sh` через нативный установщик (без Node.js/npm); затем **разово авторизоваться по подписке**: `install.sh` сам запускает `claude setup-token` (Max/Pro, первая сторона — без third-party риска) прямо перед созданием первого агента, если вы ещё не входили. Модель агента задаётся в `settings.json` (поле `model`); диалог `create-agent` спрашивает её и для Developer рекомендует **`opus` (Opus 4.8)**. Без авторизации агент стартует под systemd, но не достучится до модели — это ловит smoke-тест (шаг «модель отвечает»).
-- **`labops-tg-plugin`** — клонируется в `~/labops-tg-plugin` скриптом `install.sh`; ставите сами своей командой `cd ~/labops-tg-plugin && ./install.sh` (сразу после настройки бота через @BotFather) — это канал, через который агент общается в Telegram. Если создать Developer-агента раньше этого шага, он стартует в деградированном режиме, пока этот репо не установлен.
-- **`labops-second-brain`** — клонируется в `~/labops-second-brain` скриптом `install.sh`; ставите сами — либо запустив напрямую `sudo bash ~/labops-second-brain/scripts/install.sh`, либо отдав Claude Code агенту (`cd ~/labops-second-brain && claude`, затем вставьте промпт из шага 3 «Быстрого старта» — он следует `AGENT.md` и спрашивает подтверждение на разрушительных шагах) — выдаёт агенту Bearer-токен и поднимает MCP `memory`/`memory_router`/`agent_router`.
+- **`tg-plugin`** (встроен в этот монорепозиторий) — канал, через который агент общается в Telegram; **ставится за вас корневым `install.sh`** (он вызывает собственный `install.sh` компонента в каталоге `tg-plugin/`). Отдельного шага нет — см. [`../tg-plugin`](../tg-plugin).
+- **`labops-second-brain`** (внешний репозиторий) — клонируется в `~/labops-second-brain` скриптом `install.sh`; ставите сами — либо запустив напрямую `sudo bash ~/labops-second-brain/scripts/install.sh`, либо отдав Claude Code агенту (`cd ~/labops-second-brain && claude`, затем вставьте промпт из шага 2 «Быстрого старта» — он следует `AGENT.md` и спрашивает подтверждение на разрушительных шагах) — выдаёт агенту Bearer-токен и поднимает MCP `memory`/`memory_router`/`agent_router`. Если создать Developer-агента раньше этого шага, он стартует в деградированном режиме, пока мозг не поднят.
 
 > [!IMPORTANT]
 > **Модель и авторизация.** Разово войдите через `claude setup-token` (подписка Max/Pro, первая сторона — без third-party риска). Модель агента задаётся в `settings.json` (поле `model`); для Developer рекомендуется `opus` (Opus 4.8). Без авторизации агент стартует, но не достучится до модели.
 
 ```bash
-git clone https://github.com/dediukhinpa/labops-agent-architecture.git
-cd labops-agent-architecture
-
+# Из корня монорепозитория labops-ai-assistant.
 # Одна команда: зависимости + self-test + авторизация (если нужна) +
-# Developer-агент. Она ЖЕ клонирует (но не устанавливает) обоих соседей —
-# labops-tg-plugin -> ~/labops-tg-plugin, labops-second-brain -> ~/labops-second-brain.
+# Developer-агент. Она ставит ОБА встроенных компонента (agent-architecture +
+# tg-plugin) и клонирует (но не устанавливает) внешний
+# labops-second-brain -> ~/labops-second-brain.
 bash install.sh   # модель → идентичность → скаффолд → бот → голос → токен → systemd → smoke
 ```
 
-Все три репо оказываются на диске после блока выше (`git clone` — этот репо, `bash install.sh` — оба соседа) — но *устанавливает* он только себя. Соседей ставим сами, каждого из его репозитория — ссылки на их установку в шагах 2-3 «Быстрого старта» выше.
+Оба встроенных компонента ставятся блоком выше; отдельно вам остаётся поставить только внешний `labops-second-brain` (ссылка на его установку — в шаге 2 «Быстрого старта» выше).
 
 Скаффолд одного воркспейса без полного развёртывания — через `agent-template/install.sh` (см. [`agent-template/README.md`](agent-template/README.md)).
 
@@ -548,11 +543,11 @@ Self-hosted by design: агенты работают на собственном
 
 ## Часть системы labops
 
-| Репозиторий | Слой | Что предоставляет |
+| Компонент | Слой | Что предоставляет |
 |---|---|---|
-| **labops-agent-architecture** (этот) | рантайм / lifecycle | воркспейсы, память, watchdog/systemd, хуки, автоматизация роя, `create-agent` |
-| **[labops-tg-plugin](https://github.com/dediukhinpa/labops-tg-plugin)** | канал | пер-агентный Telegram-бот, голос, реакции, webhook `:6000+`, MCP-инструменты канала (`reply`/`react`/…) |
-| **[labops-second-brain](https://github.com/dediukhinpa/labops-second-brain)** | память | Postgres+pgvector, MCP `memory:5001` / `memory_router:5002` / `agent_router:5000` / `task:5003`, RBAC по Bearer |
+| **agent-architecture** (этот · встроенный компонент, этот монорепозиторий) | рантайм / lifecycle | воркспейсы, память, watchdog/systemd, хуки, автоматизация роя, `create-agent` |
+| **[tg-plugin](../tg-plugin)** (встроенный компонент, этот монорепозиторий) | канал | пер-агентный Telegram-бот, голос, реакции, webhook `:6000+`, MCP-инструменты канала (`reply`/`react`/…) |
+| **[labops-second-brain](https://github.com/dediukhinpa/labops-second-brain)** (внешний репозиторий) | память | Postgres+pgvector, MCP `memory:5001` / `memory_router:5002` / `agent_router:5000` / `task:5003`, RBAC по Bearer |
 
 ---
 

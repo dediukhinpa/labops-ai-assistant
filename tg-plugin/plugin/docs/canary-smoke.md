@@ -86,7 +86,7 @@ For test 15, only run if the canary launch includes `TELEGRAM_WEBHOOK_PORT` and 
 
 ### Multichat-era smoke (PR #13, #22, #26)
 
-Rows 16–25 cover features introduced after the initial canary baseline: the multichat router, per-chat tmux session pool, tmux mirror, task mirror, telegram-token redaction, and the HTML-by-default reply format. Each row depends on flags listed in the "Send" column — restart the tmux session after changing env. If the multichat router is not in your build, skip this entire section.
+Rows 16–25 cover features introduced after the initial canary baseline: the multichat router, per-chat tmux session pool, task mirror, telegram-token redaction, and the HTML-by-default reply format. Each row depends on flags listed in the "Send" column — restart the tmux session after changing env. If the multichat router is not in your build, skip this entire section.
 
 | # | Test | Send | Expected | Verify |
 |---|------|------|----------|--------|

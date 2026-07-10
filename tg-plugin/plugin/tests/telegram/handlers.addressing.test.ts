@@ -38,7 +38,6 @@ import type { AppConfig, StatePaths } from '../../src/config.js'
 import { createLogger } from '../../src/log.js'
 import type { TelegramApi } from '../../src/channel/tools.js'
 import type { BotIdentity } from '../../src/prompt/build.js'
-import type { TmuxMirrorControl } from '../../src/commands/oob.js'
 import type { MultichatRouter } from '../../src/router/multichat-router.js'
 import type { InboundMessage } from '../../src/router/inbox-bridge.js'
 
@@ -201,7 +200,6 @@ interface MakeDepsOpts {
   config?: AppConfig
   policy?: MultichatPolicy
   watcher?: InboundWatcher
-  tmuxMirror?: TmuxMirrorControl
   telegramApi?: TelegramApi
 }
 function makeDeps(opts: MakeDepsOpts = {}): {
@@ -227,7 +225,6 @@ function makeDeps(opts: MakeDepsOpts = {}): {
     env: {},
     ...(opts.policy !== undefined ? { policy: opts.policy } : {}),
     ...(opts.watcher !== undefined ? { watcher: opts.watcher } : {}),
-    ...(opts.tmuxMirror !== undefined ? { tmuxMirror: opts.tmuxMirror } : {}),
   }
   return { deps, statePaths }
 }
@@ -365,54 +362,6 @@ describe('handleInboundText — addressing gate on side effects (Bug #3)', () =>
     // Mention → addressed → watcher fires.
     expect(sendCalls.length).toBe(1)
     expect(sendCalls[0]).toContain('Bash')
-    rmSync(statePaths.root, { recursive: true, force: true })
-  })
-
-  test('group message WITHOUT mention does NOT bump tmux mirror', async () => {
-    const policy = makePolicy()
-    let bumps = 0
-    const tmuxMirror: TmuxMirrorControl = {
-      start: async () => undefined,
-      stop: async () => undefined,
-      status: () => ({ enabled: true }),
-      bump: async () => {
-        bumps++
-      },
-    }
-    const { deps, statePaths } = makeDeps({ policy, tmuxMirror })
-    const ctx = makeGroupCtx({
-      text: 'plain group chat',
-      chatId: ALLOWED_GROUP_CHAT_ID,
-      fromId: OPERATOR_USER_ID,
-      mentionBot: false,
-    })
-    await handleInboundText(ctx, deps)
-    await new Promise((r) => setTimeout(r, 0))
-    expect(bumps).toBe(0)
-    rmSync(statePaths.root, { recursive: true, force: true })
-  })
-
-  test('DM ALWAYS bumps mirror (addressing always true)', async () => {
-    let bumps = 0
-    const tmuxMirror: TmuxMirrorControl = {
-      start: async () => undefined,
-      stop: async () => undefined,
-      status: () => ({ enabled: true }),
-      bump: async () => {
-        bumps++
-      },
-    }
-    // Legacy mode (no policy) — relies on legacy allowlist; DM passes
-    // addressing unconditionally.
-    const { deps, statePaths } = makeDeps({ tmuxMirror })
-    const ctx = makeDmCtx({
-      text: 'hi',
-      chatId: OPERATOR_USER_ID,
-      fromId: OPERATOR_USER_ID,
-    })
-    await handleInboundText(ctx, deps)
-    await new Promise((r) => setTimeout(r, 0))
-    expect(bumps).toBe(1)
     rmSync(statePaths.root, { recursive: true, force: true })
   })
 })

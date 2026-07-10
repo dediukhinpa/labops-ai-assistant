@@ -144,9 +144,8 @@ allowlist:
 mention_allowlist: ["123456789"]             # кто может звать через @mention в группах
 chats:
   "123456789":
-    mode: private                             # private | public — выбирает поверхности (TmuxMirror, edit_message_progress)
+    mode: private                             # private | public — выбирает поверхности (edit_message_progress)
     streaming: progress                       # progress | off
-    tmux_mirror: true                         # включить TmuxMirror в этом чате
     edit_message_progress: true               # rolling editMessageText для ProgressReporter
     delivery: streamed                        # streamed | final_only
     persona_file: chats/personas/operator.md  # per-chat persona overlay (относительно workspace_dir)
@@ -161,39 +160,6 @@ Per-chat persona-файл резолвится относительно `multich
 Логи: `{state_dir}/chats/<chat_id>/{inbox,outbox,processing,dead-letter}/*.json` — JSON-pipe между плагином и tmux-сессией. Outbox dead-letter содержит сообщения которые не удалось отправить в Telegram даже после retry — оператор разбирает руками.
 
 Failure mode: если `policy.yaml` невалидна, плагин логирует ошибку и деградирует в multichat-OFF (legacy single-DM). Это специально — лучше работать с одним чатом, чем падать целиком.
-
-## Terminal mirror
-
-`TmuxMirror` (PR #15) мирорит pane агентского tmux session в ОДНО rolling Telegram сообщение через `editMessageText`. Полезно когда оператор хочет видеть raw bash output без SSH доступа.
-
-Default-OFF — opt-in через config:
-
-```json
-{
-  "tmux_mirror": {
-    "enabled": true,
-    "pane_target": "channel-atlas:0.0",
-    "poll_interval_ms": 5000,
-    "line_count": 50,
-    "mode": "latest_inbound_only",
-    "max_lines": 14,
-    "hide_segments": ["boot_banner", "inbound_warning", "footer_hints", "input_box"]
-  }
-}
-```
-
-Поведение:
-- Polls `tmux capture-pane -p -t <pane_target> -S -<line_count>` каждые `poll_interval_ms`
-- ANSI/CSI/OSC/DCS sequences стрипаются, control chars (кроме `\n`, `\t`) удаляются
-- Текст пропускается через `redactSecrets` (тот же что в safe-telegram-api), затем HTML-escape, затем оборачивается в `<pre>`
-- Hash-based dedup: identical poll → нет API call
-- Edit «message to edit not found» (400 с подходящим description) → re-send. Прочие 4xx (403, 413 и т.д.) НЕ триггерят resend, чтобы не было storm
-- `mode: latest_inbound_only` (default с PR #21) обрезает всё до последнего `← <channel>: …` preview — видно только то, что агент делает после последнего сообщения вождя
-- `max_lines` cap (default 14, диапазон 4..100 или 0=off) — топ обрезается с маркером `… +N lines`
-- `hide_segments` фильтрует boot banner, footer hints, input box и т.д.
-- SIGINT/SIGTERM → попытка `deleteMessage` (best-effort cleanup)
-
-OOB-управление: `/mirror on|off|status` (PR #17) — тогглит TmuxMirror runtime через Telegram-команду, без рестарта плагина. Регистрируется через `setMyCommands`, локализован на русский (PR #18). Доступность команды управляется `tmux_mirror` policy-флагом (в multichat-режиме — per chat).
 
 ## WARNING
 
@@ -216,7 +182,7 @@ Local pre-flight (детерминистично, без сети):
 
 Запускает `bun install`, `bun run typecheck`, `bun test tests/`. Exit non-zero на первой ошибке.
 
-Live smoke против `@testmyfirsttmuxbot` (15-row matrix, operator-driven): см. [`docs/canary-smoke.md`](docs/canary-smoke.md). Покрывает text, HTML chunking, reply anti-spoof, photo/document/voice/album, OOB (`/status`, `/help`, `/stop`, `/reset`, `/mirror`), permission relay (allow/deny), webhook путь. Включает rollback procedure на Python canary.
+Live smoke против `@testmyfirsttmuxbot` (15-row matrix, operator-driven): см. [`docs/canary-smoke.md`](docs/canary-smoke.md). Покрывает text, HTML chunking, reply anti-spoof, photo/document/voice/album, OOB (`/status`, `/help`, `/stop`, `/reset`), permission relay (allow/deny), webhook путь. Включает rollback procedure на Python canary.
 
 End-to-end Progress Reporter (после установки хуков):
 
@@ -234,7 +200,7 @@ bash scripts/smoke-test-progress.sh --bot-id <expected_bot_id>
 - `bun test` — полный suite
 - `bun test tests/memory/` — memory hooks
 - `bun test tests/hooks/` — hooks + claude-events + install-hooks + post-hook
-- `bun test tests/status/` — StatusManager, TmuxMirror, ProgressReporter, TaskMirror, ActivityRenderer
+- `bun test tests/status/` — StatusManager, ProgressReporter, TaskMirror, ActivityRenderer
 - `bun test tests/router/` — MultichatRouter, TmuxSessionPool, inbox-bridge
 - `bun test tests/chats/` — PolicyLoader, PersonaManager
 - `bun run typecheck` — `tsc --noEmit` strict

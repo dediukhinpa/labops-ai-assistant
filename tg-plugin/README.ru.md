@@ -21,7 +21,7 @@
   <b>Система labops:</b>
   <b>tg-plugin</b> ·
   <a href="https://github.com/dediukhinpa/labops-second-brain">second-brain</a> ·
-  <a href="https://github.com/dediukhinpa/labops-agent-architecture">agent-architecture</a>
+  <a href="../agent-architecture">agent-architecture</a>
 </p>
 
 <p align="center">
@@ -42,15 +42,13 @@
 **Требования:** не нужны — `install.sh` автоматически доустанавливает `bun ≥ 1.3`, `tmux`,
 `claude ≥ v2.1.80`, если чего-то нет.
 
-**Ставите через [`labops-agent-architecture`](https://github.com/dediukhinpa/labops-agent-architecture)?** Его `install.sh` уже склонировал этот репозиторий в `~/labops-tg-plugin` — это единственная общая установка плагина (зависимости + хуки + тесты). Файлы этого репозитория вручную не трогаете: BotFather, токен бота и `channel.env` каждого агента создаёт интерактивно `skills/create-agent/new-agent.sh` — отдельно на агента. Просто выполните:
+**Встроен в монорепозиторий `labops-ai-assistant`.** Этот плагин — встроенный компонент (`tg-plugin/`) рядом с [`agent-architecture`](../agent-architecture). **Единый корневой `install.sh`** (в корне монорепозитория) ставит его за вас в рамках общей установки — собственный `install.sh` компонента руками не запускаете (корневой сам его вызывает, а он остаётся доступен в `tg-plugin/`, если вдруг понадобится напрямую). BotFather, токен бота и `channel.env` каждого агента создаёт интерактивно `skills/create-agent/new-agent.sh` из `agent-architecture` — отдельно на агента; он же сам слинкует встроенный плагин в воркспейс каждого нового агента (`~/.claude-lab/<agent>/.claude/labops-tg-plugin`). Просто выполните из корня монорепозитория:
 
 ```bash
-cd ~/labops-tg-plugin && ./install.sh
+bash install.sh
 ```
 
-Дальше `new-agent.sh` сам слинкует `~/labops-tg-plugin` в воркспейс каждого нового агента (`~/.claude-lab/<agent>/.claude/labops-tg-plugin`).
-
-**Ставите плагин отдельно** (без `labops-agent-architecture`, без общей памяти)? Каталога `~/.claude-lab/<agent>/` тут нет и не будет — это собственное соглашение архитектуры. Клонируйте внутрь **папки `.claude` вашего собственного workspace** — там, где уже лежит (или будет лежать) `CLAUDE.md` этого агента: корень проекта, либо просто домашняя директория, если агент один и глобальный. Claude Code ищет `CLAUDE.md`, поднимаясь вверх от рабочего каталога плагина — поэтому плагин должен лежать внутри того же дерева, см. [`docs/02-where-to-place-plugin.md`](docs/02-where-to-place-plugin.md). Настройте вручную:
+**Ставите плагин отдельно** (вне монорепозитория, без общей памяти)? Он по-прежнему может работать сам по себе — но внутри этого репозитория корневой `install.sh` выше и есть правильный путь. Для полностью отдельной установки каталога `~/.claude-lab/<agent>/` тут нет и не будет — это собственное соглашение `agent-architecture`. Клонируйте внутрь **папки `.claude` вашего собственного workspace** — там, где уже лежит (или будет лежать) `CLAUDE.md` этого агента: корень проекта, либо просто домашняя директория, если агент один и глобальный. Claude Code ищет `CLAUDE.md`, поднимаясь вверх от рабочего каталога плагина — поэтому плагин должен лежать внутри того же дерева, см. [`docs/02-where-to-place-plugin.md`](docs/02-where-to-place-plugin.md). Настройте вручную:
 
 1. Создайте бота у [@BotFather](https://t.me/BotFather) → получите токен; свой user_id — у [@userinfobot](https://t.me/userinfobot) — пошагово в [`docs/telegram-setup.md`](docs/telegram-setup.md).
 2. Заполните `channel.env` минимальными переменными:
@@ -96,7 +94,7 @@ cd <your-workspace>/.claude/labops-tg-plugin
 | Контекст между ходами | теряется / перегружается | сохраняется |
 | Биллинг | отдельный SDK-пул | ваша обычная сессия/подписка |
 | Память, скиллы, хуки | надо прокидывать вручную | работают как в обычном Claude Code |
-| Статус «агент думает» | нет | реакции + зеркало прогресса |
+| Статус «агент думает» | нет | двухстадийные реакции (👀/👌) |
 
 ---
 
@@ -111,7 +109,6 @@ cd <your-workspace>/.claude/labops-tg-plugin
 | **Медиа и альбомы** | фото/документы/группы вложений с буферизацией | `telegram/album-buffer.ts`, `media.ts` |
 | **AskUserQuestion** | интерактивные кнопки-варианты прямо в Telegram | `channel/ask-user-question.ts` |
 | **Permission-prompt** | подтверждение опасных действий (sudo и т.п.) кнопками | `channel/permissions.ts` |
-| **Зеркало прогресса** | живой статус «что агент делает сейчас» (фильтр terminal/tmux) | `status/`, `status/tmux-mirror.ts` |
 | **Multichat** | один сервер обслуживает несколько чатов/тредов | `router/multichat-router.ts` |
 | **Память хода** | запись turn'ов в `active/episodic.md` + verbose-jsonl (опционально) | `memory/` |
 | **HTML-фильтр** | безопасная конвертация терминального вывода в Telegram-HTML | `safety/html-validator.ts`, `format/html.ts` |
@@ -153,7 +150,7 @@ flowchart LR
 
 1. **MCP stdio-сервер** — регистрируется в `.mcp.json` сессии как `labops-channel`; даёт Claude инструменты канала (ответить в чат, задать вопрос с кнопками, запросить permission).
 2. **Telegram long-poller** — тянет апдейты через `getUpdates` (**pull**, не webhook): не нужен публичный IP/домен/TLS, работает за NAT. Входящее сообщение он отдаёт сессии как **MCP-notification** `notifications/claude/channel`.
-3. **Внутренний webhook-сервер** (`127.0.0.1:6000+`) — слушает **хуки Claude Code** (`PreToolUse`/`PostToolUse`/`Stop` и др.), чтобы рисовать реакции и зеркало прогресса. Это **не** Telegram-webhook — чисто локальная интеграция с хуками.
+3. **Внутренний webhook-сервер** (`127.0.0.1:6000+`) — слушает **хуки Claude Code** (`PreToolUse`/`PostToolUse`/`Stop` и др.), чтобы рисовать двухстадийные реакции. Это **не** Telegram-webhook — чисто локальная интеграция с хуками.
 
 > [!IMPORTANT]
 > Входящее сообщение НЕ идёт через webhook-сервер. Poller → MCP-notification → сессия. Webhook-сервер дёргают только эфемерные хуки самой сессии Claude Code.
@@ -181,8 +178,6 @@ sequenceDiagram
     P->>TG: setMessageReaction 👀  (получил)
     P->>S: MCP notification (текст/медиа)
     Note over S: агент думает, вызывает инструменты
-    S->>H: PreToolUse / прогресс
-    H->>TG: обновляет «зеркало прогресса»
     S->>TG: ответ (через MCP-инструмент канала)
     S->>H: Stop (ход завершён)
     H->>TG: setMessageReaction 👌  (готово)
@@ -246,14 +241,14 @@ sequenceDiagram
 Требования: **Bun ≥ 1.3**, **Claude Code ≥ v2.1.80**, Linux/systemd (VPS) или macOS/launchd.
 
 ```bash
-# Через labops-agent-architecture (рекомендуется — одна общая установка,
-# все агенты линкуются на неё):
-cd ~/labops-tg-plugin && ./install.sh
+# Рекомендуется — единый корневой install.sh (в корне монорепозитория) ставит
+# этот встроенный компонент за вас, а каждый агент линкуется на него:
+bash install.sh
 
-# Отдельно (без labops-agent-architecture): клонируйте ВНУТРЬ папки .claude
+# Отдельно (вне монорепозитория): клонируйте ВНУТРЬ папки .claude
 # вашего workspace — расположение критично, см. docs/02. <your-workspace> —
 # там, где лежит CLAUDE.md этого агента (корень проекта или $HOME), а НЕ
-# ~/.claude-lab/<agent>/ — это собственное соглашение архитектуры.
+# ~/.claude-lab/<agent>/ — это собственное соглашение agent-architecture.
 git clone <this-repo> <your-workspace>/.claude/labops-tg-plugin
 cd <your-workspace>/.claude/labops-tg-plugin
 ./install.sh
@@ -320,20 +315,20 @@ Self-hosted by design: плагин работает на собственном
 
 ## Часть labops
 
-labops — это три самостоятельных компонента:
+labops — это три слоя: два встроены в монорепозиторий `labops-ai-assistant`, один внешний:
 
-| Репозиторий | Роль | Зависимость |
+| Компонент | Роль | Зависимость |
 |---|---|---|
-| **labops-tg-plugin** (этот) | Telegram-канал к живой сессии Claude Code | самодостаточен |
-| [**labops-second-brain**](https://github.com/dediukhinpa/labops-second-brain) | общая память: Postgres+pgvector, MCP memory/memory_router/agent_router, слои памяти | подключается к агенту по MCP |
-| [**labops-agent-architecture**](https://github.com/dediukhinpa/labops-agent-architecture) | воркспейсы агентов, автостарт/watchdog, первый агент **Developer** + скилл создания агентов, голос | использует этот плагин и second-brain |
+| **tg-plugin** (этот · встроенный компонент, этот монорепозиторий) | Telegram-канал к живой сессии Claude Code | самодостаточен |
+| [**labops-second-brain**](https://github.com/dediukhinpa/labops-second-brain) (внешний репозиторий) | общая память: Postgres+pgvector, MCP memory/memory_router/agent_router, слои памяти | подключается к агенту по MCP |
+| [**agent-architecture**](../agent-architecture) (встроенный компонент, этот монорепозиторий) | воркспейсы агентов, автостарт/watchdog, первый агент **Developer** + скилл создания агентов, голос | использует этот плагин и second-brain |
 
-Этот плагин самодостаточен (можно поставить один Telegram-агент без общей памяти). Полная архитектура — в `labops-agent-architecture`.
+Этот плагин самодостаточен (можно поставить один Telegram-агент без общей памяти). Полная архитектура — собранная вместе с этим плагином в монорепозитории — в [`agent-architecture`](../agent-architecture).
 
-> **Установили через `labops-agent-architecture`?** См. [Быстрый старт](#быстрый-старт)
-> выше — `cd ~/labops-tg-plugin && ./install.sh` — единственная команда, которая
-> нужна; сделайте это до создания первого агента, иначе `new-agent.sh`
-> предупредит, что Telegram-канал ещё не настроен.
+> **Ставите монорепозиторий?** См. [Быстрый старт](#быстрый-старт) выше — единый
+> корневой `bash install.sh` (в корне монорепозитория) ставит этот встроенный
+> компонент за вас в рамках общей установки; он отрабатывает до создания первого
+> агента, так что Telegram-канал уже готов, когда `new-agent.sh` его запросит.
 
 ---
 

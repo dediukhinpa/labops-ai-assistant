@@ -54,8 +54,8 @@ Login сохраняется в `~/.claude/` под вашим user.
 
 ```bash
 cd ~/.claude-lab/myagent/.claude
-git clone https://github.com/dediukhinpa/labops-tg-plugin.git
-cd labops-tg-plugin/plugin
+git clone https://github.com/dediukhinpa/labops-ai-assistant.git
+cd labops-ai-assistant/tg-plugin/plugin
 bun install
 bun run typecheck    # должно пройти без ошибок
 bun test             # 425 pass

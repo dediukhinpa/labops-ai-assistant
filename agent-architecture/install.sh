@@ -34,6 +34,10 @@
 #   SKIP_SECOND_BRAIN=1       # не клонировать labops-second-brain
 #   SKIP_TG_PLUGIN=1          # не клонировать labops-tg-plugin
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
+#
+# Монорепо (обычно задаётся корневым ../install.sh — единой точкой входа):
+#   TG_PLUGIN_DIR=<path>      # взять tg-plugin из локального дерева, НЕ клонировать
+#   INSTALL_TG_LOCAL=1        # автоматически поставить локальный tg-plugin в этом прогоне
 
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -266,11 +270,14 @@ else
 fi
 
 TG="${TG_PLUGIN_DIR:-$HOME/labops-tg-plugin}"
-if [ "${SKIP_TG_PLUGIN:-0}" != "1" ]; then
-  clone_repo "labops-tg-plugin" "https://github.com/dediukhinpa/labops-tg-plugin.git" "$TG"
-else
+if [ "${SKIP_TG_PLUGIN:-0}" = "1" ]; then
   warn "labops-tg-plugin пропущен (SKIP_TG_PLUGIN=1) — Telegram-канал будет пропущен"
   TG=""
+elif [ -n "${TG_PLUGIN_DIR:-}" ] && [ -d "$TG_PLUGIN_DIR" ]; then
+  # Монорепо: tg-plugin уже лежит рядом в дереве — не клонируем.
+  ok "labops-tg-plugin взят из монорепо: $TG"
+else
+  clone_repo "labops-tg-plugin" "https://github.com/dediukhinpa/labops-tg-plugin.git" "$TG"
 fi
 
 fi  # [ "$MODE" != "test" ]
@@ -371,8 +378,17 @@ else
   fi
 fi
 
-[ -n "$TG" ] && [ ! -d "$TG/plugin/node_modules" ] && \
-  warn "labops-tg-plugin ещё не установлен ($TG) — Telegram-канал будет недоступен, пока не выполните: cd $TG && ./install.sh"
+if [ -n "$TG" ] && [ ! -d "$TG/plugin/node_modules" ]; then
+  if [ "${INSTALL_TG_LOCAL:-0}" = "1" ] && [ -x "$TG/install.sh" ]; then
+    # Монорепо (общий install.sh): ставим Telegram-канал автоматически,
+    # в контексте того же (не-root) пользователя, до создания агента.
+    say "Установка Telegram-канала (labops-tg-plugin)"
+    ( cd "$TG" && ./install.sh ) \
+      || warn "установка labops-tg-plugin завершилась с ошибкой — Telegram-канал может быть недоступен"
+  else
+    warn "labops-tg-plugin ещё не установлен ($TG) — Telegram-канал будет недоступен, пока не выполните: cd $TG && ./install.sh"
+  fi
+fi
 [ -n "$SB" ] && [ ! -x "$SB/.venv/bin/python" ] && \
   warn "labops-second-brain ещё не установлен ($SB) — токен агента придётся ввести вручную позже, см. вывод выше"
 export AGENT_NAME="${AGENT_NAME:-Developer}"

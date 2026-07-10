@@ -21,7 +21,7 @@
   <b>Part of labops:</b>
   <b>tg-plugin</b> ·
   <a href="https://github.com/dediukhinpa/labops-second-brain">second-brain</a> ·
-  <a href="https://github.com/dediukhinpa/labops-agent-architecture">agent-architecture</a>
+  <a href="../agent-architecture">agent-architecture</a>
 </p>
 
 <p align="center">
@@ -42,15 +42,13 @@ A Claude Code plugin (Bun runtime, TypeScript) that turns an ordinary `claude` s
 **Prerequisites:** none — `install.sh` auto-installs `bun ≥ 1.3`, `tmux`,
 `claude ≥ v2.1.80` if any is missing.
 
-**Installed via [`labops-agent-architecture`](https://github.com/dediukhinpa/labops-agent-architecture)?** Its `install.sh` already cloned this repo to `~/labops-tg-plugin` — that's the plugin's one shared install (dependencies + hooks + tests). You don't touch this repo's files by hand: BotFather, the bot token, and each agent's own `channel.env` are handled per-agent, interactively, by `skills/create-agent/new-agent.sh`. Just run:
+**Bundled in the `labops-ai-assistant` monorepo.** This plugin is a bundled component (`tg-plugin/`) alongside [`agent-architecture`](../agent-architecture). The **single root `install.sh`** (at the monorepo root) installs it for you as part of the full setup — you don't run this component's own `install.sh` by hand (the root one invokes it, and it stays available under `tg-plugin/` if you ever need it directly). BotFather, the bot token, and each agent's own `channel.env` are handled per-agent, interactively, by `agent-architecture`'s `skills/create-agent/new-agent.sh`, which then symlinks the bundled plugin into each new agent's workspace (`~/.claude-lab/<agent>/.claude/labops-tg-plugin`) automatically. Just run, from the monorepo root:
 
 ```bash
-cd ~/labops-tg-plugin && ./install.sh
+bash install.sh
 ```
 
-`new-agent.sh` then symlinks `~/labops-tg-plugin` into each new agent's workspace (`~/.claude-lab/<agent>/.claude/labops-tg-plugin`) automatically.
-
-**Running this plugin standalone** (no `labops-agent-architecture`, no shared memory)? There's no `~/.claude-lab/<agent>/` layout to speak of — that's this architecture's own convention. Clone it inside **your own workspace's `.claude` folder** instead — wherever you already keep (or plan to keep) this agent's `CLAUDE.md`: a project repo root, or simply your home directory for a single global agent. Claude Code discovers `CLAUDE.md` by walking up from the plugin's working directory, so the plugin has to live inside that same tree — see [`docs/02-where-to-place-plugin.md`](docs/02-where-to-place-plugin.md) for why. Configure it by hand:
+**Running this plugin standalone** (outside the monorepo, no shared memory)? It can still run on its own — but within this repo the root `install.sh` above is the way. To use it fully standalone, there's no `~/.claude-lab/<agent>/` layout to speak of — that's `agent-architecture`'s own convention. Clone it inside **your own workspace's `.claude` folder** instead — wherever you already keep (or plan to keep) this agent's `CLAUDE.md`: a project repo root, or simply your home directory for a single global agent. Claude Code discovers `CLAUDE.md` by walking up from the plugin's working directory, so the plugin has to live inside that same tree — see [`docs/02-where-to-place-plugin.md`](docs/02-where-to-place-plugin.md) for why. Configure it by hand:
 
 1. Create a bot via [@BotFather](https://t.me/BotFather) → get the token; get your own user_id via [@userinfobot](https://t.me/userinfobot) — step by step in [`docs/telegram-setup.md`](docs/telegram-setup.md).
 2. Fill in `channel.env` with the minimal vars:
@@ -96,7 +94,7 @@ A naive Telegram bot for an LLM spins up a fresh headless process (`claude -p` /
 | Context between turns | lost / reloaded | preserved |
 | Billing | separate SDK pool | your usual session/subscription |
 | Memory, skills, hooks | must be wired up manually | work as in regular Claude Code |
-| "Agent is thinking" status | none | reactions + progress mirror |
+| "Agent is thinking" status | none | two-stage reactions (👀/👌) |
 
 ---
 
@@ -111,7 +109,6 @@ A naive Telegram bot for an LLM spins up a fresh headless process (`claude -p` /
 | **Media and albums** | photos/documents/attachment groups with buffering | `telegram/album-buffer.ts`, `media.ts` |
 | **AskUserQuestion** | interactive option buttons right in Telegram | `channel/ask-user-question.ts` |
 | **Permission prompt** | confirm dangerous actions (sudo, etc.) via buttons | `channel/permissions.ts` |
-| **Progress mirror** | live "what the agent is doing now" status (terminal/tmux filter) | `status/`, `status/tmux-mirror.ts` |
 | **Multichat** | one server serves several chats/threads | `router/multichat-router.ts` |
 | **Turn memory** | writes turns to `active/episodic.md` + verbose-jsonl (optional) | `memory/` |
 | **HTML filter** | safe conversion of terminal output to Telegram HTML | `safety/html-validator.ts`, `format/html.ts` |
@@ -153,7 +150,7 @@ flowchart LR
 
 1. **MCP stdio server** — registered in the session's `.mcp.json` as `labops-channel`; gives Claude the channel tools (reply in chat, ask a question with buttons, request permission).
 2. **Telegram long-poller** — pulls updates via `getUpdates` (**pull**, not webhook): no public IP/domain/TLS needed, works behind NAT. It hands an incoming message to the session as an **MCP notification** `notifications/claude/channel`.
-3. **Internal webhook server** (`127.0.0.1:6000+`) — listens for **Claude Code hooks** (`PreToolUse`/`PostToolUse`/`Stop`, etc.) in order to draw reactions and the progress mirror. This is **not** a Telegram webhook — it's a purely local integration with hooks.
+3. **Internal webhook server** (`127.0.0.1:6000+`) — listens for **Claude Code hooks** (`PreToolUse`/`PostToolUse`/`Stop`, etc.) in order to draw the two-stage reactions. This is **not** a Telegram webhook — it's a purely local integration with hooks.
 
 > [!IMPORTANT]
 > An incoming message does NOT go through the webhook server. Poller → MCP notification → session. The webhook server is only triggered by the ephemeral hooks of the Claude Code session itself.
@@ -181,8 +178,6 @@ sequenceDiagram
     P->>TG: setMessageReaction 👀  (received)
     P->>S: MCP notification (text/media)
     Note over S: agent thinks, calls tools
-    S->>H: PreToolUse / progress
-    H->>TG: updates the "progress mirror"
     S->>TG: reply (via the channel MCP tool)
     S->>H: Stop (turn finished)
     H->>TG: setMessageReaction 👌  (done)
@@ -246,14 +241,15 @@ Full example — [`examples/channel.env.example`](examples/channel.env.example).
 Requirements: **Bun ≥ 1.3**, **Claude Code ≥ v2.1.80**, Linux/systemd (VPS) or macOS/launchd.
 
 ```bash
-# Via labops-agent-architecture (recommended — one shared install, all agents symlink to it):
-cd ~/labops-tg-plugin && ./install.sh
+# Recommended — the single root install.sh (monorepo root) installs this
+# bundled component for you, and each agent symlinks to it:
+bash install.sh
 
-# Standalone (no labops-agent-architecture): clone INSIDE your own
-# workspace's .claude folder instead — location is critical, see docs/02.
+# Standalone (outside the monorepo): clone INSIDE your own workspace's
+# .claude folder instead — location is critical, see docs/02.
 # <your-workspace> is wherever this agent's CLAUDE.md lives (a project root,
 # or $HOME for a single global agent) — NOT a ~/.claude-lab/<agent>/ layout,
-# that's labops-agent-architecture's own convention.
+# that's agent-architecture's own convention.
 git clone <this-repo> <your-workspace>/.claude/labops-tg-plugin
 cd <your-workspace>/.claude/labops-tg-plugin
 ./install.sh
@@ -320,20 +316,20 @@ Secrets live in `channel.env` (`chmod 640`, `chown root:<service-user>`) and are
 
 ## Part of labops
 
-labops is three independent components:
+labops is three layers — two bundled in the `labops-ai-assistant` monorepo, one external:
 
-| Repository | Role | Dependency |
+| Component | Role | Dependency |
 |---|---|---|
-| **labops-tg-plugin** (this) | Telegram channel to a live Claude Code session | self-contained |
-| [**labops-second-brain**](https://github.com/dediukhinpa/labops-second-brain) | shared memory: Postgres+pgvector, MCP memory/memory_router/agent_router, memory layers | connects to the agent over MCP |
-| [**labops-agent-architecture**](https://github.com/dediukhinpa/labops-agent-architecture) | agent workspaces, autostart/watchdog, the first agent **Developer** + an agent-creation skill, voice | uses this plugin and second-brain |
+| **tg-plugin** (this · bundled component, this monorepo) | Telegram channel to a live Claude Code session | self-contained |
+| [**labops-second-brain**](https://github.com/dediukhinpa/labops-second-brain) (external repo) | shared memory: Postgres+pgvector, MCP memory/memory_router/agent_router, memory layers | connects to the agent over MCP |
+| [**agent-architecture**](../agent-architecture) (bundled component, this monorepo) | agent workspaces, autostart/watchdog, the first agent **Developer** + an agent-creation skill, voice | uses this plugin and second-brain |
 
-This plugin is self-contained (you can install a single Telegram agent without shared memory). The full architecture is in `labops-agent-architecture`.
+This plugin is self-contained (you can install a single Telegram agent without shared memory). The full architecture — bundled together with this plugin in the monorepo — is in [`agent-architecture`](../agent-architecture).
 
-> **Installed via `labops-agent-architecture`?** See [Quickstart](#quickstart) above —
-> `cd ~/labops-tg-plugin && ./install.sh` is the one command you need; do it
-> before creating your first agent, or `new-agent.sh` will warn that the
-> Telegram channel isn't set up yet.
+> **Installing the monorepo?** See [Quickstart](#quickstart) above — the single root
+> `bash install.sh` (monorepo root) installs this bundled component for you as part
+> of the full setup; it runs before your first agent is created, so the Telegram
+> channel is ready when `new-agent.sh` needs it.
 
 ---
 

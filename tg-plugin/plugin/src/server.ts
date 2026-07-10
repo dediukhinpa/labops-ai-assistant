@@ -43,7 +43,6 @@ import { redactSecrets } from './safety/redact.js'
 import { StatusManager } from './status/status-manager.js'
 import { ProgressReporter } from './status/progress-reporter.js'
 import { TaskMirror } from './status/task-mirror.js'
-import { TmuxMirror } from './status/tmux-mirror.js'
 import { loadPolicyFromPath, type MultichatPolicy } from './chats/policy-loader.js'
 import { MultichatRouter } from './router/multichat-router.js'
 import { TmuxSessionPool } from './router/tmux-session-pool.js'
@@ -585,56 +584,6 @@ const progressReporter = new ProgressReporter({ telegramApi, config, log })
 // through redact + HTML validation before leaving the process.
 const taskMirror = new TaskMirror({ telegramApi, config, log })
 
-// TmuxMirror (2026-05-20) — read-only mirror of the agent's terminal pane
-// into ONE rolling Telegram message. Default-OFF in config; the operator
-// opts in explicitly. When enabled without an explicit pane_target we
-// fall back to `channel-atlas:0.0` — the canonical session for this
-// plugin on atlas VPS.
-let tmuxMirror: TmuxMirror | null = null
-if (config.tmux_mirror.enabled) {
-  const target = config.tmux_mirror.pane_target || 'channel-atlas:0.0'
-  const mirrorChatId = String(config.allowed_chat_ids[0] ?? '')
-  if (mirrorChatId === '') {
-    log.warn('tmux mirror enabled but no allowed_chat_ids configured — skipping')
-  } else {
-    // Multichat gate: the mirror gates fail-closed against its own
-    // `chatId` via `shouldMirrorTmuxForChat(policy, chatId)` on every
-    // public entry point. A `tmux_mirror: false` chat in policy
-    // (typically a public group) turns the mirror into a no-op
-    // shell — pane content never reaches Telegram. Pre-fix (codex
-    // review 2026-05-27, HIGH #9) we passed a pre-resolved boolean
-    // derived from the operator's chat id; that fail-open path
-    // leaked pane content into chats absent from policy.
-    tmuxMirror = new TmuxMirror({
-      api: telegramApi,
-      log,
-      chatId: mirrorChatId,
-      paneTarget: target,
-      pollIntervalMs: config.tmux_mirror.poll_interval_ms,
-      lineCount: config.tmux_mirror.line_count,
-      hideSegments: config.tmux_mirror.hide_segments,
-      mode: config.tmux_mirror.mode,
-      maxLines: config.tmux_mirror.max_lines,
-      redact: (text) => redactSecrets(text, apiSecrets),
-      policy: multichatPolicy ?? null,
-    })
-    void tmuxMirror.start().catch((err: unknown) => {
-      log.warn('tmux mirror start failed', {
-        error: err instanceof Error ? err.message : String(err),
-      })
-    })
-    // Best-effort cleanup on process exit: delete the rolling message so
-    // a stale «terminal mirror» card doesn't sit in the chat forever.
-    const shutdownMirror = (): void => {
-      tmuxMirror?.stop().catch(() => {
-        /* already logged inside stop() */
-      })
-    }
-    process.once('SIGINT', shutdownMirror)
-    process.once('SIGTERM', shutdownMirror)
-  }
-}
-
 // InboundWatcher (PR-A3, 2026-05-20) — auto-reply «Тралл занят» when the
 // operator sends plain text while ProgressReporter says the session is
 // mid-tool. The watcher receives `progressReporter` for read-only busy
@@ -930,8 +879,6 @@ const handlerDeps: HandlerDeps = {
   statusManager,
   albumBuffer,
   watcher: inboundWatcher,
-  // Optional /mirror control surface — undefined when tmux_mirror.enabled=false.
-  ...(tmuxMirror !== null ? { tmuxMirror } : {}),
   // Multichat router + policy. Both must be present for handlers.ts to
   // take the router path; passing one without the other is a wiring bug
   // (handlers.ts treats the pair atomically).

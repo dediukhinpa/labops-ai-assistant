@@ -30,7 +30,7 @@ import type { TelegramApi } from '../channel/tools.js'
 import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 
-export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'new' | 'mirror'
+export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'new'
 
 const KNOWN_COMMANDS = new Set<OobCommandName>([
   'help',
@@ -38,12 +38,7 @@ const KNOWN_COMMANDS = new Set<OobCommandName>([
   'stop',
   'reset',
   'new',
-  'mirror',
 ])
-
-// Sub-actions for /mirror. We accept the bare command (= same as `status`),
-// plus on/off/status explicit args. Unknown sub-actions render the help line.
-export type MirrorAction = 'on' | 'off' | 'status'
 
 export interface ParsedOobCommand {
   name: OobCommandName
@@ -97,29 +92,6 @@ export function parseOobCommand(
 // Handler context and result shape.
 // ─────────────────────────────────────────────────────────────────────
 
-// Minimal surface of TmuxMirror that the OOB layer needs. Decoupled from
-// the concrete class so tests don't need to spin up the full mirror.
-//
-// `bump` is optional because it's used by the inbound-message handler
-// (not by /mirror commands) — keeping it optional avoids forcing every
-// OOB unit test to stub a method it never exercises.
-export interface TmuxMirrorControl {
-  start(): Promise<void>
-  stop(): Promise<void>
-  bump?(): Promise<void>
-  // MED-A #2: recovery from a permanent Telegram error (403 / parse)
-  // that flipped `disabled=true`. /mirror on calls reset() before
-  // start() so the operator never has to restart the plugin.
-  // Optional for source-compat with existing test stubs.
-  reset?(): void
-  status(): {
-    enabled: boolean
-    messageId?: number
-    lastError?: string
-    lastPollAt?: number
-  }
-}
-
 export interface OobContext {
   chatId: string
   senderId: string
@@ -134,9 +106,6 @@ export interface OobContext {
     cancel: (chatId: string, reason: string) => Promise<void>
   }
   webhookStatus?: () => { enabled: boolean; port: number }
-  // /mirror control — undefined when tmux_mirror.enabled=false at startup.
-  // The handler then replies «mirror disabled in config».
-  tmuxMirror?: TmuxMirrorControl
   // Identity bits surfaced by /status.
   botId?: number
   stateDir?: string
@@ -161,8 +130,7 @@ function helpText(): string {
     + '<code>/status</code> — снимок плагина и сессии\n'
     + '<code>/stop</code> — попросить Claude остановить текущую задачу\n'
     + '<code>/reset force</code> — сбросить состояние сессии (подтверди флагом <code>force</code>)\n'
-    + '<code>/new force</code> — начать новую сессию (подтверди флагом <code>force</code>)\n'
-    + '<code>/mirror on|off|status</code> — управлять зеркалом терминала (tmux, обновляется в реальном времени)\n\n'
+    + '<code>/new force</code> — начать новую сессию (подтверди флагом <code>force</code>)\n\n'
     + '<i>примечание: /stop — best-effort: плагин передаёт сигнал остановки через '
     + 'канал, но не может гарантировать прерывание посреди вызова инструмента.</i>'
   )
@@ -180,7 +148,6 @@ export const BOT_COMMANDS: ReadonlyArray<BotCommandSpec> = [
   { command: 'stop', description: 'попросить Claude остановиться' },
   { command: 'reset', description: 'сбросить сессию (нужен force)' },
   { command: 'new', description: 'начать новую сессию (нужен force)' },
-  { command: 'mirror', description: 'зеркало терминала: on | off | status' },
 ]
 
 function statusText(ctx: OobContext): string {
@@ -333,95 +300,6 @@ export async function handleOobCommand(
           parseMode: 'HTML',
         },
         notifyChannel: { content: '/new force', meta: baseMeta },
-      }
-    }
-
-    case 'mirror': {
-      // Sub-action lives in `args`. Empty args → behave like `status`.
-      const action = parsed.args.trim().toLowerCase()
-      const mirror = ctx.tmuxMirror
-      if (!mirror) {
-        return {
-          handled: true,
-          command: 'mirror',
-          replyToTelegram: {
-            text:
-              '<b>зеркало терминала</b> — отключено в конфиге\n\n'
-              + 'Установи <code>tmux_mirror.enabled = true</code> и перезапусти плагин.',
-            parseMode: 'HTML',
-          },
-        }
-      }
-      if (action === 'on') {
-        ctx.log.info('oob /mirror on', { chat_id: ctx.chatId })
-        try {
-          // MED-A #2: a permanent error (403 / parse) flips the
-          // mirror's `disabled` flag and the polling loop becomes a
-          // no-op forever — `/mirror off; /mirror on` alone never
-          // cleared the flag because start() short-circuits on a
-          // disabled mirror. Call reset() first so /mirror on
-          // unconditionally re-arms the mirror after a permanent
-          // error. Idempotent when the mirror is healthy. Optional
-          // on the control interface for source-compat with test
-          // stubs that don't implement it.
-          if (mirror.reset) mirror.reset()
-          await mirror.start()
-        } catch (err) {
-          ctx.log.warn('oob /mirror on start failed', {
-            chat_id: ctx.chatId,
-            error: err instanceof Error ? err.message : String(err),
-          })
-        }
-        return {
-          handled: true,
-          command: 'mirror',
-          replyToTelegram: {
-            text: '<b>зеркало терминала</b> — <code>on</code>',
-            parseMode: 'HTML',
-          },
-        }
-      }
-      if (action === 'off') {
-        ctx.log.info('oob /mirror off', { chat_id: ctx.chatId })
-        try {
-          await mirror.stop()
-        } catch (err) {
-          ctx.log.warn('oob /mirror off stop failed', {
-            chat_id: ctx.chatId,
-            error: err instanceof Error ? err.message : String(err),
-          })
-        }
-        return {
-          handled: true,
-          command: 'mirror',
-          replyToTelegram: {
-            text: '<b>зеркало терминала</b> — <code>off</code>',
-            parseMode: 'HTML',
-          },
-        }
-      }
-      // Default / explicit `status` — read-only snapshot.
-      const s = mirror.status()
-      const lines = [
-        '<b>зеркало терминала — статус</b>',
-        `enabled: <code>${s.enabled ? 'on' : 'off'}</code>`,
-      ]
-      if (s.messageId !== undefined) lines.push(`message_id: <code>${s.messageId}</code>`)
-      if (s.lastPollAt !== undefined) {
-        const age = Math.max(0, Math.floor((Date.now() - s.lastPollAt) / 1000))
-        lines.push(`last poll: <code>${age}s ago</code>`)
-      }
-      if (s.lastError) lines.push(`last error: <code>${s.lastError.slice(0, 200)}</code>`)
-      if (action !== '' && action !== 'status') {
-        lines.push('', '<i>usage: /mirror on | off | status</i>')
-      }
-      return {
-        handled: true,
-        command: 'mirror',
-        replyToTelegram: {
-          text: lines.join('\n'),
-          parseMode: 'HTML',
-        },
       }
     }
   }

@@ -601,7 +601,7 @@ launchctl kickstart -k gui/$(id -u)/com.labops-plugin.channel-<agent>  # macOS
 
 Аналогично для текстовой версии (без callback_query): отправлять пронумерованный список текстом, парсить ответ юзера на цифру, send-keys → Enter.
 
-Issue: https://github.com/dediukhinpa/labops-tg-plugin/issues (создайте issue с label `enhancement`).
+Issue: https://github.com/dediukhinpa/labops-ai-assistant/issues (создайте issue с label `enhancement`).
 
 ### Как не повторить
 
@@ -782,4 +782,4 @@ sudo systemctl restart channel-<agent>
 5. Tests: `cd plugin && bun test` — если тесты упали, у вас core bug, не env-проблема
 6. Открыть issue с описанием: версия Claude Code, версия Bun, `systemctl status` output, tmux capture последних 100 строк, `getWebhookInfo` response.
 
-GitHub Issues: https://github.com/dediukhinpa/labops-tg-plugin/issues
+GitHub Issues: https://github.com/dediukhinpa/labops-ai-assistant/issues

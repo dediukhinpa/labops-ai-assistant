@@ -84,6 +84,7 @@ labops-ai-assistant/
 ├── README.ru.md           # Русский
 ├── LICENSE                # Proprietary — © LabOps.ai
 ├── SECURITY.md            # private vulnerability reporting
+├── install.sh             # ← unified installer (both components, one command)
 ├── assets/                # shared logos + demo mockups
 ├── agent-architecture/    # ← runtime & lifecycle layer (full repo)
 │   ├── install.sh · test.sh
@@ -99,7 +100,7 @@ labops-ai-assistant/
 ```
 
 > [!NOTE]
-> Each subdirectory keeps its **own** `README.md` / `README.ru.md`, `install.sh`, tests, and `LICENSE` — nothing was flattened or rewritten. This root adds a combined overview on top. For layer-specific detail, open the component's own README (linked in each section below).
+> The two components live as subdirectories of this single repository — install them with the one root [`install.sh`](install.sh) (it drives each component's own installer for you). Each subdirectory keeps its own `README.md` / `README.ru.md`, tests, and `LICENSE` for layer-specific detail; open the component's own README from the sections below.
 
 ---
 
@@ -137,7 +138,7 @@ flowchart LR
   class BUN,SB,TG ext
 ```
 
-**Message flow:** user msg → 👀 reaction (poller) → MCP notification to the live session → the session thinks / calls tools → lifecycle hooks fire to the channel's `127.0.0.1:6000+` webhook (progress mirror) → the agent replies via the channel MCP tool → the `Stop` hook sets 👌.
+**Message flow:** user msg → 👀 reaction (poller) → MCP notification to the live session → the session thinks / calls tools → lifecycle hooks fire to the channel's `127.0.0.1:6000+` webhook (progress status) → the agent replies via the channel MCP tool → the `Stop` hook sets 👌.
 
 > [!IMPORTANT]
 > An incoming Telegram message does **not** go through the webhook server. Poller → MCP notification → session. The `:6000+` webhook only receives **Claude Code lifecycle hooks**, not Telegram traffic.
@@ -146,21 +147,20 @@ flowchart LR
 
 ## Quickstart
 
-Two subdirectories, **two `install.sh` scripts** — plus the sibling `second_brain`. Install the runtime first; it clones the siblings for you; then install the channel.
+**One unified installer** brings up both bundled components — the runtime/lifecycle layer *and* the Telegram channel — in a single run. The shared brain (`labops-second-brain`) is an external dependency, installed separately.
 
 ```bash
 git clone https://github.com/dediukhinpa/labops-ai-assistant.git
 cd labops-ai-assistant
 
-# 1) Runtime & lifecycle — deps + Claude Code + self-test + Developer agent.
-#    Also CLONES (does not install) the two sibling repos next to it.
-cd agent-architecture && bash install.sh && cd ..
-
-# 2) Telegram channel — one shared install; every agent symlinks to it.
-cd tg-plugin && ./install.sh && cd ..
+# One command: deps + Claude Code + self-test + Developer agent, then the
+# bundled Telegram channel (tg-plugin) — all wired together automatically.
+bash install.sh
 ```
 
-3. **Shared memory** — install the sibling `labops-second-brain` from its own repo (`sudo bash scripts/install.sh`, or hand it to a Claude Code agent following its `AGENT.md`). It issues the agent a Bearer token and brings up MCP `memory:5001` / `memory_router:5002` / `agent_router:5000`.
+The root `install.sh` installs `agent-architecture` (deps, Claude Code, the first agent) and then the bundled `tg-plugin` from this tree — nothing is cloned for the channel, it is already here. Flags pass through: `bash install.sh --no-agent` (prepare only), `bash install.sh --test-only` (self-test).
+
+**Shared memory** — `labops-second-brain` is a *separate* dependency, not part of this repo. `install.sh` clones it next to the repo (unless `SKIP_SECOND_BRAIN=1`); install it with `sudo bash ~/labops-second-brain/scripts/install.sh` (or hand it to a Claude Code agent following its `AGENT.md`). It issues the agent a Bearer token and brings up MCP `memory:5001` / `memory_router:5002` / `agent_router:5000`.
 
 > [!TIP]
 > For the first agent (Developer) the default model is `opus` (Opus 4.8). You install only the **first** agent — then the swarm grows itself: the Developer spawns the rest via the `create-agent` skill.
@@ -206,7 +206,7 @@ A single Bun process (`plugin/src/server.ts`) plays **three roles at once**:
 
 1. **MCP stdio server** — registered in the session's `.mcp.json` as `labops-channel`; gives Claude the channel tools (reply, ask-with-buttons, request-permission).
 2. **Telegram long-poller** — pulls updates via `getUpdates` (**pull**, not webhook): no public IP/domain/TLS needed, works behind NAT. Hands an incoming message to the session as an MCP notification.
-3. **Internal webhook server** (`127.0.0.1:6000+`) — listens for **Claude Code lifecycle hooks** to drive reactions and the progress mirror. This is **not** a Telegram webhook.
+3. **Internal webhook server** (`127.0.0.1:6000+`) — listens for **Claude Code lifecycle hooks** to drive reactions and the progress status. This is **not** a Telegram webhook.
 
 | Capability | What it does |
 |---|---|
