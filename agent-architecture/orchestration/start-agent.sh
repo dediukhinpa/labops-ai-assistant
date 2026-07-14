@@ -12,6 +12,17 @@ AGENT="$1"
 SESSION="labops-$AGENT"
 WORKSPACE="$CLAUDE_LAB/$AGENT/.claude"
 
+# claude's CWD must be inside the plugin dir, not the workspace root: config
+# discovery (CLAUDE.md, .mcp.json) walks UP from CWD, so plugin/.mcp.json
+# (defines the labops-channel MCP server) is only found if CWD starts there
+# or below (docs/02-where-to-place-plugin.md — "90% of first-run problems").
+# CWD at WORKSPACE skips over it entirely: the channel MCP server then never
+# loads ("no MCP server configured with that name"), even though the plugin
+# is symlinked into the tree. Falls back to WORKSPACE if the plugin isn't
+# laid out there (agent has no channel).
+PLUGIN_CWD="$WORKSPACE/labops-tg-plugin/plugin"
+[ -d "$PLUGIN_CWD" ] || PLUGIN_CWD="$WORKSPACE"
+
 # Channel config + секреты живут в channel.env (его пишет create-agent /
 # new-agent.sh) — единый источник истины, chmod 600, в git не попадает. Легаси-
 # файлы под .claude/secrets/ поддерживаются как fallback. Ничего не хардкодим.
@@ -72,7 +83,7 @@ pkill -9 -f "$CLAUDE_LAB/$AGENT/.claude/.*/plugin/src/server.ts" 2>/dev/null || 
 CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
 BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
 
-tmux new-session -d -s "$SESSION" -c "$WORKSPACE" \
+tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_STATE_DIR="$TELEGRAM_STATE_DIR" \
   -e TELEGRAM_ALLOWED_USER_IDS="$TELEGRAM_ALLOWED_USER_IDS" \
