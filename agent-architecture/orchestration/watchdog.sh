@@ -127,7 +127,15 @@ while true; do
   # idle agent looked "stuck" → Enter/Escape/restart on a ~90s cycle, the main
   # cause of agents going silent (found 2026-06-13).
   INPUT=$(printf '%s' "$TAIL" | grep -a '❯' | tail -1 | sed -e 's/.*❯//' -e 's/\xc2\xa0//g' -e 's/[[:space:]]//g')
-  if [ -z "$INPUT" ]; then
+  # Placeholder hint text (e.g. `Try "fix lint errors"`) renders dim/styled in
+  # the TUI, which is how a human tells it apart from real typed input — but
+  # capture-pane here has no `-e`, so that styling is invisible and the plain
+  # text survives stripping just like real input would. The rotating hint
+  # happening to hold still across one 30s poll then read as "stuck input" on
+  # a perfectly idle agent → false Enter/Escape/restart cycle (found
+  # 2026-07-12). Recognize the hint's fixed `Try "..."` shape and fold it into
+  # the idle branch below, same as an empty INPUT.
+  if [ -z "$INPUT" ] || printf '%s' "$INPUT" | grep -qE '^Try".*"$'; then
     NUDGE_STAGE=0          # clean idle prompt — healthy, leave it alone
     # Idle-triggered consolidation: once the agent has been idle long enough,
     # nudge it to reflect (episodic → passive). Fire once per idle period.
