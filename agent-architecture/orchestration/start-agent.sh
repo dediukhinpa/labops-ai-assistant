@@ -99,6 +99,30 @@ HEARTBEAT="$WORKSPACE/state/heartbeat"
 HAS_CHANNEL=0; [ "$PLUGIN_CWD" != "$WORKSPACE" ] && HAS_CHANNEL=1
 LAUNCH_TS=$(date +%s)
 
+# Second-brain runtime env (memory recall + agent MCP tools). Lives in agent.env
+# (written by new-agent.sh), but start-agent never propagated it into the session
+# — so the SessionStart recall hook saw MCP_HOST/AGENT_BEARER unset and silently
+# skipped recall (it has never worked). Propagate via -e below. Placeholder guard:
+# a CHANGE_ME/empty bearer means second_brain isn't wired yet, so recall stays OFF
+# (else every session start eats a ~15s dead curl); it activates automatically once
+# a real token is written to agent.env. We propagate ONLY via -e and unset locally
+# afterwards, so a placeholder can never leak into the session through the tmux
+# server's global env (the way PATH does — see the export above).
+AGENT_ENV_FILE="$WORKSPACE/agent.env"
+if [ -f "$AGENT_ENV_FILE" ]; then set -a; . "$AGENT_ENV_FILE"; set +a; fi
+SB_ENV=()
+if [ -n "${AGENT_BEARER:-}" ] && [ "${AGENT_BEARER:-}" != "CHANGE_ME" ]; then
+  SB_ENV=( -e "MCP_HOST=${MCP_HOST:-}" -e "AGENT_BEARER=${AGENT_BEARER}" \
+           -e "SECOND_BRAIN_MEMORY_URL=${SECOND_BRAIN_MEMORY_URL:-}" \
+           -e "SECOND_BRAIN_MEMORY_ROUTER_URL=${SECOND_BRAIN_MEMORY_ROUTER_URL:-}" \
+           -e "SECOND_BRAIN_AGENT_ROUTER_URL=${SECOND_BRAIN_AGENT_ROUTER_URL:-}" \
+           -e "AGENT_SCOPES=${AGENT_SCOPES:-}" -e "SUMMARY_LANGUAGE=${SUMMARY_LANGUAGE:-}" )
+else
+  echo "[start-agent] $AGENT: second_brain recall off (AGENT_BEARER placeholder/unset — бэкенд не подключён)" >&2
+fi
+unset AGENT_BEARER MCP_HOST SECOND_BRAIN_MEMORY_URL SECOND_BRAIN_MEMORY_ROUTER_URL \
+      SECOND_BRAIN_AGENT_ROUTER_URL AGENT_SCOPES SUMMARY_LANGUAGE 2>/dev/null || true
+
 # --settings below is REQUIRED, not optional: CWD is the plugin dir so .mcp.json
 # is discovered, but claude canonicalises the symlinked plugin path to its real
 # location (/home/.../labops-tg-plugin/plugin) OUTSIDE the workspace tree. Config
@@ -106,6 +130,9 @@ LAUNCH_TS=$(date +%s)
 # NONE of the workspace hooks (heartbeat, SessionStart recall, Stop) ever fire.
 # Loading settings.json explicitly fixes that (and the long-silent memory hooks).
 tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
+  -e AGENT_ID="$AGENT" \
+  -e AGENT_WORKSPACE="$WORKSPACE" \
+  ${SB_ENV[@]+"${SB_ENV[@]}"} \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_STATE_DIR="$TELEGRAM_STATE_DIR" \
   -e TELEGRAM_ALLOWED_USER_IDS="$TELEGRAM_ALLOWED_USER_IDS" \
