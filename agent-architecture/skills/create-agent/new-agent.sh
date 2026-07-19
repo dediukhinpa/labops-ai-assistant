@@ -22,6 +22,23 @@
 
 set -euo pipefail
 
+# This script is almost always run FROM INSIDE an existing agent's session
+# (by design: the Developer agent scaffolds the rest). That parent session's
+# environment carries the parent's OWN per-agent identity — leaked in via the
+# shared tmux server's global env (AGENT_ID, TELEGRAM_WEBHOOK_PORT,
+# TELEGRAM_EXPECTED_BOT_ID, workspace/state paths, bearer, ...). If we inherit
+# any of those, the NEW agent silently gets the parent's values: e.g. an
+# inherited TELEGRAM_WEBHOOK_PORT=6000 makes the port-dedup guards below no-op,
+# so the new agent's channel collides with the parent's port. These are all
+# per-agent and must be derived fresh here (or taken only from explicit CLI/env
+# the operator set for THIS run) — never inherited from the parent session.
+# Operator-supplied inputs (AGENT_NAME/AGENT_ROLE/TELEGRAM_BOT_TOKEN/
+# TELEGRAM_ALLOWED_USER_IDS/PRIMARY_MODEL/...) are intentionally NOT in this list.
+unset AGENT_ID AGENT_WORKSPACE AGENT_BEARER \
+      TELEGRAM_WEBHOOK_PORT TELEGRAM_EXPECTED_BOT_ID TELEGRAM_WEBHOOK_TOKEN \
+      TELEGRAM_STATE_DIR TELEGRAM_WORKSPACE_ROOT \
+      TELEGRAM_MEMORY_WORKSPACE TELEGRAM_MEMORY_AGENT_LABEL 2>/dev/null || true
+
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SKILL_DIR/../.." && pwd)"
 LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"
