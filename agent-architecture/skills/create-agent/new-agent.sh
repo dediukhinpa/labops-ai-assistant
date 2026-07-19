@@ -25,6 +25,18 @@ set -euo pipefail
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SKILL_DIR/../.." && pwd)"
 LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"
+# The skill is COPIED into agent workspaces (~/.claude-lab/<id>/.claude/skills/),
+# where ../../ is the workspace, not the repo. And even when run from a checkout,
+# the standalone labops-agent-architecture clone may lag a whole generation
+# behind the labops-ai-assistant monorepo (the source of truth) — an agent
+# scaffolded from it would silently miss current hooks/scripts. Resolution
+# order: explicit AGENT_ARCH_DIR → monorepo → script-relative → standalone.
+for cand in "${AGENT_ARCH_DIR:-}" \
+            "$HOME/labops-ai-assistant/agent-architecture" \
+            "$REPO_DIR" \
+            "$HOME/labops-agent-architecture"; do
+  if [ -n "$cand" ] && [ -d "$cand/agent-template" ]; then REPO_DIR="$cand"; break; fi
+done
 AGENT_TEMPLATE="$REPO_DIR/agent-template"
 ORCH_DIR="$REPO_DIR/orchestration"
 # Нативный claude ставится в ~/.local/bin, но PATH туда правится только в
@@ -54,6 +66,12 @@ say "0. Проверка зависимостей"
 command -v curl >/dev/null || die "нужен curl"
 command -v tmux >/dev/null || die "нужен tmux (рантайм агента живёт в tmux-сессии): apt-get install tmux"
 command -v jq   >/dev/null || warn "jq не найден — smoke-проверки будут грубее"
+# bun гоняет канал-сервер (bun ./src/server.ts) — без него агент создастся
+# «зелёным», но канал молча не встанет (класс бага, пойманный на developer).
+if ! command -v bun >/dev/null 2>&1 && [ ! -x "$HOME/.bun/bin/bun" ]; then
+  DEGRADED+=("bun не найден — Telegram-канал не запустится: curl -fsSL https://bun.sh/install | bash, затем ln -s ~/.bun/bin/bun ~/.local/bin/bun")
+  warn "bun не найден — канал агента не поднимется (см. итоговый DEGRADED-список)"
+fi
 # Claude Code должен быть авторизован к модели (подписка Max/Pro).
 # Без этого агент стартует под systemd, но не достучится до модели.
 if command -v claude >/dev/null 2>&1; then
@@ -77,10 +95,23 @@ else
 fi
 
 TG_PLUGIN_DIR="${TG_PLUGIN_DIR:-}"
-for cand in "$TG_PLUGIN_DIR" "$HOME/labops-tg-plugin" "$LAB_DIR/shared/plugins/labops-tg-plugin" "$LAB_DIR/shared/plugins/labops-channel"; do
+for cand in "$TG_PLUGIN_DIR" "$HOME/labops-ai-assistant/tg-plugin" "$HOME/labops-tg-plugin" "$LAB_DIR/shared/plugins/labops-tg-plugin" "$LAB_DIR/shared/plugins/labops-channel"; do
   [ -n "$cand" ] && [ -d "$cand/plugin" ] && TG_PLUGIN_DIR="$cand" && break
 done
 [ -n "$TG_PLUGIN_DIR" ] && ok "labops-tg-plugin: $TG_PLUGIN_DIR" || warn "labops-tg-plugin не найден — Telegram пропущу (задайте TG_PLUGIN_DIR)"
+# Свежий клон плагина без node_modules — канал умирает молча при старте.
+# Ставим зависимости здесь, а не надеемся, что кто-то уже сделал bun install.
+if [ -n "$TG_PLUGIN_DIR" ] && [ ! -d "$TG_PLUGIN_DIR/plugin/node_modules" ]; then
+  BUN_BIN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
+  if [ -x "$BUN_BIN" ]; then
+    warn "node_modules нет в $TG_PLUGIN_DIR/plugin — выполняю bun install"
+    ( cd "$TG_PLUGIN_DIR/plugin" && "$BUN_BIN" install --silent ) \
+      && ok "bun install: зависимости плагина установлены" \
+      || DEGRADED+=("bun install в $TG_PLUGIN_DIR/plugin провалился — канал не запустится")
+  else
+    DEGRADED+=("в $TG_PLUGIN_DIR/plugin нет node_modules, а bun недоступен — канал не запустится")
+  fi
+fi
 
 # ── 1. Параметры агента ─────────────────────────────────────────
 say "1. Конфигурация агента"
@@ -163,6 +194,26 @@ WORKSPACE="$LAB_DIR/$AGENT_ID/.claude"
 [ -d "$WORKSPACE" ] || die "воркспейс не создан: $WORKSPACE"
 ok "воркспейс: $WORKSPACE"
 
+# Токен → на ДИСК, всегда. install.sh пропускает уже существующие файлы
+# (fill_template / agent.env), поэтому при REUSE_EXISTING=1 свежевыданный
+# AGENT_BEARER оставался только в памяти: smoke проходил зелёным, а в
+# .mcp.json/agent.env лежал CHANGE_ME — recall и MCP мозга молча не работали.
+# Здесь досинхронизируем оба файла, если реальный токен туда не попал.
+if [ -n "${AGENT_BEARER:-}" ] && [ "$AGENT_BEARER" != "CHANGE_ME" ]; then
+  if [ -f "$WORKSPACE/agent.env" ] && ! grep -qF "$AGENT_BEARER" "$WORKSPACE/agent.env"; then
+    cp -p "$WORKSPACE/agent.env" "$WORKSPACE/agent.env.bak-reissue"
+    sed -i -E "s|^(export +)?AGENT_BEARER=.*|export AGENT_BEARER=\"$AGENT_BEARER\"|" "$WORKSPACE/agent.env"
+    chmod 600 "$WORKSPACE/agent.env"
+    ok "agent.env: обновлён AGENT_BEARER (бэкап agent.env.bak-reissue)"
+  fi
+  if [ -f "$WORKSPACE/.mcp.json" ] && ! grep -qF "$AGENT_BEARER" "$WORKSPACE/.mcp.json"; then
+    cp -p "$WORKSPACE/.mcp.json" "$WORKSPACE/.mcp.json.bak-reissue"
+    sed -i -E "s|(\"Authorization\"[[:space:]]*:[[:space:]]*\")Bearer [^\"]*|\\1Bearer $AGENT_BEARER|g" "$WORKSPACE/.mcp.json"
+    chmod 600 "$WORKSPACE/.mcp.json"
+    ok ".mcp.json: обновлён Bearer во всех серверах (бэкап .mcp.json.bak-reissue)"
+  fi
+fi
+
 # ── 4. Telegram-канал (бот) ─────────────────────────────────────
 say "4. Telegram-канал"
 if [ -n "$TG_PLUGIN_DIR" ]; then
@@ -187,6 +238,16 @@ if [ -n "$TG_PLUGIN_DIR" ]; then
   ask TELEGRAM_BOT_TOKEN "Токен Telegram-бота (@BotFather → /newbot)" ""
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     ask TELEGRAM_ALLOWED_USER_IDS "Ваш Telegram user_id (у @userinfobot)" ""
+    # Валидация формата: опечатка в user_id (нецифра/пробел) раньше проходила
+    # молча — бот игнорировал оператора без единого предупреждения (кейс
+    # developer: 24546645 вместо 124546645 не поймать, но мусор — поймаем).
+    if [ -n "${TELEGRAM_ALLOWED_USER_IDS:-}" ] \
+       && ! printf '%s' "$TELEGRAM_ALLOWED_USER_IDS" | grep -qE '^-?[0-9]+(,-?[0-9]+)*$'; then
+      warn "user_id '$TELEGRAM_ALLOWED_USER_IDS' не похож на id (цифры через запятую, для групп с -100)"
+      ask TELEGRAM_ALLOWED_USER_IDS "Повторите Telegram user_id" ""
+      printf '%s' "${TELEGRAM_ALLOWED_USER_IDS:-}" | grep -qE '^-?[0-9]+(,-?[0-9]+)*$' \
+        || { DEGRADED+=("allowlist невалиден ('${TELEGRAM_ALLOWED_USER_IDS:-}') — исправьте TELEGRAM_ALLOWED_USER_IDS в channel.env"); TELEGRAM_ALLOWED_USER_IDS=""; }
+    fi
     [ -n "${TELEGRAM_ALLOWED_USER_IDS:-}" ] || DEGRADED+=("allowlist пуст: бот будет отвечать ВСЕМ — впишите user_id в channel.env")
     BOT_ID="${TELEGRAM_BOT_TOKEN%%:*}"
     # Уникальный webhook-порт: если у ЭТОГО агента уже был channel.env (напр.
