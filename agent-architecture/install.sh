@@ -259,7 +259,28 @@ clone_repo() {
   local err_log; err_log="$(mktemp)"
   if git clone --depth=1 "$url" "$dest" 2>"$err_log"; then
     ok "$name склонирован"
-  elif [ -n "${GITHUB_TOKEN:-}" ]; then
+    rm -f "$err_log"
+    return 0
+  fi
+
+  # Классифицируем причину по тексту ошибки git — НЕ сваливаем всё на
+  # "приватный репо / нет токена". Ошибки прав/пути (напр. клон в /root,
+  # недоступный после смены пользователя) и сетевые сбои требуют совсем
+  # других действий, чем отсутствие токена.
+  local errs; errs="$(cat "$err_log")"
+  case "$errs" in
+    *"Permission denied"*|*"could not create"*|*"unable to create"*|*"Read-only file system"*|*"No space left"*)
+      cat "$err_log" >&2
+      die "$name: клонирование не удалось из-за ПРАВ/ФС на пути назначения ($dest), а не из-за доступа к репозиторию.
+    Частая причина — исходное дерево лежит под /root (mode 700) и недоступно пользователю агента.
+    Клонируйте/запускайте установку НЕ из /root (напр. /opt или домашний каталог оператора)." ;;
+    *"Could not resolve host"*|*"Failed to connect"*|*"Connection refused"*|*"Connection timed out"*|*"timed out"*)
+      cat "$err_log" >&2
+      die "$name: сетевая ошибка при клонировании ($url) — проверьте интернет/DNS/прокси на этой машине и повторите." ;;
+  esac
+
+  # Иначе это похоже на проблему доступа к репозиторию (приватный / нет прав).
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
     warn "$name недоступен анонимно (приватный?) — пробую с GITHUB_TOKEN"
     local auth_header
     auth_header="Authorization: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
