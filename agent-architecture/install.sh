@@ -445,14 +445,22 @@ if [ -n "$TG" ] && [ ! -d "$TG/plugin/node_modules" ]; then
     # Монорепо (общий install.sh): ставим Telegram-канал автоматически,
     # в контексте того же (не-root) пользователя, до создания агента.
     say "Установка Telegram-канала (labops-tg-plugin)"
-    ( cd "$TG" && ./install.sh ) \
+    # LABOPS_AGENT_FLOW=1 сообщает tg-plugin, что дальше будет new-agent.sh —
+    # он сам создаст channel.env и подтянет хуки из settings.json воркспейса.
+    # Без этого сигнала tg-plugin считает установку standalone и пугает
+    # оператора "закройте пункты", хотя в агентском флоу они закрываются сами.
+    ( cd "$TG" && LABOPS_AGENT_FLOW=1 ./install.sh ) \
       || warn "установка labops-tg-plugin завершилась с ошибкой — Telegram-канал может быть недоступен"
   else
     warn "labops-tg-plugin ещё не установлен ($TG) — Telegram-канал будет недоступен, пока не выполните: cd $TG && ./install.sh"
   fi
 fi
+# second-brain по канону ставится ОТДЕЛЬНЫМ вторым шагом ПОСЛЕ архитектуры,
+# поэтому его отсутствие здесь — норма, а не degraded. И токен потом выдаётся
+# НЕ вручную: scripts/connect-agents.sh (в его install.sh) сам подключит агента.
+# Печатаем спокойную инфо-строку, а не warn.
 [ -n "$SB" ] && [ ! -x "$SB/.venv/bin/python" ] && \
-  warn "labops-second-brain ещё не установлен ($SB) — токен агента придётся ввести вручную позже, см. вывод выше"
+  printf '\033[0;36mℹ %s\033[0m\n' "labops-second-brain пока не развёрнут — это нормально: он ставится вторым шагом (sudo bash $SB/scripts/install.sh), и его установщик сам выдаст токен агенту (connect-agents.sh). До этого recall у агента выключен."
 export AGENT_NAME="${AGENT_NAME:-Developer}"
 export AGENT_ROLE="${AGENT_ROLE:-Разработчик}"
 export AGENT_ROLE_DESCRIPTION="${AGENT_ROLE_DESCRIPTION:-Автономный разработчик: пишет код, ревьюит архитектуру, гоняет тесты и помогает оператору создавать новых агентов.}"

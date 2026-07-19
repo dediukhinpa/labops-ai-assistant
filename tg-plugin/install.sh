@@ -25,6 +25,14 @@ die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 SKIPPED=()
 skip() { warn "$*"; SKIPPED+=("$*"); }
 
+# Режим запуска. LABOPS_AGENT_FLOW=1 ставит agent-architecture перед созданием
+# агента: тогда channel.env и хуки настраивает new-agent.sh дальше, и пугать
+# оператора "закройте пункты" НЕ нужно. Без флага — standalone-деплой, где эти
+# шаги действительно на операторе.
+AGENT_FLOW="${LABOPS_AGENT_FLOW:-0}"
+# note() — информационная строка, которая НЕ идёт в degraded-накопитель.
+note() { printf '\033[0;36mℹ %s\033[0m\n' "$*"; }
+
 REQUIRED_CLAUDE="2.1.80"
 # ver_ge A B → истина, если версия A >= версии B.
 ver_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
@@ -110,8 +118,10 @@ if [ -x "$PLUGIN_DIR/scripts/install-hooks.sh" ]; then
   # здесь ожидаем и безвреден — НЕ печатаем ложное "зарегистрированы".
   if ( cd "$PLUGIN_DIR" && ./scripts/install-hooks.sh >/dev/null 2>&1 ); then
     ok "хуки зарегистрированы"
+  elif [ "$AGENT_FLOW" = "1" ]; then
+    note "хуки берутся из settings.json воркспейса (их ставит agent-template при создании агента) — install-hooks.sh здесь не нужен"
   else
-    skip "хуки сейчас не зарегистрированы (install-hooks.sh требует --settings/--chat-id/--webhook-url). В агентском флоу они берутся из settings.json воркспейса; для standalone-деплоя запустите скрипт вручную с этими аргументами после настройки channel.env (docs/06)"
+    skip "хуки сейчас не зарегистрированы (install-hooks.sh требует --settings/--chat-id/--webhook-url). Для standalone-деплоя запустите скрипт вручную с этими аргументами после настройки channel.env (docs/06)"
   fi
 else
   skip "scripts/install-hooks.sh не найден или не исполняемый — хуки НЕ зарегистрированы"
@@ -119,9 +129,13 @@ fi
 
 # ─── 4. Конфиг ───────────────────────────────────────────────────
 say "Конфигурация"
-echo "  Скопируйте examples/channel.env.example → /etc/labops-plugin/<agent>/channel.env"
-echo "  и заполните TELEGRAM_BOT_TOKEN / allowlist / workspace (см. README → Переменные окружения,"
-echo "  пошагово — docs/telegram-setup.md)."
+if [ "$AGENT_FLOW" = "1" ]; then
+  note "channel.env создаст new-agent.sh при создании агента (per-agent, в ~/.claude-lab/shared/state/<agent>/telegram/) — вручную здесь ничего делать не нужно"
+else
+  echo "  Скопируйте examples/channel.env.example → /etc/labops-plugin/<agent>/channel.env"
+  echo "  и заполните TELEGRAM_BOT_TOKEN / allowlist / workspace (см. README → Переменные окружения,"
+  echo "  пошагово — docs/telegram-setup.md)."
+fi
 
 # Best-effort валидация channel.env: если знаем путь — проверяем наличие токена,
 # но НЕ печатаем его значение. Путь можно задать через CHANNEL_ENV=...
@@ -140,6 +154,8 @@ if [ -n "$FOUND_ENV" ]; then
   else
     die "channel.env найден ($FOUND_ENV), но TELEGRAM_BOT_TOKEN не задан — заполните перед запуском."
   fi
+elif [ "$AGENT_FLOW" = "1" ]; then
+  note "channel.env ещё нет — его создаст new-agent.sh при создании агента (ожидаемо в агентском флоу)"
 else
   skip "channel.env не найден/не проверен — создайте его и задайте TELEGRAM_BOT_TOKEN (CHANNEL_ENV=/path для проверки)"
 fi
@@ -191,15 +207,23 @@ fi
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
   printf '\n\033[1;33m⚠ Установка ЗАВЕРШЕНА, но с пропущенными/degraded шагами:\033[0m\n'
   for s in "${SKIPPED[@]}"; do printf '   • %s\n' "$s"; done
-  printf '\033[1;33m  Зелёный финал НЕ означает полностью рабочий сетап — закройте пункты выше.\033[0m\n'
+  if [ "$AGENT_FLOW" = "1" ]; then
+    printf '\033[0;36m  Это агентский флоу — часть конфигурации канала завершит new-agent.sh дальше.\033[0m\n'
+  else
+    printf '\033[1;33m  Зелёный финал НЕ означает полностью рабочий сетап — закройте пункты выше.\033[0m\n'
+  fi
 else
   printf '\n\033[1;32m✅ Установка подтверждена: все проверки и тесты прошли, ничего не пропущено.\033[0m\n'
 fi
 
+if [ "$AGENT_FLOW" = "1" ]; then
+  note "агентский флоу: установщик архитектуры продолжит и создаст агента (new-agent.sh) — размещение плагина и автостарт делаются там, вручную ничего не нужно"
+else
 cat <<'NEXT'
 
-Дальше:
+Дальше (standalone-деплой):
   • docs/02-where-to-place-plugin.md — куда класть плагин (критично)
   • docs/03-installation-linux.md / -macos.md — автостарт (systemd/launchd)
   • README.md → Связанные репозитории — second-brain и agent-architecture
 NEXT
+fi
