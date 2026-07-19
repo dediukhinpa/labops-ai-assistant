@@ -123,6 +123,35 @@ fi
 unset AGENT_BEARER MCP_HOST SECOND_BRAIN_MEMORY_URL SECOND_BRAIN_MEMORY_ROUTER_URL \
       SECOND_BRAIN_AGENT_ROUTER_URL AGENT_SCOPES SUMMARY_LANGUAGE 2>/dev/null || true
 
+# Pre-trust the folders claude will open, so it does NOT block on the interactive
+# "Is this a project you trust?" dialog at startup — which --dangerously-skip-
+# permissions does NOT bypass (folder-trust is a separate first-run gate). A
+# blocked dialog means claude never loads the plugin, so the bun channel server
+# never starts and :6000 stays dead. claude canonicalises the symlinked plugin
+# cwd, so trust BOTH the symlink path and its real target.
+pretrust_folder() {
+  local p="$1" cfg="$HOME/.claude.json"
+  [ -n "$p" ] || return 0
+  [ -f "$cfg" ] || printf '{}' > "$cfg"
+  P="$p" CFG="$cfg" python3 - <<'PY' 2>/dev/null || true
+import json, os
+cfg = os.environ["CFG"]; p = os.environ["P"]
+try:
+    with open(cfg) as f: d = json.load(f)
+except Exception:
+    d = {}
+e = d.setdefault("projects", {}).setdefault(p, {})
+e["hasTrustDialogAccepted"] = True
+e["hasCompletedProjectOnboarding"] = True
+tmp = cfg + ".tmp"
+with open(tmp, "w") as f: json.dump(d, f, indent=2)
+os.replace(tmp, cfg)
+PY
+}
+pretrust_folder "$WORKSPACE"
+pretrust_folder "$PLUGIN_CWD"
+pretrust_folder "$(readlink -f "$PLUGIN_CWD" 2>/dev/null || true)"
+
 # --settings below is REQUIRED, not optional: CWD is the plugin dir so .mcp.json
 # is discovered, but claude canonicalises the symlinked plugin path to its real
 # location (/home/.../labops-tg-plugin/plugin) OUTSIDE the workspace tree. Config
