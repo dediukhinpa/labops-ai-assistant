@@ -143,6 +143,14 @@ except Exception:
 e = d.setdefault("projects", {}).setdefault(p, {})
 e["hasTrustDialogAccepted"] = True
 e["hasCompletedProjectOnboarding"] = True
+# A fresh agent's CLAUDE.md @-imports external files (e.g. @SECONDBRAIN_WRITE_RULES.md).
+# On first run claude blocks on a "CLAUDE.md imports files outside the project —
+# approve?" gate that --dangerously-skip-permissions does NOT bypass; while blocked,
+# claude never spawns the labops-channel MCP server, so the webhook port stays dead
+# (channel banner shows, but no bun child, :6000+ never binds). Pre-approving it here
+# is the same trust decision the operator already made by installing the agent.
+e["hasClaudeMdExternalIncludesApproved"] = True
+e["hasClaudeMdExternalIncludesWarningShown"] = True
 tmp = cfg + ".tmp"
 with open(tmp, "w") as f: json.dump(d, f, indent=2)
 os.replace(tmp, cfg)
@@ -158,6 +166,14 @@ pretrust_folder "$(readlink -f "$PLUGIN_CWD" 2>/dev/null || true)"
 # discovery then walks up from there and never sees $WORKSPACE/settings.json — so
 # NONE of the workspace hooks (heartbeat, SessionStart recall, Stop) ever fire.
 # Loading settings.json explicitly fixes that (and the long-silent memory hooks).
+#
+# Per-agent channel identity MUST be passed explicitly below: tmux new-session
+# builds the session env from the shared tmux SERVER's GLOBAL environment
+# (polluted by whichever agent started first) plus the -e overrides — it does
+# NOT inherit start-agent's process env. Keys absent from the -e list leak from
+# the global env (e.g. developer's TELEGRAM_EXPECTED_BOT_ID / MEMORY_*), so a
+# new agent's channel server boots with the wrong bot_id ("bot_id mismatch ->
+# poller exited") and the wrong memory workspace. Session env overrides global.
 tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   -e AGENT_ID="$AGENT" \
   -e AGENT_WORKSPACE="$WORKSPACE" \
@@ -169,6 +185,13 @@ tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   -e TELEGRAM_WEBHOOK_PORT="$TELEGRAM_WEBHOOK_PORT" \
   -e TELEGRAM_WEBHOOK_TOKEN="$TELEGRAM_WEBHOOK_TOKEN" \
   -e GROQ_API_KEY="$GROQ_API_KEY" \
+  -e TELEGRAM_EXPECTED_BOT_ID="${TELEGRAM_EXPECTED_BOT_ID:-${TELEGRAM_BOT_TOKEN%%:*}}" \
+  -e TELEGRAM_ALLOWED_CHAT_IDS="${TELEGRAM_ALLOWED_CHAT_IDS:-$TELEGRAM_ALLOWED_USER_IDS}" \
+  -e TELEGRAM_WEBHOOK_HOST="${TELEGRAM_WEBHOOK_HOST:-127.0.0.1}" \
+  -e TELEGRAM_MEMORY_ENABLED="${TELEGRAM_MEMORY_ENABLED:-true}" \
+  -e TELEGRAM_MEMORY_WORKSPACE="${TELEGRAM_MEMORY_WORKSPACE:-$WORKSPACE}" \
+  -e TELEGRAM_MEMORY_AGENT_LABEL="${TELEGRAM_MEMORY_AGENT_LABEL:-$AGENT}" \
+  -e TELEGRAM_MEMORY_SOURCE_TAG="${TELEGRAM_MEMORY_SOURCE_TAG:-tg}" \
   -e PATH="$HOME/.local/bin:$BUN_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   "$CLAUDE_BIN" \
     --settings "$WORKSPACE/settings.json" \
