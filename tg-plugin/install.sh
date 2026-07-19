@@ -104,8 +104,15 @@ ok "зависимости установлены"
 # ─── 3. Хуки Claude Code ─────────────────────────────────────────
 say "Регистрация хуков Claude Code"
 if [ -x "$PLUGIN_DIR/scripts/install-hooks.sh" ]; then
-  ( cd "$PLUGIN_DIR" && ./scripts/install-hooks.sh ) || skip "install-hooks.sh завершился с ошибкой — реакции/прогресс не заработают (см. docs/06)"
-  ok "хуки зарегистрированы"
+  # install-hooks.sh требует --settings/--chat-id/--webhook-url, которых на
+  # этапе установки ещё нет (channel.env не заполнен). В АГЕНТСКОМ флоу хуки и
+  # так приходят из settings.json воркспейса (agent-template), поэтому провал
+  # здесь ожидаем и безвреден — НЕ печатаем ложное "зарегистрированы".
+  if ( cd "$PLUGIN_DIR" && ./scripts/install-hooks.sh >/dev/null 2>&1 ); then
+    ok "хуки зарегистрированы"
+  else
+    skip "хуки сейчас не зарегистрированы (install-hooks.sh требует --settings/--chat-id/--webhook-url). В агентском флоу они берутся из settings.json воркспейса; для standalone-деплоя запустите скрипт вручную с этими аргументами после настройки channel.env (docs/06)"
+  fi
 else
   skip "scripts/install-hooks.sh не найден или не исполняемый — хуки НЕ зарегистрированы"
 fi
@@ -151,13 +158,28 @@ if [ "$RUN_TESTS" -eq 1 ]; then
   fi
   if command -v python3 >/dev/null 2>&1; then
     VENV="$REPO_DIR/.venv"
-    [ -d "$VENV" ] || python3 -m venv "$VENV"
-    "$VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
-    "$VENV/bin/pip" install -q pytest >/dev/null 2>&1
-    [ -f "$REPO_DIR/webhook-listener/requirements.txt" ] && \
-      "$VENV/bin/pip" install -q -r "$REPO_DIR/webhook-listener/requirements.txt" >/dev/null 2>&1 || true
-    ( cd "$REPO_DIR" && "$VENV/bin/python" -m pytest tests/ -q ) || die "pytest провалился — установка НЕ подтверждена."
-    ok "pytest зелёный"
+    # python3 -m venv нуждается в пакете python3-venv (на Debian/Ubuntu его нет
+    # по умолчанию → "ensurepip is not available"). В штатном флоу его ставит
+    # agent-architecture/install.sh под root заранее; здесь — запасная попытка
+    # (сработает только если у пользователя есть sudo на apt).
+    if [ ! -d "$VENV" ] && ! python3 -m venv "$VENV" 2>/dev/null; then
+      PYVER="$(python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+      [ -n "$PYVER" ] && { install_via_pkgmgr "python${PYVER}-venv" || true; }
+      python3 -c 'import ensurepip, venv' >/dev/null 2>&1 || install_via_pkgmgr "python3-venv" || true
+      python3 -m venv "$VENV" 2>/dev/null || true
+    fi
+    if [ -d "$VENV" ] && [ -x "$VENV/bin/python" ]; then
+      "$VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
+      "$VENV/bin/pip" install -q pytest >/dev/null 2>&1
+      [ -f "$REPO_DIR/webhook-listener/requirements.txt" ] && \
+        "$VENV/bin/pip" install -q -r "$REPO_DIR/webhook-listener/requirements.txt" >/dev/null 2>&1 || true
+      ( cd "$REPO_DIR" && "$VENV/bin/python" -m pytest tests/ -q ) || die "pytest провалился — установка НЕ подтверждена."
+      ok "pytest зелёный"
+    else
+      # venv создать не удалось (нет python3-venv и нет прав доставить его).
+      # Это ОПЦИОНАЛЬНЫЙ Python-листенер, не роняем всю установку канала.
+      skip "python venv не создан (нет пакета python3-venv) — Python-часть (webhook/supervisor) пропущена; поставьте: sudo apt install python3-venv"
+    fi
   else
     skip "python3 не найден и не удалось установить — python-тесты (supervisor/webhook/доки) НЕ прогнаны"
   fi

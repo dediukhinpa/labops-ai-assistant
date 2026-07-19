@@ -96,6 +96,26 @@ fi
 command -v tmux >/dev/null 2>&1 || die "нужен tmux (рантайм агента живёт в tmux-сессии), автоустановка не удалась"
 ok "tmux $(tmux -V 2>/dev/null | awk '{print $2}')"
 
+# python3 + venv — нужны Python-листенеру tg-plugin (webhook/supervisor).
+# ВАЖНО: venv на Debian/Ubuntu — ОТДЕЛЬНЫЙ пакет (python3-venv). Ставим его
+# именно здесь, пока есть root: после смены пользователя sudo/apt уже
+# недоступны, и tg-plugin/install.sh упирается в "ensurepip is not available".
+command -v python3 >/dev/null 2>&1 || install_via_pkgmgr python3
+if command -v python3 >/dev/null 2>&1; then
+  if ! python3 -c 'import ensurepip, venv' >/dev/null 2>&1; then
+    PYVER="$(python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    [ -n "$PYVER" ] && { install_via_pkgmgr "python${PYVER}-venv" || true; }
+    python3 -c 'import ensurepip, venv' >/dev/null 2>&1 || install_via_pkgmgr "python3-venv" || true
+  fi
+  if python3 -c 'import ensurepip, venv' >/dev/null 2>&1; then
+    ok "python3 + venv"
+  else
+    warn "python3 есть, но venv недоступен — Python-часть tg-plugin (webhook-listener) будет пропущена"
+  fi
+else
+  warn "python3 не установлен — Python-часть tg-plugin будет пропущена"
+fi
+
 # ── 2. Отдельный пользователь для агентов ────────────────────────
 # Агенты работают с claude --dangerously-skip-permissions (без подтверждений
 # на каждое действие) — держать их под root опасно: любая ошибка агента
