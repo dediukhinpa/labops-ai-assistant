@@ -164,23 +164,44 @@ SUDOERS
       chown "$AGENT_OS_USER":"$AGENT_OS_USER" "$BASHRC"
       ok "PATH для ~/.local/bin дописан в $BASHRC"
     fi
-    DEST_REPO="$NEW_HOME/$(basename "$REPO_DIR")"
-    if [ "$REPO_DIR" != "$DEST_REPO" ]; then
+    # Что именно переносить в дом нового пользователя. В МОНОРЕПО-режиме
+    # (запуск через корневой install.sh) REPO_DIR = <monorepo>/agent-architecture,
+    # а tg-plugin лежит рядом (<monorepo>/tg-plugin) и передан через TG_PLUGIN_DIR.
+    # Копировать ТОЛЬКО agent-architecture недостаточно: TG_PLUGIN_DIR остался бы
+    # указывать на исходное дерево (часто под /root, mode 700 — недоступно новому
+    # пользователю), и tg-plugin "исчезал" → установщик пытался клонировать его
+    # как приватный репо и падал с Permission denied. Поэтому переносим ВЕСЬ
+    # корень монорепо и переуказываем TG_PLUGIN_DIR на копию.
+    MONO_ROOT="$(cd "$REPO_DIR/.." && pwd)"
+    if [ -n "${TG_PLUGIN_DIR:-}" ] && [ "$TG_PLUGIN_DIR" = "$MONO_ROOT/tg-plugin" ]; then
+      SRC_ROOT="$MONO_ROOT"          # монорепо: переносим целиком
+    else
+      SRC_ROOT="$REPO_DIR"           # standalone: только agent-architecture
+    fi
+    DEST_ROOT="$NEW_HOME/$(basename "$SRC_ROOT")"
+    # Путь к agent-architecture внутри перенесённого дерева (в монорепо это
+    # DEST_ROOT/agent-architecture, в standalone — сам DEST_ROOT).
+    REL="${REPO_DIR#"$SRC_ROOT"}"; REL="${REL#/}"
+    DEST_REPO="$DEST_ROOT${REL:+/$REL}"
+    if [ "$SRC_ROOT" != "$DEST_ROOT" ]; then
       # Пересинхронизируем код в копию под отдельным пользователем при
       # КАЖДОМ запуске — копируем во временную папку рядом и атомарно
-      # подменяем ею DEST_REPO. Раньше копия делалась только один раз
+      # подменяем ею DEST_ROOT. Раньше копия делалась только один раз
       # ("[ -d "$DEST_REPO/.git" ] || cp -a ..."): Ctrl+C посреди cp -a
-      # оставлял битый .git прямо на месте DEST_REPO, и повторные запуски
-      # install.sh тихо исполняли эту повреждённую/устаревшую копию,
-      # полностью игнорируя обновления в $REPO_DIR (git pull там ни на
-      # что не влиял).
-      TMP_DEST="$(mktemp -d "$NEW_HOME/.$(basename "$REPO_DIR").sync.XXXXXX")"
+      # оставлял битый .git прямо на месте, и повторные запуски install.sh
+      # тихо исполняли эту повреждённую/устаревшую копию, полностью
+      # игнорируя обновления в исходном дереве (git pull там ни на что не влиял).
+      TMP_DEST="$(mktemp -d "$NEW_HOME/.$(basename "$SRC_ROOT").sync.XXXXXX")"
       trap 'rm -rf "$TMP_DEST"' EXIT
-      cp -a "$REPO_DIR/." "$TMP_DEST"
-      rm -rf "$DEST_REPO"
-      mv "$TMP_DEST" "$DEST_REPO"
+      cp -a "$SRC_ROOT/." "$TMP_DEST"
+      rm -rf "$DEST_ROOT"
+      mv "$TMP_DEST" "$DEST_ROOT"
       trap - EXIT
-      chown -R "$AGENT_OS_USER":"$AGENT_OS_USER" "$DEST_REPO"
+      chown -R "$AGENT_OS_USER":"$AGENT_OS_USER" "$DEST_ROOT"
+    fi
+    # Переуказываем tg-plugin на перенесённую копию (в монорепо-режиме).
+    if [ "$SRC_ROOT" = "$MONO_ROOT" ] && [ -n "${TG_PLUGIN_DIR:-}" ]; then
+      export TG_PLUGIN_DIR="$DEST_ROOT/tg-plugin"
     fi
     ok "продолжаю установку от имени $AGENT_OS_USER"
     # -E сохраняет окружение (REUSE_EXISTING=1, SKIP_TG_PLUGIN=0 и т.п. —
