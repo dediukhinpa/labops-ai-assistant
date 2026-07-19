@@ -53,7 +53,9 @@ fi
 #       ONLY when the input box is non-empty, so a clean idle prompt is never
 #       disturbed.
 ACTIVE_RE='esc to interrupt'
-PROMPT_RE='Listening for channel|❯|bypass permissions'
+# ❯ / bypass permissions — реальные маркеры отрисованного промпта. "Listening for
+# channel" убран: строку текущие сборки claude не печатают (см. start-agent.sh).
+PROMPT_RE='❯|bypass permissions'
 PREV_TAIL=""
 FROZEN_COUNT=0
 NUDGE_STAGE=0
