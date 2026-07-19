@@ -17,6 +17,25 @@ AGENT_WS="$CLAUDE_LAB/$AGENT/.claude"
 REFLECT_NUDGE="$AGENT_WS/scripts/reflect-nudge.sh"
 IDLE_CYCLES=$(( ${MEMORY_IDLE_CONSOLIDATE_MIN:-10} * 60 / 30 ))   # 30s per loop cycle
 
+# Heartbeat proof-of-life: hooks (settings.json) tick $AGENT_WS/state/heartbeat at
+# every turn/tool boundary (SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/
+# Notification/Stop). A FRESH heartbeat means the agent is demonstrably alive — used
+# below to SUPPRESS false-positive restarts (a static pane that is really a long
+# tool run). Hooks fire at boundaries, NOT continuously, so a STALE heartbeat is
+# never a restart trigger on its own — it only lifts the suppression and lets the
+# pane-based classifier decide. Tune the window via WATCHDOG_HEARTBEAT_GRACE_SEC.
+HEARTBEAT_FILE="$AGENT_WS/state/heartbeat"
+HEARTBEAT_GRACE="${WATCHDOG_HEARTBEAT_GRACE_SEC:-45}"
+heartbeat_age() {   # seconds since last heartbeat, or 999999 if absent/unreadable
+  local hb now
+  [ -f "$HEARTBEAT_FILE" ] || { echo 999999; return; }
+  hb=$(cat "$HEARTBEAT_FILE" 2>/dev/null || echo '')
+  case "$hb" in ''|*[!0-9]*) echo 999999; return;; esac
+  now=$(date +%s)
+  echo $(( now - hb ))
+}
+heartbeat_fresh() { [ "$(heartbeat_age)" -le "$HEARTBEAT_GRACE" ]; }
+
 # Best-effort Telegram alerts to the Operator on failures/restarts. Opt-in via
 # WATCHDOG_TG_ALERTS (default 1); never fatal; throttled. See lib/notify.sh.
 # shellcheck source=lib/notify.sh
@@ -104,19 +123,33 @@ while true; do
 
   # (A) Active-turn marker present but pane frozen → hung turn. Confirm over ~60s.
   if printf '%s' "$TAIL" | grep -qa "$ACTIVE_RE"; then
-    FROZEN_COUNT=$((FROZEN_COUNT + 1))
-    if [ "$FROZEN_COUNT" -ge 2 ]; then
-      restart_session "frozen turn — esc-to-interrupt static ~60s"
+    # Fresh heartbeat = the turn is actively doing tool work, just not repainting
+    # the pane this cycle → alive, not frozen. Escalate only when the pane is
+    # static AND the heartbeat has gone stale (no hook fired within the grace).
+    if heartbeat_fresh; then
+      FROZEN_COUNT=0
+      log "active turn, pane static but heartbeat fresh ($(heartbeat_age)s) — alive"
       continue
     fi
-    log "possible freeze (1/2) — confirming next cycle"
+    FROZEN_COUNT=$((FROZEN_COUNT + 1))
+    if [ "$FROZEN_COUNT" -ge 2 ]; then
+      restart_session "frozen turn — esc-to-interrupt static ~60s, heartbeat stale"
+      continue
+    fi
+    log "possible freeze (1/2) — pane static, heartbeat stale — confirming next cycle"
     continue
   fi
   FROZEN_COUNT=0
 
-  # TUI lost its prompt entirely → restart
+  # TUI lost its prompt entirely → restart, UNLESS a recent hook proves the
+  # session is alive (mid-render / transient repaint). A truly dead TUI stops
+  # firing hooks, so a stale heartbeat lets the restart proceed.
   if ! printf '%s' "$TAIL" | grep -qaE "$PROMPT_RE"; then
-    restart_session "no prompt rendered"
+    if heartbeat_fresh; then
+      log "no prompt rendered but heartbeat fresh ($(heartbeat_age)s) — deferring restart"
+      continue
+    fi
+    restart_session "no prompt rendered — heartbeat stale"
     continue
   fi
 

@@ -91,6 +91,14 @@ BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
 # here so the tmux server itself has it resolvable (belt-and-suspenders with -e).
 export PATH="$BUN_BIN_DIR:$PATH"
 
+# Heartbeat-readiness (см. цикл ниже): SessionStart-хук пишет эпоху в
+# $WORKSPACE/state/heartbeat. Значение >= LAUNCH_TS = сессия реально
+# инициализировалась. HAS_CHANNEL различает агентов с каналом (у них есть более
+# сильный сигнал — слушающий webhook-порт) и без него.
+HEARTBEAT="$WORKSPACE/state/heartbeat"
+HAS_CHANNEL=0; [ "$PLUGIN_CWD" != "$WORKSPACE" ] && HAS_CHANNEL=1
+LAUNCH_TS=$(date +%s)
+
 tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_STATE_DIR="$TELEGRAM_STATE_DIR" \
@@ -120,10 +128,28 @@ channel_ready() {
   fi
 }
 
+# Готовность сессии = SessionStart-хук записал свежий heartbeat (эпоха >= момента
+# запуска). Не зависит от TUI-текста; для агентов без канала это единственный
+# надёжный сигнал (раньше грепали исчезнувшую строку "Listening for channel").
+session_ready() {
+  local hb
+  [ -f "$HEARTBEAT" ] || return 1
+  hb=$(cat "$HEARTBEAT" 2>/dev/null || echo 0)
+  case "$hb" in ''|*[!0-9]*) return 1;; esac
+  [ "$hb" -ge "$LAUNCH_TS" ]
+}
+
 DEADLINE=$(( $(date +%s) + 30 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  if channel_ready; then
-    echo "[start-agent] $AGENT listening (webhook :$TELEGRAM_WEBHOOK_PORT)"
+  # Агент с каналом готов, когда его webhook-порт слушается (строгое доказательство,
+  # что claude поднял MCP-сервер); агент без канала — когда SessionStart-хук
+  # отметил heartbeat. И то, и другое — сигналы независимые от TUI-текста.
+  if [ "$HAS_CHANNEL" -eq 1 ] && channel_ready; then
+    echo "[start-agent] $AGENT ready (session up, webhook :$TELEGRAM_WEBHOOK_PORT)"
+    exit 0
+  fi
+  if [ "$HAS_CHANNEL" -eq 0 ] && session_ready; then
+    echo "[start-agent] $AGENT ready (session up)"
     exit 0
   fi
   PANE=$(tmux capture-pane -pt "$SESSION" -S -30 2>/dev/null || true)
