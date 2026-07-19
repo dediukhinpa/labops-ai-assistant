@@ -67,10 +67,19 @@ fi
 #   (A) frozen turn — "esc to interrupt" present but pane byte-identical across
 #       cycles (timer stopped) → turn wedged. Restart after ~60s.
 #   (B) stuck input — an injected inbound sits in ❯ unsubmitted, no active turn.
-#       A single Enter does NOT commit a bracketed-paste inbound (verified
-#       2026-06-13 on silvio); escalate Enter → Escape+Enter → restart. Acted on
-#       ONLY when the input box is non-empty, so a clean idle prompt is never
-#       disturbed.
+#       Root cause is upstream: Claude Code's research-preview "channels" feature
+#       is DOCUMENTED to auto-process a `notifications/claude/channel` event
+#       (wrapped in a <channel> tag) but on this build drops it into the input
+#       box as an uncommitted bracketed-paste. Not fixable from the plugin (the
+#       capability is declared correctly). A single Enter does NOT commit the
+#       paste (verified 2026-06-13 on silvio); we try Enter → Escape+Enter.
+#       We DO NOT restart on stuck input: the agent is ALIVE (prompt rendered;
+#       genuinely-dead sessions are caught by the frozen-turn / no-prompt
+#       branches via heartbeat). Restarting would DESTROY the agent's in-progress
+#       work and still not deliver the stuck message — strictly worse than
+#       leaving it. So we nudge, then escalate to the OPERATOR and keep the
+#       session alive. Acted on ONLY when the input box is non-empty, so a clean
+#       idle prompt is never disturbed.
 ACTIVE_RE='esc to interrupt'
 # ❯ / bypass permissions — реальные маркеры отрисованного промпта. "Listening for
 # channel" убран: строку текущие сборки claude не печатают (см. start-agent.sh).
@@ -183,7 +192,9 @@ while true; do
     continue
   fi
 
-  # Non-empty input that won't submit → escalate commit attempts (~30s apart).
+  # Non-empty input that won't submit → try to commit it (~30s apart), then hand
+  # off to the operator. NEVER restart (see mode (B) note above): the session is
+  # alive and a restart would lose the agent's work without delivering the message.
   case "$NUDGE_STAGE" in
     0) log "stuck input detected — Enter"
        notify_op "$AGENT" "✉️ в поле ввода застрял неотправленный промпт — пробую дослать (Enter)"
@@ -194,7 +205,12 @@ while true; do
        sleep 1
        tmux send-keys -t "$SESSION" Enter 2>/dev/null || true
        NUDGE_STAGE=2 ;;
-    *) restart_session "stuck input unrecoverable"
-       continue ;;
+    2) # Auto-commit failed. DO NOT restart — keep the session and its work alive;
+       # escalate to the operator to submit manually. (Upstream: Claude Code
+       # research-preview channels bug — see mode (B) note.)
+       log "stuck input not auto-committing — session left ALIVE, escalating to operator (no restart)"
+       notify_op "$AGENT" "⚠️ застрявшее сообщение не отправляется само (баг research-preview channels Claude Code). Сессия ЖИВА, работу агента не трогаю. Отправьте вручную: tmux attach -t $SESSION → Enter (detach: Ctrl-B D)."
+       NUDGE_STAGE=3 ;;
+    *) : ;;  # оператор уведомлён; ждём его — НЕ рестартуем (работа важнее застрявшего сообщения)
   esac
 done
