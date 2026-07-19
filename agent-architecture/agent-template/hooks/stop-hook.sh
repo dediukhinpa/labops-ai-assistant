@@ -82,5 +82,27 @@ if [ -f "$NUDGE" ] && [ "$CHECKPOINT_N" -gt 0 ] && [ $(( count % CHECKPOINT_N ))
     ( AGENT_WORKSPACE="$WS" AGENT_ID="$AGENT_ID" bash "$NUDGE" --reason checkpoint >/dev/null 2>&1 || true ) &
 fi
 
+# Housekeeping: decay-sweep + archive-roll, at most once per day, in the
+# background. Previously these existed only as an OPTIONAL cron the installer
+# printed as text — if the operator never set it up, nothing bounded the growth
+# of the memory layers. Wiring them here makes rotation a default, not advice.
+HK_INTERVAL="${MEMORY_HOUSEKEEPING_INTERVAL_SEC:-86400}"
+HK_MARKER="$WS/state/last-housekeeping"
+now=$(date +%s)
+last=$(cat "$HK_MARKER" 2>/dev/null || echo 0)
+case "$last" in ''|*[!0-9]*) last=0;; esac
+if [ "$HK_INTERVAL" -gt 0 ] && [ $(( now - last )) -ge "$HK_INTERVAL" ]; then
+    mkdir -p "$WS/state"
+    echo "$now" > "$HK_MARKER"
+    log "housekeeping: running decay-sweep + archive-roll (last run $((now - last))s ago)"
+    (
+        for hk in decay-sweep.sh archive-roll.sh; do
+            [ -f "$SCRIPT_DIR/../scripts/$hk" ] || continue
+            AGENT_WORKSPACE="$WS" AGENT_ID="$AGENT_ID" \
+                bash "$SCRIPT_DIR/../scripts/$hk" >>"$HOOK_LOG" 2>&1 || true
+        done
+    ) &
+fi
+
 log "appended episodic entry and verbose line"
 exit 0

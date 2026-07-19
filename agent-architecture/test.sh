@@ -100,6 +100,13 @@ else
   bad "heartbeat-hook.sh: юнит-тест провален (agent-template/hooks/heartbeat-hook.test.sh)"
 fi
 
+echo "── 8. Страховочный flush в общий мозг (brain-flush.sh) ──"
+if bash agent-template/scripts/brain-flush.test.sh >/dev/null 2>&1; then
+  ok "brain-flush.sh: guard/dedup/fail-open — юнит-тест зелёный"
+else
+  bad "brain-flush.sh: юнит-тест провален (agent-template/scripts/brain-flush.test.sh)"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

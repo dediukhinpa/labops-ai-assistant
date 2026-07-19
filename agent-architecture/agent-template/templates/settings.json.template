@@ -119,6 +119,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/scripts/brain-flush.sh --reason session-end",
+            "timeout": 8
+          }
+        ]
+      }
     ]
   }
 }
