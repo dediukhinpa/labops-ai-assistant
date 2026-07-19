@@ -27,6 +27,11 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/heartbeat-hook.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/session-start-hook.sh",
             "timeout": 15
           }
@@ -39,7 +44,48 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/heartbeat-hook.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/user-prompt-submit-hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/heartbeat-hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/heartbeat-hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/heartbeat-hook.sh",
             "timeout": 5
           }
         ]
@@ -49,6 +95,11 @@
       {
         "matcher": "*",
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/heartbeat-hook.sh",
+            "timeout": 5
+          },
           {
             "type": "command",
             "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/stop-hook.sh",
@@ -65,6 +116,18 @@
             "type": "command",
             "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/precompact-hook.sh",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/scripts/brain-flush.sh --reason session-end",
+            "timeout": 8
           }
         ]
       }

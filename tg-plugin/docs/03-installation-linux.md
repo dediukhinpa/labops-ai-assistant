@@ -259,7 +259,8 @@ sudo systemctl status channel-myagent
 
 # 2. tmux показывает Claude Code на главном экране (не на welcome-промтах)
 sudo -u agentctl tmux capture-pane -t channel-myagent -p -S -50 | tail -30
-# должны увидеть "Listening for channel messages from: server:labops-channel"
+# готовность проверяем по факту, а не по строке TUI (текущие сборки claude её не печатают):
+# webhook-порт канала слушается → ss -ltn | grep :600  (порт агента = 6000 + индекс в ростере)
 
 # 3. Telegram pending updates
 TOKEN=$(grep TELEGRAM_BOT_TOKEN /etc/labops-plugin/myagent/channel.env | cut -d= -f2-)

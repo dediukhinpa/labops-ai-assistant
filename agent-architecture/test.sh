@@ -93,6 +93,31 @@ else
   bad "second_brain-monitor.sh: юнит-тест провален (orchestration/second_brain-monitor.test.sh)"
 fi
 
+echo "── 7. Heartbeat-хук живости (heartbeat-hook.sh) ──"
+if bash agent-template/hooks/heartbeat-hook.test.sh >/dev/null 2>&1; then
+  ok "heartbeat-hook.sh: атомарная запись / sdk-guard / advance — юнит-тест зелёный"
+else
+  bad "heartbeat-hook.sh: юнит-тест провален (agent-template/hooks/heartbeat-hook.test.sh)"
+fi
+
+echo "── 7b. start-agent: проброс agent.env с placeholder-guard ──"
+# Регрессия сессии 2026-07-19: agent.env существовал, но start-agent.sh не
+# пробрасывал его в tmux-сессию → хуки не видели MCP_HOST/AGENT_BEARER даже при
+# развёрнутом бэкенде. Проверяем, что source + guard от CHANGE_ME на месте.
+if grep -q 'agent\.env' orchestration/start-agent.sh \
+   && grep -q 'CHANGE_ME' orchestration/start-agent.sh; then
+  ok "start-agent.sh source'ит agent.env и содержит placeholder-guard (CHANGE_ME)"
+else
+  bad "start-agent.sh не пробрасывает agent.env / нет guard'а CHANGE_ME — recall не заработает даже с развёрнутым second_brain"
+fi
+
+echo "── 8. Страховочный flush в общий мозг (brain-flush.sh) ──"
+if bash agent-template/scripts/brain-flush.test.sh >/dev/null 2>&1; then
+  ok "brain-flush.sh: guard/dedup/fail-open — юнит-тест зелёный"
+else
+  bad "brain-flush.sh: юнит-тест провален (agent-template/scripts/brain-flush.test.sh)"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

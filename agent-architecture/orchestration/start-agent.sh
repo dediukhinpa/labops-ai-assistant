@@ -91,7 +91,48 @@ BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
 # here so the tmux server itself has it resolvable (belt-and-suspenders with -e).
 export PATH="$BUN_BIN_DIR:$PATH"
 
+# Heartbeat-readiness (см. цикл ниже): SessionStart-хук пишет эпоху в
+# $WORKSPACE/state/heartbeat. Значение >= LAUNCH_TS = сессия реально
+# инициализировалась. HAS_CHANNEL различает агентов с каналом (у них есть более
+# сильный сигнал — слушающий webhook-порт) и без него.
+HEARTBEAT="$WORKSPACE/state/heartbeat"
+HAS_CHANNEL=0; [ "$PLUGIN_CWD" != "$WORKSPACE" ] && HAS_CHANNEL=1
+LAUNCH_TS=$(date +%s)
+
+# Second-brain runtime env (memory recall + agent MCP tools). Lives in agent.env
+# (written by new-agent.sh), but start-agent never propagated it into the session
+# — so the SessionStart recall hook saw MCP_HOST/AGENT_BEARER unset and silently
+# skipped recall (it has never worked). Propagate via -e below. Placeholder guard:
+# a CHANGE_ME/empty bearer means second_brain isn't wired yet, so recall stays OFF
+# (else every session start eats a ~15s dead curl); it activates automatically once
+# a real token is written to agent.env. We propagate ONLY via -e and unset locally
+# afterwards, so a placeholder can never leak into the session through the tmux
+# server's global env (the way PATH does — see the export above).
+AGENT_ENV_FILE="$WORKSPACE/agent.env"
+if [ -f "$AGENT_ENV_FILE" ]; then set -a; . "$AGENT_ENV_FILE"; set +a; fi
+SB_ENV=()
+if [ -n "${AGENT_BEARER:-}" ] && [ "${AGENT_BEARER:-}" != "CHANGE_ME" ]; then
+  SB_ENV=( -e "MCP_HOST=${MCP_HOST:-}" -e "AGENT_BEARER=${AGENT_BEARER}" \
+           -e "SECOND_BRAIN_MEMORY_URL=${SECOND_BRAIN_MEMORY_URL:-}" \
+           -e "SECOND_BRAIN_MEMORY_ROUTER_URL=${SECOND_BRAIN_MEMORY_ROUTER_URL:-}" \
+           -e "SECOND_BRAIN_AGENT_ROUTER_URL=${SECOND_BRAIN_AGENT_ROUTER_URL:-}" \
+           -e "AGENT_SCOPES=${AGENT_SCOPES:-}" -e "SUMMARY_LANGUAGE=${SUMMARY_LANGUAGE:-}" )
+else
+  echo "[start-agent] $AGENT: second_brain recall off (AGENT_BEARER placeholder/unset — бэкенд не подключён)" >&2
+fi
+unset AGENT_BEARER MCP_HOST SECOND_BRAIN_MEMORY_URL SECOND_BRAIN_MEMORY_ROUTER_URL \
+      SECOND_BRAIN_AGENT_ROUTER_URL AGENT_SCOPES SUMMARY_LANGUAGE 2>/dev/null || true
+
+# --settings below is REQUIRED, not optional: CWD is the plugin dir so .mcp.json
+# is discovered, but claude canonicalises the symlinked plugin path to its real
+# location (/home/.../labops-tg-plugin/plugin) OUTSIDE the workspace tree. Config
+# discovery then walks up from there and never sees $WORKSPACE/settings.json — so
+# NONE of the workspace hooks (heartbeat, SessionStart recall, Stop) ever fire.
+# Loading settings.json explicitly fixes that (and the long-silent memory hooks).
 tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
+  -e AGENT_ID="$AGENT" \
+  -e AGENT_WORKSPACE="$WORKSPACE" \
+  ${SB_ENV[@]+"${SB_ENV[@]}"} \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_STATE_DIR="$TELEGRAM_STATE_DIR" \
   -e TELEGRAM_ALLOWED_USER_IDS="$TELEGRAM_ALLOWED_USER_IDS" \
@@ -101,16 +142,51 @@ tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   -e GROQ_API_KEY="$GROQ_API_KEY" \
   -e PATH="$HOME/.local/bin:$BUN_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   "$CLAUDE_BIN" \
+    --settings "$WORKSPACE/settings.json" \
     --dangerously-skip-permissions \
     --dangerously-load-development-channels server:labops-channel
 
+# Готовность канала = его webhook-сервер (bun ./src/server.ts, спавнит claude)
+# забиндил TELEGRAM_WEBHOOK_PORT на localhost. Это авторитетный сигнал, не завися-
+# щий от версии claude и формулировок в TUI. Раньше грепали строку "Listening for
+# channel" из pane — в текущих версиях claude её нет, поэтому проверка всегда
+# истекала по таймауту и сыпала ложный WARNING (канал при этом реально поднимался,
+# порт слушался). Предшествующий pkill/kill-session освободил порт, так что
+# слушающий сокет = именно новый сервер этой сессии.
+channel_ready() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | grep -qE "127\.0\.0\.1:${TELEGRAM_WEBHOOK_PORT}\b"
+  else
+    # fallback без ss: успешный TCP-connect к порту (fd закроется с выходом subshell)
+    (exec 3<>"/dev/tcp/127.0.0.1/${TELEGRAM_WEBHOOK_PORT}") 2>/dev/null
+  fi
+}
+
+# Готовность сессии = SessionStart-хук записал свежий heartbeat (эпоха >= момента
+# запуска). Не зависит от TUI-текста; для агентов без канала это единственный
+# надёжный сигнал (раньше грепали исчезнувшую строку "Listening for channel").
+session_ready() {
+  local hb
+  [ -f "$HEARTBEAT" ] || return 1
+  hb=$(cat "$HEARTBEAT" 2>/dev/null || echo 0)
+  case "$hb" in ''|*[!0-9]*) return 1;; esac
+  [ "$hb" -ge "$LAUNCH_TS" ]
+}
+
 DEADLINE=$(( $(date +%s) + 30 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  PANE=$(tmux capture-pane -pt "$SESSION" -S -30 2>/dev/null || true)
-  if echo "$PANE" | grep -q "Listening for channel"; then
-    echo "[start-agent] $AGENT listening (webhook :$TELEGRAM_WEBHOOK_PORT)"
+  # Агент с каналом готов, когда его webhook-порт слушается (строгое доказательство,
+  # что claude поднял MCP-сервер); агент без канала — когда SessionStart-хук
+  # отметил heartbeat. И то, и другое — сигналы независимые от TUI-текста.
+  if [ "$HAS_CHANNEL" -eq 1 ] && channel_ready; then
+    echo "[start-agent] $AGENT ready (session up, webhook :$TELEGRAM_WEBHOOK_PORT)"
     exit 0
   fi
+  if [ "$HAS_CHANNEL" -eq 0 ] && session_ready; then
+    echo "[start-agent] $AGENT ready (session up)"
+    exit 0
+  fi
+  PANE=$(tmux capture-pane -pt "$SESSION" -S -30 2>/dev/null || true)
   # Стоит на экране логина — ~/.claude/.credentials.json нет/просрочен. Токен
   # из окружения тут не поможет (TUI его не проверяет, см. install.sh), и
   # 30с-таймаут ниже дал бы неинформативный WARNING — watchdog.sh тихо крутил
@@ -128,5 +204,5 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   sleep 1
 done
 
-echo "[start-agent] WARNING: $AGENT did not reach Listening in 30s" >&2
+echo "[start-agent] WARNING: $AGENT — webhook :$TELEGRAM_WEBHOOK_PORT не слушается за 30s (канал не поднялся)" >&2
 exit 0

@@ -38,6 +38,14 @@ SNAP="$SNAP_DIR/recent-${TS}.md"
 cp "$ACTIVE" "$SNAP" || { log "snapshot copy failed"; exit 0; }
 log "snapshot saved: $SNAP ($(wc -c <"$SNAP") bytes)"
 
+# Safety-net flush to the shared brain BEFORE compaction can lose context —
+# the write rules alone ("write immediately") had no mechanical guarantee.
+# Fail-open, short timeout, no-op while AGENT_BEARER is the placeholder.
+FLUSH="$SCRIPT_DIR/../scripts/brain-flush.sh"
+if [ -f "$FLUSH" ]; then
+    AGENT_WORKSPACE="$WS" AGENT_ID="$AGENT_ID" bash "$FLUSH" --reason precompact || true
+fi
+
 # Rotate: keep newest N
 COUNT=$(ls -1 "$SNAP_DIR"/recent-*.md 2>/dev/null | wc -l | tr -d ' ')
 if [ "$COUNT" -gt "$KEEP_SNAPSHOTS" ]; then

@@ -255,7 +255,7 @@ fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_DIR}/CLAUDE
 # ============================================================
 
 log "Copying memory-management scripts..."
-for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep.sh archive-roll.sh; do
+for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep.sh archive-roll.sh brain-flush.sh; do
     if [ -f "${SCRIPTS_DIR}/${script}" ]; then
         if [ ! -f "${WORKSPACE}/scripts/${script}" ]; then
             cp "${SCRIPTS_DIR}/${script}" "${WORKSPACE}/scripts/${script}"
@@ -270,7 +270,7 @@ for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep
 done
 
 log "Copying hooks..."
-for hook in session-start-hook.sh stop-hook.sh precompact-hook.sh user-prompt-submit-hook.sh; do
+for hook in heartbeat-hook.sh session-start-hook.sh stop-hook.sh precompact-hook.sh user-prompt-submit-hook.sh; do
     if [ -f "${HOOKS_DIR}/${hook}" ]; then
         if [ ! -f "${WORKSPACE}/hooks/${hook}" ]; then
             cp "${HOOKS_DIR}/${hook}" "${WORKSPACE}/hooks/${hook}"

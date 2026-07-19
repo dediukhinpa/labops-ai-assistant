@@ -84,7 +84,7 @@ Claude Code при первом запуске показывает **2 инте
 2. Увидите welcome-промт с подсвеченной опцией `1`. Нажмите `Enter`.
 3. Если есть второй промт — снова `Enter`.
 4. Detach: `Ctrl-B`, затем `D`.
-5. Проверьте что появилась строка `Listening for channel messages from: server:labops-channel`.
+5. Проверьте готовность по факту: внутренний webhook-порт канала слушается (`ss -ltn | grep :600`), в `/mcp` сервер `labops-channel` connected (строку `Listening for channel` текущие сборки claude не печатают).
 6. Напишите боту повторно — должен ответить.
 
 ### Как не повторить
@@ -783,3 +783,10 @@ sudo systemctl restart channel-<agent>
 6. Открыть issue с описанием: версия Claude Code, версия Bun, `systemctl status` output, tmux capture последних 100 строк, `getWebhookInfo` response.
 
 GitHub Issues: https://github.com/dediukhinpa/labops-ai-assistant/issues
+
+## Канал молчит после деплоя: четыре ловушки старта (найдены 2026-07)
+
+1. **`bun` не в PATH у claude.** tmux `-e PATH` не доходит до команды при старте свежего tmux-сервера — MCP-лог покажет `Executable not found in $PATH: "bun"`. Фикс уже в `start-agent.sh` (export PATH до tmux) + симлинк `~/.local/bin/bun`.
+2. **`.gitignore` съедает исходники.** Правило `state/` рекурсивно матчит и `plugin/src/state/` — файл `store.ts` пропадает из репозитория молча. В `.gitignore` обязательны негативные правила `!plugin/src/state/`, `!plugin/src/state/**` (уже добавлены).
+3. **Нет `node_modules`.** После чистого клона перед первым запуском обязателен `bun install` в `plugin/`.
+4. **Хуки не грузятся.** Claude Code канонизирует симлинк-cwd, из-за чего воркспейсные `settings.json` не находятся — сессию нужно запускать с явным `--settings <workspace>/settings.json` (уже в `start-agent.sh`).
