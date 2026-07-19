@@ -104,13 +104,29 @@ tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
     --dangerously-skip-permissions \
     --dangerously-load-development-channels server:labops-channel
 
+# Готовность канала = его webhook-сервер (bun ./src/server.ts, спавнит claude)
+# забиндил TELEGRAM_WEBHOOK_PORT на localhost. Это авторитетный сигнал, не завися-
+# щий от версии claude и формулировок в TUI. Раньше грепали строку "Listening for
+# channel" из pane — в текущих версиях claude её нет, поэтому проверка всегда
+# истекала по таймауту и сыпала ложный WARNING (канал при этом реально поднимался,
+# порт слушался). Предшествующий pkill/kill-session освободил порт, так что
+# слушающий сокет = именно новый сервер этой сессии.
+channel_ready() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | grep -qE "127\.0\.0\.1:${TELEGRAM_WEBHOOK_PORT}\b"
+  else
+    # fallback без ss: успешный TCP-connect к порту (fd закроется с выходом subshell)
+    (exec 3<>"/dev/tcp/127.0.0.1/${TELEGRAM_WEBHOOK_PORT}") 2>/dev/null
+  fi
+}
+
 DEADLINE=$(( $(date +%s) + 30 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  PANE=$(tmux capture-pane -pt "$SESSION" -S -30 2>/dev/null || true)
-  if echo "$PANE" | grep -q "Listening for channel"; then
+  if channel_ready; then
     echo "[start-agent] $AGENT listening (webhook :$TELEGRAM_WEBHOOK_PORT)"
     exit 0
   fi
+  PANE=$(tmux capture-pane -pt "$SESSION" -S -30 2>/dev/null || true)
   # Стоит на экране логина — ~/.claude/.credentials.json нет/просрочен. Токен
   # из окружения тут не поможет (TUI его не проверяет, см. install.sh), и
   # 30с-таймаут ниже дал бы неинформативный WARNING — watchdog.sh тихо крутил
@@ -128,5 +144,5 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   sleep 1
 done
 
-echo "[start-agent] WARNING: $AGENT did not reach Listening in 30s" >&2
+echo "[start-agent] WARNING: $AGENT — webhook :$TELEGRAM_WEBHOOK_PORT не слушается за 30s (канал не поднялся)" >&2
 exit 0
