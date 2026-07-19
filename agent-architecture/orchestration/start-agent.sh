@@ -83,6 +83,14 @@ pkill -9 -f "$CLAUDE_LAB/$AGENT/.claude/.*/plugin/src/server.ts" 2>/dev/null || 
 CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
 BUN_BIN_DIR="${BUN_INSTALL:-$HOME/.bun}/bin"
 
+# tmux -e PATH below sets the SESSION environment, but when new-session spins up a
+# fresh tmux server the launched command inherits the SERVER's (this caller's)
+# PATH, not the -e value. That PATH lacks ~/.bun/bin, so claude spawns its channel
+# MCP server (bun ./src/server.ts) and fails with "Executable not found in $PATH:
+# bun" — the channel never comes up and the agent goes silent. Export bun's dir
+# here so the tmux server itself has it resolvable (belt-and-suspenders with -e).
+export PATH="$BUN_BIN_DIR:$PATH"
+
 tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_STATE_DIR="$TELEGRAM_STATE_DIR" \

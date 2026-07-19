@@ -24,3 +24,8 @@ config.json
 bot.pid
 inbox/
 state/
+# state/ above targets the RUNTIME state dir, but it also matches the source
+# folder plugin/src/state/ — which silently dropped src/state/store.ts from git
+# and broke the channel server at boot. Keep the source tree tracked.
+!plugin/src/state/
+!plugin/src/state/**
