@@ -334,7 +334,7 @@ tmux attach -t channel-myagent
 # detach: Ctrl-B затем D
 ```
 
-Должны увидеть строку `Listening for channel messages from: server:labops-channel`.
+Готовность проверяйте по факту, а не по строке TUI (текущие сборки claude строку `Listening for channel` не печатают): внутренний webhook-порт канала слушается (`ss -ltn | grep :600`), а в `/mcp` внутри сессии `labops-channel` числится connected.
 
 ### Persistent welcome approvals
 

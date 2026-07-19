@@ -105,7 +105,7 @@ flowchart LR
 
 **Единый корневой `install.sh`** (в корне монорепозитория `labops-ai-assistant`) — единственная точка входа: он ставит **оба** встроенных компонента — `agent-architecture` (этот слой) и `tg-plugin` (канал) — за один прогон и **клонирует** (но не устанавливает) внешний `labops-second-brain`, который вы ставите отдельно.
 
-1. **Запускаем корневой установщик — одна команда делает всё встроенное:** `bash install.sh` — сначала устанавливает tmux/git/curl/jq/unzip (нужен root/sudo); если запущен от root, дальше предлагает создать отдельного непривилегированного пользователя (агенты работают через `--dangerously-skip-permissions`, под root это небезопасно — а системные пакеты к этому моменту уже стоят, так что остальной установке sudo не нужен) и перезапускает себя от его имени; затем устанавливает Claude Code (нативный установщик, Node.js не нужен), ставит встроенный `tg-plugin`, клонирует рядом с монорепозиторием `labops-second-brain` (не устанавливая его), прогоняет self-test, спрашивает авторизацию (`claude setup-token`, подписка Max/Pro), если вы ещё не входили, и создаёт Developer-агента: спросит имя/модель/Telegram-бота, всё развернёт и прогонит smoke (модель по умолчанию `opus`/Opus 4.8). Если `labops-second-brain` ещё не установлен — агент стартует в деградированном режиме, установщик подскажет, чего не хватает. Хотите создать агента позже сами? `bash install.sh --no-agent` останавливается прямо перед авторизацией/созданием агента. (Корневой установщик сам вызывает `install.sh` каждого компонента — руками их запускать не нужно.)
+1. **Запускаем корневой установщик — одна команда делает всё встроенное:** `bash install.sh` — сначала устанавливает tmux/git/curl/jq/unzip (нужен root/sudo); если запущен от root, дальше предлагает создать отдельного непривилегированного пользователя (агенты работают через `--dangerously-skip-permissions`, под root это небезопасно — а системные пакеты к этому моменту уже стоят, так что остальной установке sudo не нужен) и перезапускает себя от его имени; затем устанавливает Claude Code (нативный установщик, Node.js не нужен), ставит встроенный `tg-plugin`, клонирует рядом с монорепозиторием `labops-second-brain` (не устанавливая его), прогоняет self-test, спрашивает авторизацию (интерактивный `/login` в TUI Claude Code, подписка Max/Pro), если вы ещё не входили, и создаёт Developer-агента: спросит имя/модель/Telegram-бота, всё развернёт и прогонит smoke (модель по умолчанию `opus`/Opus 4.8). Если `labops-second-brain` ещё не установлен — агент стартует в деградированном режиме, установщик подскажет, чего не хватает. Хотите создать агента позже сами? `bash install.sh --no-agent` останавливается прямо перед авторизацией/созданием агента. (Корневой установщик сам вызывает `install.sh` каждого компонента — руками их запускать не нужно.)
 2. **Ставим `labops-second-brain`** — свой внешний репозиторий, своя установка: см. [его Quickstart](https://github.com/dediukhinpa/labops-second-brain#quickstart) (вручную `scripts/install.sh`, либо отдать Claude Code агенту по `AGENT.md`).
 
 > [!TIP]
@@ -165,7 +165,7 @@ flowchart LR
 
 1. **systemd** поднимает службу `claude-agent-<agent>.service` (одна на агента). Главный процесс службы — не `claude`, а `watchdog.sh`.
 2. **`watchdog.sh <agent>`** — долгоживущий демон. Если tmux-сессии нет или панель зависла, зовёт `start-agent.sh`. Заодно «реапит» осиротевший канал-сервер (bun).
-3. **`start-agent.sh <agent>`** читает секреты из `.claude/secrets/` (chmod 600, никогда не хардкодятся), подставляет env, создаёт tmux-сессию `labops-<agent>` и запускает в ней `claude … server:labops-channel`. Ждёт строку `Listening for channel` (до 30 c).
+3. **`start-agent.sh <agent>`** читает секреты из `.claude/secrets/` (chmod 600, никогда не хардкодятся), source'ит `agent.env` (second_brain-переменные пробрасываются в сессию только при реальном `AGENT_BEARER` — плейсхолдер `CHANGE_ME` оставляет recall выключенным), создаёт tmux-сессию `labops-<agent>` и запускает в ней `claude --settings <workspace>/settings.json … server:labops-channel` (явный `--settings` обязателен: cwd-симлинк воркспейса Claude Code канонизирует, и хуки иначе не грузятся). Готовность проверяется по фактам, а не тексту TUI: слушается webhook-порт канала и/или продвинулся heartbeat-файл (текущие сборки claude строку `Listening for channel` не печатают).
 4. **`claude`** (движок) грузит канал-плагин, спавнит дочерний bun-процесс канала по stdio и подключает MCP second_brain по HTTP+Bearer.
 
 ### Модель живости (self-healing) в `watchdog.sh`
@@ -179,7 +179,7 @@ flowchart LR
 |---|---|---|
 | **(A) Замёрзший ход** (frozen turn) | `esc to interrupt` присутствует, но панель байт-в-байт не меняется (таймер встал) | подтверждение через ~60 c (2 цикла) → рестарт сессии |
 | **(B) Застрявший ввод** (stuck input) | в `❯` лежит неотправленный inbound, активного хода нет | эскалация: `Enter` → `Escape`+`Enter` (коммит bracketed-paste) → рестарт |
-| Потерян промпт | TUI не рендерит ни `❯`, ни `bypass permissions`, ни `Listening for channel` | немедленный рестарт |
+| Потерян промпт | TUI не рендерит ни `❯`, ни `bypass permissions` | рестарт — но свежий heartbeat-файл его откладывает |
 | Чистый idle-промпт | `❯` есть, поле ввода пустое | **не трогать** (здоровый агент); после ~10 мин простоя один раз дёрнуть in-session консолидацию памяти |
 
 Режим (B) срабатывает **только** при непустом поле ввода — иначе чистый idle-промпт никогда не тревожится (это была главная причина «молчащих» агентов до фикса nbsp-парсинга `❯`). Отдельная защита — реапинг **осиротевшего bun**: если родительский `claude` умер, а канал-сервер «завис» с `PPID==1`, он на 2-ядерном боксе уходит в EPIPE-петлю на ~90 % CPU и душит живые сессии; watchdog/start-agent убивают его `pkill` строго по пути конкретного агента.
@@ -336,8 +336,9 @@ flowchart LR
 |---|---|---|
 | **SessionStart** | `session-start-hook.sh` | логирует старт; пересобирает `active/working-set.md` через `working-set-build.sh` (сливает shared-recall second_brain — hard-timeout, non-blocking — с локальным лексическим recall из `passive/`; работает и file-only); surface `handoff.md`. В рое также `agent-boot-sequence.sh`: 👀 на свежие сообщения + `agent_router.list_my_pending()` (pull-страховка) |
 | **UserPromptSubmit** | `user-prompt-submit-hook.sh` | проактивный recall: bash-гейт значимости отбрасывает ack'и/короткие промпты, затем пересобирает `working-set.md` под сам промпт (фоном, non-blocking) |
-| **Stop** | `stop-hook.sh` | дописывает salience-тегированную episodic-запись в `active/episodic.md` (через `active-writer.sh`) + подробную JSON-строку в `logs/verbose-*.jsonl`; инкрементит счётчик ходов и каждые ~20 ходов дёргает in-session консолидацию (`reflect-nudge.sh`). В рое также `read-receipt-hook.ts` (POST `/hooks/react` → 👌) и `reflect-error-pattern.sh` |
-| **PreCompact** | `precompact-hook.sh` | снапшотит `active/episodic.md` в `active/pre-compact/` перед авто-компакцией, держит последние `KEEP_SNAPSHOTS` (10) |
+| **Stop** | `stop-hook.sh` | дописывает salience-тегированную episodic-запись в `active/episodic.md` (через `active-writer.sh`) + подробную JSON-строку в `logs/verbose-*.jsonl`; инкрементит счётчик ходов и каждые ~20 ходов дёргает in-session консолидацию (`reflect-nudge.sh`); не чаще раза в сутки фоном запускает housekeeping (`decay-sweep.sh` + `archive-roll.sh`) — ротация теперь дефолт, а не опциональный cron. В рое также `read-receipt-hook.ts` (POST `/hooks/react` → 👌) и `reflect-error-pattern.sh` |
+| **PreCompact** | `precompact-hook.sh` | снапшотит `active/episodic.md` в `active/pre-compact/` перед авто-компакцией, держит последние `KEEP_SNAPSHOTS` (10); затем `brain-flush.sh` — страховочный сброс handoff + хвоста episodic в inbox общего мозга (`create_handoff`, fail-open, sha-дедуп, no-op при плейсхолдере `CHANGE_ME`) |
+| **SessionEnd** | `scripts/brain-flush.sh --reason session-end` | тот же страховочный flush в конце сессии — второй момент, где знания иначе теряются |
 
 Все хуки несут `sdk-guard`: при `CLAUDE_SDK_CHILD=1` (или `entrypoint=sdk-ts`) сразу выходят, чтобы не зацикливаться в дочерних Agent-SDK-сессиях.
 
@@ -390,12 +391,12 @@ flowchart LR
 **Зависимости (скрипт их устанавливает):**
 
 - **Отдельный OS-пользователь** — если `install.sh` запущен от root, после установки системных пакетов (нужен root/sudo) он предлагает создать непривилегированного пользователя (имя выбираете сами — жёсткого дефолта нет) и продолжает установку уже от его имени; агенты работают через `claude --dangerously-skip-permissions` (без подтверждения каждого действия) — держать их под root небезопасно. Пароль задаётся интерактивно через `passwd` (нужен вам для `su`/SSH, самому агенту не требуется). Пропустить: `SKIP_USER_SETUP=1`.
-- **Claude Code** — устанавливается самим `install.sh` через нативный установщик (без Node.js/npm); затем **разово авторизоваться по подписке**: `install.sh` сам запускает `claude setup-token` (Max/Pro, первая сторона — без third-party риска) прямо перед созданием первого агента, если вы ещё не входили. Модель агента задаётся в `settings.json` (поле `model`); диалог `create-agent` спрашивает её и для Developer рекомендует **`opus` (Opus 4.8)**. Без авторизации агент стартует под systemd, но не достучится до модели — это ловит smoke-тест (шаг «модель отвечает»).
+- **Claude Code** — устанавливается самим `install.sh` через нативный установщик (без Node.js/npm); затем **разово авторизоваться по подписке**: `install.sh` сам открывает интерактивный `/login` (Max/Pro; креденшелы ложатся в `~/.claude/.credentials.json`; headless `claude setup-token` здесь запрещён) прямо перед созданием первого агента, если вы ещё не входили. Модель агента задаётся в `settings.json` (поле `model`); диалог `create-agent` спрашивает её и для Developer рекомендует **`opus` (Opus 4.8)**. Без авторизации агент стартует под systemd, но не достучится до модели — это ловит smoke-тест (шаг «модель отвечает»).
 - **`tg-plugin`** (встроен в этот монорепозиторий) — канал, через который агент общается в Telegram; **ставится за вас корневым `install.sh`** (он вызывает собственный `install.sh` компонента в каталоге `tg-plugin/`). Отдельного шага нет — см. [`../tg-plugin`](../tg-plugin).
 - **`labops-second-brain`** (внешний репозиторий) — клонируется в `~/labops-second-brain` скриптом `install.sh`; ставите сами — либо запустив напрямую `sudo bash ~/labops-second-brain/scripts/install.sh`, либо отдав Claude Code агенту (`cd ~/labops-second-brain && claude`, затем вставьте промпт из шага 2 «Быстрого старта» — он следует `AGENT.md` и спрашивает подтверждение на разрушительных шагах) — выдаёт агенту Bearer-токен и поднимает MCP `memory`/`memory_router`/`agent_router`. Если создать Developer-агента раньше этого шага, он стартует в деградированном режиме, пока мозг не поднят.
 
 > [!IMPORTANT]
-> **Модель и авторизация.** Разово войдите через `claude setup-token` (подписка Max/Pro, первая сторона — без third-party риска). Модель агента задаётся в `settings.json` (поле `model`); для Developer рекомендуется `opus` (Opus 4.8). Без авторизации агент стартует, но не достучится до модели.
+> **Модель и авторизация.** Разово войдите интерактивно (`/login` в TUI Claude Code, подписка Max/Pro; персистентная сессия читает только `~/.claude/.credentials.json` — `claude setup-token` в этой архитектуре запрещён). Модель агента задаётся в `settings.json` (поле `model`); для Developer рекомендуется `opus` (Opus 4.8). Без авторизации агент стартует, но не достучится до модели.
 
 ```bash
 # Из корня монорепозитория labops-ai-assistant.
@@ -413,8 +414,8 @@ bash install.sh   # модель → идентичность → скаффол
 ### Тесты
 
 - **Синтаксис-чек bash** — `bash -n` по всем скриптам `orchestration/*.sh`, `agent-template/hooks/*.sh`, `agent-template/scripts/*.sh` (хуки fail-open, поэтому статической проверки + smoke достаточно).
-- **Self-test репозитория** (`test.sh`) — синтаксис bash, компиляция python, отсутствие секретов и проверка, что модель/авторизация учтены (`settings.json` задаёт `model`, `create-agent` пробрасывает выбор модели, есть шаг `claude setup-token`).
-- **Smoke-тест** в конце `install.sh` / `create-agent`: **модель отвечает** (Claude Code авторизован, `claude -p ping`); сессия агента дошла до `Listening for channel`; канал отвечает; `memory_router`/`agent_router` доступны по Bearer; реакции 👀/👌 ставятся.
+- **Self-test репозитория** (`test.sh`) — синтаксис bash, компиляция python, отсутствие секретов и проверка, что модель/авторизация учтены (`settings.json` задаёт `model`, `create-agent` пробрасывает выбор модели, есть шаг интерактивного входа через `~/.claude/.credentials.json`, а headless `claude -p`/`claude setup-token` проверяются на ОТСУТСТВИЕ), плюс юнит-тесты notify / second_brain-monitor / heartbeat-hook / brain-flush.
+- **Smoke-тест** в конце `install.sh` / `create-agent`: Claude Code авторизован (интерактивный вход); сессия агента готова по фактам — слушается webhook-порт канала и продвигается heartbeat-файл; канал отвечает; `memory_router`/`agent_router` доступны по Bearer; реакции 👀/👌 ставятся.
 - **`second_brain-doctor`** (скилл) — повторяемая агент-сайд-диагностика связки second_brain после установки.
 
 ```bash
@@ -474,9 +475,9 @@ bash install.sh --test-only
 | Симптом | Где смотреть / что делать |
 |---|---|
 | Бот молчит в Telegram | `tmux ls` → есть ли `labops-<agent>`? `tmux attach -t labops-<agent>` — видно ошибку. Проверьте, что ваш `user_id` в `TELEGRAM_ALLOWED_USER_IDS` (`channel.env`). |
-| Сервис не `active` | `systemctl status claude-agent-<agent>` + `journalctl -u claude-agent-<agent> -n50`. Частая причина — `claude` не авторизован (`claude setup-token`) или нет `channel.env`. |
+| Сервис не `active` | `systemctl status claude-agent-<agent>` + `journalctl -u claude-agent-<agent> -n50`. Частая причина — `claude` не авторизован (запустите `claude` и `/login`) или нет `channel.env`. |
 | `no TELEGRAM_BOT_TOKEN` в логе | `channel.env` не там, где ищет `start-agent.sh` — он берёт из `lib/agents.sh` (`/etc/labops-plugin/<agent>/` или `$CLAUDE_LAB/shared/state/<agent>/telegram/`). Пересоздайте через `new-agent.sh`. |
-| «Модель не ответила» | `claude setup-token` под пользователем агента, затем `systemctl restart claude-agent-<agent>`. |
+| «Модель не ответила» | запустите `claude` под пользователем агента, войдите через `/login`, затем `systemctl restart claude-agent-<agent>`. |
 | `second_brain недоступен` | Проверьте `SECOND_BRAIN_MEMORY_URL` / `SECOND_BRAIN_MEMORY_ROUTER_URL` / `SECOND_BRAIN_AGENT_ROUTER_URL` в `agent.env` (по умолчанию `http://127.0.0.1:5001/mcp` и т.д.) и что мозг поднят. `MCP_HOST` — только хост/IP; `SECOND_BRAIN_*_URL` — полные URL эндпоинтов. |
 | Повторный запуск/коллизия имени | `new-agent.sh` не затирает существующего агента; для донастройки поверх — `REUSE_EXISTING=1`. |
 
@@ -503,7 +504,7 @@ bash install.sh --test-only
 <details>
 <summary><b>Какую модель использует Developer и как авторизоваться?</b></summary>
 
-Модель агента задаётся в `settings.json` (поле `model`). Диалог установки спрашивает её и для Developer рекомендует `opus` (Opus 4.8). Авторизация — разовый `claude setup-token` по подписке Max/Pro (первая сторона, без third-party риска). Без неё агент стартует под systemd, но не достучится до модели — это ловит smoke-тест.
+Модель агента задаётся в `settings.json` (поле `model`). Диалог установки спрашивает её и для Developer рекомендует `opus` (Opus 4.8). Авторизация — разовый интерактивный `/login` по подписке Max/Pro (креденшелы в `~/.claude/.credentials.json`; `claude setup-token` запрещён). Без неё агент стартует под systemd, но не достучится до модели — это ловит smoke-тест.
 
 </details>
 
