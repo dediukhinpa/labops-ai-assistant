@@ -99,6 +99,12 @@ HEARTBEAT="$WORKSPACE/state/heartbeat"
 HAS_CHANNEL=0; [ "$PLUGIN_CWD" != "$WORKSPACE" ] && HAS_CHANNEL=1
 LAUNCH_TS=$(date +%s)
 
+# --settings below is REQUIRED, not optional: CWD is the plugin dir so .mcp.json
+# is discovered, but claude canonicalises the symlinked plugin path to its real
+# location (/home/.../labops-tg-plugin/plugin) OUTSIDE the workspace tree. Config
+# discovery then walks up from there and never sees $WORKSPACE/settings.json — so
+# NONE of the workspace hooks (heartbeat, SessionStart recall, Stop) ever fire.
+# Loading settings.json explicitly fixes that (and the long-silent memory hooks).
 tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_STATE_DIR="$TELEGRAM_STATE_DIR" \
@@ -109,6 +115,7 @@ tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   -e GROQ_API_KEY="$GROQ_API_KEY" \
   -e PATH="$HOME/.local/bin:$BUN_BIN_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   "$CLAUDE_BIN" \
+    --settings "$WORKSPACE/settings.json" \
     --dangerously-skip-permissions \
     --dangerously-load-development-channels server:labops-channel
 
