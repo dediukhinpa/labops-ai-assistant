@@ -93,6 +93,13 @@ else
   bad "second_brain-monitor.sh: юнит-тест провален (orchestration/second_brain-monitor.test.sh)"
 fi
 
+echo "── 7. Heartbeat-хук живости (heartbeat-hook.sh) ──"
+if bash agent-template/hooks/heartbeat-hook.test.sh >/dev/null 2>&1; then
+  ok "heartbeat-hook.sh: атомарная запись / sdk-guard / advance — юнит-тест зелёный"
+else
+  bad "heartbeat-hook.sh: юнит-тест провален (agent-template/hooks/heartbeat-hook.test.sh)"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
