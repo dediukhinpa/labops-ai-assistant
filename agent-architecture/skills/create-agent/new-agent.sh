@@ -433,10 +433,21 @@ fi
 # 7e. плагин (сам работающий claude-процесс) реально поднял внутренний
 # /hooks/agent — чисто сетевая проверка, без единого вызова claude.
 if [ -n "${TELEGRAM_WEBHOOK_PORT:-}" ]; then
-  if curl -fsS "http://127.0.0.1:${TELEGRAM_WEBHOOK_PORT}/health" >/dev/null 2>&1; then
+  # Канал (bun-сервер) claude спавнит через MCP уже ПОСЛЕ старта сессии —
+  # к моменту smoke он может ещё не подняться (загрузка claude, MCP-handshake).
+  # Поэтому не бьём один раз, а поллим ~20с; иначе получаем ложный degraded на
+  # медленном старте (реально канал встаёт секундами позже).
+  HEALTH_OK=0
+  for _i in $(seq 1 20); do
+    if curl -fsS "http://127.0.0.1:${TELEGRAM_WEBHOOK_PORT}/health" >/dev/null 2>&1; then
+      HEALTH_OK=1; break
+    fi
+    sleep 1
+  done
+  if [ "$HEALTH_OK" = "1" ]; then
     ok "плагин слушает /hooks/agent на :${TELEGRAM_WEBHOOK_PORT} (agent-to-agent доставка готова)"
   else
-    warn "плагин не отвечает на :${TELEGRAM_WEBHOOK_PORT}/health — agent-to-agent webhook недоступен (проверьте сервис)"; FAIL=1
+    warn "плагин не ответил на :${TELEGRAM_WEBHOOK_PORT}/health за ~20с — agent-to-agent webhook пока недоступен. Часто это медленный старт: проверьте позже (curl :${TELEGRAM_WEBHOOK_PORT}/health) или логи tmux-сессии labops-${AGENT_ID}"; FAIL=1
   fi
 fi
 
