@@ -192,6 +192,33 @@ TELEGRAM_WEBHOOK_HOST TELEGRAM_MEMORY_ENABLED TELEGRAM_MEMORY_SOURCE_TAG"
   fi
 fi
 
+echo "── 11. Near-real-time межагентная доставка задач (task-poller.sh) ──"
+if bash agent-template/scripts/task-poller.test.sh >/dev/null 2>&1; then
+  ok "task-poller.sh: адресный фильтр / idle-гейт / идемпотентность — юнит-тест зелёный"
+else
+  bad "task-poller.sh: юнит-тест провален (agent-template/scripts/task-poller.test.sh)"
+fi
+# Регрессия: start-agent.sh обязан запускать поллер, иначе доставка задач мертва.
+if grep -q 'task-poller.sh' orchestration/start-agent.sh; then
+  ok "start-agent.sh запускает task-poller"
+else
+  bad "start-agent.sh не запускает task-poller — задачи не будут доставляться в сессию"
+fi
+# Регрессия: agent-template/install.sh обязан КОПИРОВАТЬ поллер в воркспейс нового
+# агента (список скриптов явный) — иначе новый агент не подключится к общению.
+if grep -qE 'for script in .*task-poller\.sh' agent-template/install.sh; then
+  ok "install.sh копирует task-poller.sh новому агенту (подключение к общению)"
+else
+  bad "install.sh не копирует task-poller.sh — новый агент не будет получать межагентные задачи"
+fi
+# Поллер должен оставаться на подписке: никакого claude -p/--print внутри него.
+if grep -vE '^[[:space:]]*#' agent-template/scripts/task-poller.sh \
+     | grep -qE 'claude +-p|claude +--print'; then
+  bad "task-poller.sh использует headless claude — это SDK-кредиты, запрещено (см. AGENT_ROUTER.md)"
+else
+  ok "task-poller.sh не тащит headless claude (остаётся на подписке)"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
