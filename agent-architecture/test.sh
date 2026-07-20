@@ -118,6 +118,21 @@ else
   bad "brain-flush.sh: юнит-тест провален (agent-template/scripts/brain-flush.test.sh)"
 fi
 
+echo "── 9. Изоляция плагина по агентам (lib/plugin.sh) ──"
+if bash orchestration/lib/plugin.test.sh >/dev/null 2>&1; then
+  ok "plugin.sh: приватная копия / миграция симлинка / разный cwd — юнит-тест зелёный"
+else
+  bad "plugin.sh: юнит-тест провален (orchestration/lib/plugin.test.sh)"
+fi
+
+# Регрессия: симлинк плагина в воркспейс — это и есть баг общего canonical cwd.
+if grep -rn 'ln -s .*TG_PLUGIN_DIR.*labops-tg-plugin' --include=*.sh \
+     --exclude=test.sh . >/dev/null 2>&1; then
+  bad "плагин снова линкуется симлинком — используйте provision_plugin (lib/plugin.sh)"
+else
+  ok "плагин нигде не линкуется симлинком в воркспейс"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
