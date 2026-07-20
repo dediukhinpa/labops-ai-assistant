@@ -140,6 +140,18 @@ else
   bad "pane.sh: юнит-тест провален (orchestration/lib/pane.test.sh)"
 fi
 
+echo "── 9c. Контракт канала: ответ через reply (CLAUDE.md.template) ──"
+# Регрессия 2026-07-20: агент ответил оператору текстом в сессии, не вызвав
+# `reply`. Оператор увидел молчание и решил, что агент завис. Инструкции о том,
+# что отвечать надо инструментом, в шаблоне не было вообще — контракт держался
+# на догадке модели. Проверяем, что он записан явно.
+CT="agent-template/templates/CLAUDE.md.template"
+if grep -qiE '`reply`' "$CT" && grep -qiE 'invisible to the operator|not.*visible.*operator' "$CT"; then
+  ok "CLAUDE.md.template задаёт контракт: ответ оператору только через reply"
+else
+  bad "CLAUDE.md.template не объясняет, что отвечать надо через reply — ответы агента будут теряться"
+fi
+
 echo "── 10. Изоляция per-agent окружения (создание агента из сессии агента) ──"
 # new-agent.sh почти всегда запускается ИЗ сессии другого агента, а tmux
 # new-session строит env сессии из ГЛОБАЛЬНОГО env tmux-сервера (загрязнённого
