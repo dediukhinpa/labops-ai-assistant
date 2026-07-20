@@ -56,6 +56,10 @@ for cand in "${AGENT_ARCH_DIR:-}" \
 done
 AGENT_TEMPLATE="$REPO_DIR/agent-template"
 ORCH_DIR="$REPO_DIR/orchestration"
+# provision_plugin — приватная копия плагина в воркспейс (не симлинк: общий
+# canonical cwd ломает MCP у второго агента, см. lib/plugin.sh)
+# shellcheck source=../../orchestration/lib/plugin.sh
+. "$ORCH_DIR/lib/plugin.sh"
 # Нативный claude ставится в ~/.local/bin, но PATH туда правится только в
 # ~/.bashrc — при запуске не-login шеллом (sudo -u ... -H bash ...) это не
 # подхватывается. Подмешиваем явно, чтобы claude находился и здесь, и в
@@ -241,9 +245,9 @@ if [ -n "$TG_PLUGIN_DIR" ]; then
     # донастройка) — не переспрашиваем токен и не трогаем файл, чтобы не
     # сдвинуть webhook-порт (см. ниже) и не заставлять вводить токен заново.
     ok "Telegram: channel.env уже настроен ($CH_ENV) — переиспользую как есть"
-    if [ ! -e "$WORKSPACE/labops-tg-plugin" ]; then
-      ln -s "$TG_PLUGIN_DIR" "$WORKSPACE/labops-tg-plugin" && ok "плагин слинкован в воркспейс"
-    fi
+    provision_plugin "$TG_PLUGIN_DIR" "$WORKSPACE" \
+      && ok "плагин развёрнут в воркспейс (приватная копия)" \
+      || warn "не удалось развернуть плагин в воркспейс"
   else
   if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
     echo "  Нужен отдельный Telegram-бот для этого агента. Если ещё нет:"
@@ -300,9 +304,9 @@ ENV
     chmod 600 "$CH_ENV"
     ok "channel.env: $CH_ENV (chmod 600)"
     # привязать плагин в воркспейс (расположение важно — см. docs tg-plugin)
-    if [ ! -e "$WORKSPACE/labops-tg-plugin" ]; then
-      ln -s "$TG_PLUGIN_DIR" "$WORKSPACE/labops-tg-plugin" && ok "плагин слинкован в воркспейс"
-    fi
+    provision_plugin "$TG_PLUGIN_DIR" "$WORKSPACE" \
+      && ok "плагин развёрнут в воркспейс (приватная копия)" \
+      || warn "не удалось развернуть плагин в воркспейс"
   else
     warn "токен бота не задан — Telegram пропущен (агент пока без чата)"
     DEGRADED+=("Telegram не настроен (нет токена) — агент текстовый только локально, в чат не пишет")
