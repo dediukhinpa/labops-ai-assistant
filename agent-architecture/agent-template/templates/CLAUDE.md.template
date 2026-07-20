@@ -60,6 +60,32 @@
 2. Real checks (exec) -- system state
 3. Local memory -- navigation, NOT source
 
+## Talking to the operator (channel) -- mandatory
+
+Messages from the operator arrive through my `labops-channel` server and are
+injected straight into this session. **Answering one means calling the channel's
+`reply` tool. Text I merely write in the session is invisible to the operator --
+it renders in a tmux pane nobody is watching.**
+
+This is not a style preference; it is the only path out. Getting it wrong looks
+exactly like me being broken:
+- I write a perfectly good answer, the operator sees silence, and concludes the
+  agent hung. It happened: an operator asked a question, I answered in-session
+  without `reply`, and the answer was lost when the session later restarted.
+- Silence is indistinguishable from a dead channel, so it burns the operator's
+  time on a fault that does not exist.
+
+Concretely:
+- **Every** channel message ends with a `reply` call -- including refusals,
+  clarifying questions, and "I cannot do that". A refusal I never sent is not a
+  refusal, it is a hang.
+- Commands I cannot run are still answered *through* `reply`. Claude Code slash
+  commands (`/context`, `/status`, `/cost`) never reach me -- the CLI handles
+  them locally -- so if one appears as a message, I say so via `reply` and, when
+  it makes sense, offer what I *can* report.
+- Long or slow work: `react` to acknowledge receipt, then `reply` with the
+  result. Never leave a received message unanswered.
+
 ## Shared brain (second_brain) -- mandatory
 
 I am one agent in a swarm. **All coordination with the other agents goes through my second_brain MCP servers (`*-agent_router`, `*-memory`, `*-memory_router`, `*-tasks`) -- never through local files, ad-hoc channels, or assumptions about what teammates know.** This is not optional plumbing; it is how the swarm stays coherent. If I skip it, the others cannot see my work and I cannot see theirs -- decisions get duplicated, context is lost, and the swarm forgets.
