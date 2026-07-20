@@ -198,6 +198,23 @@ tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
     --dangerously-skip-permissions \
     --dangerously-load-development-channels server:labops-channel
 
+# Near-real-time agent-to-agent task delivery (см. AGENT_ROUTER.md). Polls shared
+# memory every TASK_POLL_INTERVAL s and types a new task into THIS session only
+# on a clean idle prompt — no `claude -p`, so it stays on the subscription. It
+# self-exits when the session dies (start-agent relaunches it on restart); the
+# pgrep guard prevents a duplicate poller after a bare `session already alive`.
+TASK_POLLER="$WORKSPACE/scripts/task-poller.sh"
+if [ -f "$TASK_POLLER" ]; then
+  if pgrep -f "$TASK_POLLER" >/dev/null 2>&1; then
+    echo "[start-agent] $AGENT task-poller already running — not duplicating"
+  else
+    AGENT_ID="$AGENT" AGENT_WORKSPACE="$WORKSPACE" \
+      TASK_POLL_INTERVAL="${TASK_POLL_INTERVAL:-5}" \
+      setsid bash "$TASK_POLLER" </dev/null >>"$WORKSPACE/logs/task-poller.log" 2>&1 &
+    echo "[start-agent] $AGENT task-poller started (interval ${TASK_POLL_INTERVAL:-5}s)"
+  fi
+fi
+
 # Готовность канала = его webhook-сервер (bun ./src/server.ts, спавнит claude)
 # забиндил TELEGRAM_WEBHOOK_PORT на localhost. Это авторитетный сигнал, не завися-
 # щий от версии claude и формулировок в TUI. Раньше грепали строку "Listening for
