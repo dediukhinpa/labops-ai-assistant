@@ -133,6 +133,13 @@ else
   ok "плагин нигде не линкуется симлинком в воркспейс"
 fi
 
+echo "── 9b. Классификатор панели: overlay ≠ зависание (lib/pane.sh) ──"
+if bash orchestration/lib/pane.test.sh >/dev/null 2>&1; then
+  ok "pane.sh: слеш-команда не принимается за смерть TUI — юнит-тест зелёный"
+else
+  bad "pane.sh: юнит-тест провален (orchestration/lib/pane.test.sh)"
+fi
+
 echo "── 10. Изоляция per-agent окружения (создание агента из сессии агента) ──"
 # new-agent.sh почти всегда запускается ИЗ сессии другого агента, а tmux
 # new-session строит env сессии из ГЛОБАЛЬНОГО env tmux-сервера (загрязнённого
