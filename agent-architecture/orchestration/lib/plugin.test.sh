@@ -18,7 +18,7 @@ echo '{"name":"labops-channel"}' > "$SRC/plugin/package.json"
 echo 'console.log(1)'            > "$SRC/plugin/src/server.ts"
 mkdir -p "$SRC/plugin/src/state"
 echo 'export const store={}'      > "$SRC/plugin/src/state/store.js"
-echo '{}'                        > "$SRC/.mcp.json"
+echo '{"mcpServers":{"labops-channel":{}}}' > "$SRC/plugin/.mcp.json"
 echo 'x'                         > "$SRC/plugin/node_modules/dep/index.js"
 
 WS_A="$TMP/lab/alpha/.claude"; WS_B="$TMP/lab/beta/.claude"
@@ -39,8 +39,11 @@ provision_plugin "$SRC" "$WS_A" >/dev/null 2>&1 \
   && ok "node_modules symlinked (not duplicated)" || bad "node_modules not shared"
 [ -f "$WS_A/labops-tg-plugin/plugin/node_modules/dep/index.js" ] \
   && ok "node_modules resolves through the symlink" || bad "node_modules broken"
-[ -f "$WS_A/labops-tg-plugin/.mcp.json" ] \
-  && ok "repo-root .mcp.json mirrored" || bad ".mcp.json not mirrored"
+# Regression: .mcp.json registers the labops-channel MCP server. Missing it,
+# claude comes up with "no MCP server configured with that name".
+grep -q 'labops-channel' "$WS_A/labops-tg-plugin/plugin/.mcp.json" 2>/dev/null \
+  && ok "plugin/.mcp.json copied (registers the channel MCP server)" \
+  || bad ".mcp.json missing — channel would not register"
 
 # ---- case 2: THE BUG — two agents must not share a canonical cwd ------------
 provision_plugin "$SRC" "$WS_B" >/dev/null 2>&1

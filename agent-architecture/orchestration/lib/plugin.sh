@@ -39,11 +39,17 @@ provision_plugin() {
   # NB: src/state is SOURCE (src/state/store.js), not runtime data — excluding
   # it breaks the server with "Cannot find module './state/store.js'".
   # Per-agent runtime state lives outside the tree, in $TELEGRAM_STATE_DIR.
+  # .mcp.json is what registers the `labops-channel` MCP server — without it
+  # claude starts and reports "no MCP server configured with that name", so the
+  # dotfiles below are load-bearing, not cosmetic.
   local item
-  for item in package.json bun.lock tsconfig.json README.md src scripts docs tests; do
+  for item in package.json bun.lock tsconfig.json README.md src scripts docs tests \
+              .mcp.json .npmrc .gitignore; do
     [ -e "$src_plugin/$item" ] || continue
     cp -a "$src_plugin/$item" "$dest_plugin/"
   done
+  [ -f "$dest_plugin/.mcp.json" ] \
+    || echo "[plugin] WARN: .mcp.json missing — the channel MCP server will not register" >&2
 
   # node_modules stays shared — read-only at runtime, 60MB per agent otherwise.
   if [ ! -e "$dest_plugin/node_modules" ]; then
@@ -53,11 +59,6 @@ provision_plugin() {
       echo "[plugin] WARN: $src_plugin/node_modules missing — run 'bun install' in $src_plugin" >&2
     fi
   fi
-
-  # Mirror the repo root files the plugin expects one level up (.mcp.json etc).
-  for item in .mcp.json package.json; do
-    [ -e "$src/$item" ] && cp -a "$src/$item" "$dest/" 2>/dev/null || true
-  done
 
   echo "[plugin] provisioned private copy: $dest_plugin"
 }
