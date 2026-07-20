@@ -35,18 +35,14 @@ provision_plugin() {
 
   mkdir -p "$dest_plugin"
 
-  # Copy sources, never node_modules (symlinked below) and never state
-  # (per-agent runtime data that must not be clobbered on refresh).
+  # Copy sources; only node_modules is excluded (symlinked below).
+  # NB: src/state is SOURCE (src/state/store.js), not runtime data — excluding
+  # it breaks the server with "Cannot find module './state/store.js'".
+  # Per-agent runtime state lives outside the tree, in $TELEGRAM_STATE_DIR.
   local item
   for item in package.json bun.lock tsconfig.json README.md src scripts docs tests; do
     [ -e "$src_plugin/$item" ] || continue
-    if [ "$item" = "src" ]; then
-      # keep src/state if the agent already accumulated one
-      mkdir -p "$dest_plugin/src"
-      (cd "$src_plugin/src" && tar cf - --exclude=state .) | (cd "$dest_plugin/src" && tar xf -)
-    else
-      cp -a "$src_plugin/$item" "$dest_plugin/"
-    fi
+    cp -a "$src_plugin/$item" "$dest_plugin/"
   done
 
   # node_modules stays shared — read-only at runtime, 60MB per agent otherwise.

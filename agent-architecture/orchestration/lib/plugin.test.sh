@@ -16,6 +16,8 @@ SRC="$TMP/tg-plugin"
 mkdir -p "$SRC/plugin/src" "$SRC/plugin/node_modules/dep" "$SRC/plugin/tests"
 echo '{"name":"labops-channel"}' > "$SRC/plugin/package.json"
 echo 'console.log(1)'            > "$SRC/plugin/src/server.ts"
+mkdir -p "$SRC/plugin/src/state"
+echo 'export const store={}'      > "$SRC/plugin/src/state/store.js"
 echo '{}'                        > "$SRC/.mcp.json"
 echo 'x'                         > "$SRC/plugin/node_modules/dep/index.js"
 
@@ -29,6 +31,10 @@ provision_plugin "$SRC" "$WS_A" >/dev/null 2>&1 \
   && ok "workspace plugin is a REAL dir, not a symlink" || bad "still a symlink"
 [ -f "$WS_A/labops-tg-plugin/plugin/src/server.ts" ] \
   && ok "sources copied" || bad "sources missing"
+# Regression: src/state is SOURCE, not runtime data. Excluding it broke the
+# server with "Cannot find module './state/store.js'" on the live host.
+[ -f "$WS_A/labops-tg-plugin/plugin/src/state/store.js" ] \
+  && ok "src/state copied (it is source, not runtime state)" || bad "src/state missing — server will not start"
 [ -L "$WS_A/labops-tg-plugin/plugin/node_modules" ] \
   && ok "node_modules symlinked (not duplicated)" || bad "node_modules not shared"
 [ -f "$WS_A/labops-tg-plugin/plugin/node_modules/dep/index.js" ] \
@@ -54,15 +60,13 @@ provision_plugin "$SRC" "$WS_C" >/dev/null 2>&1
 [ "$(readlink -f "$WS_C/labops-tg-plugin/plugin")" != "$ca" ] \
   && ok "migrated agent no longer collides" || bad "migrated agent still collides"
 
-# ---- case 4: refresh is idempotent and keeps per-agent state ----------------
-mkdir -p "$WS_A/labops-tg-plugin/plugin/src/state"
-echo 'offset=42' > "$WS_A/labops-tg-plugin/plugin/src/state/poller.txt"
+# ---- case 4: refresh picks up upstream changes ------------------------------
 echo 'console.log(2)' > "$SRC/plugin/src/server.ts"   # upstream moved on
 provision_plugin "$SRC" "$WS_A" >/dev/null 2>&1
-grep -q 'offset=42' "$WS_A/labops-tg-plugin/plugin/src/state/poller.txt" 2>/dev/null \
-  && ok "per-agent src/state preserved on refresh" || bad "src/state clobbered"
 grep -q 'console.log(2)' "$WS_A/labops-tg-plugin/plugin/src/server.ts" \
   && ok "sources refreshed from upstream" || bad "sources not refreshed"
+[ -f "$WS_A/labops-tg-plugin/plugin/src/state/store.js" ] \
+  && ok "src/state still present after refresh" || bad "src/state lost on refresh"
 
 # ---- case 5: missing source → non-zero, no partial dir ----------------------
 WS_D="$TMP/lab/delta/.claude"; mkdir -p "$WS_D"
