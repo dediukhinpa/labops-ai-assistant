@@ -80,10 +80,11 @@ fi
 #       leaving it. So we nudge, then escalate to the OPERATOR and keep the
 #       session alive. Acted on ONLY when the input box is non-empty, so a clean
 #       idle prompt is never disturbed.
-ACTIVE_RE='esc to interrupt'
-# ❯ / bypass permissions — реальные маркеры отрисованного промпта. "Listening for
-# channel" убран: строку текущие сборки claude не печатают (см. start-agent.sh).
-PROMPT_RE='❯|bypass permissions'
+# ACTIVE_RE / PROMPT_RE + классификатор панели живут в lib/pane.sh — вынесены
+# туда, чтобы их можно было покрыть тестом (этот файл — бесконечный цикл, его
+# нельзя заsource'ить из теста).
+# shellcheck source=lib/pane.sh
+source "$SCRIPT_DIR/lib/pane.sh"
 PREV_TAIL=""
 FROZEN_COUNT=0
 NUDGE_STAGE=0
@@ -153,12 +154,27 @@ while true; do
   # TUI lost its prompt entirely → restart, UNLESS a recent hook proves the
   # session is alive (mid-render / transient repaint). A truly dead TUI stops
   # firing hooks, so a stale heartbeat lets the restart proceed.
-  if ! printf '%s' "$TAIL" | grep -qaE "$PROMPT_RE"; then
+  if ! has_prompt "$TAIL"; then
     if heartbeat_fresh; then
       log "no prompt rendered but heartbeat fresh ($(heartbeat_age)s) — deferring restart"
       continue
     fi
-    restart_session "no prompt rendered — heartbeat stale"
+    # A local slash-command overlay (/context, /status, /cost, /help) looks
+    # EXACTLY like a dead TUI: its output scrolls the prompt away, and because
+    # the model never runs, no hook fires and the heartbeat goes stale. An
+    # operator inspecting a healthy session was enough to trigger a restart.
+    # Escape dismisses an overlay but does nothing to a dead TUI, so it is the
+    # discriminator. Try it once before destroying the session.
+    log "no prompt rendered — trying Escape (may be a slash-command overlay)"
+    tmux send-keys -t "$SESSION" Escape 2>/dev/null || true
+    sleep 2
+    TAIL="$(tmux capture-pane -pt "$SESSION" -S -8 2>/dev/null || true)"
+    if has_prompt "$TAIL"; then
+      log "prompt returned after Escape — overlay, not a freeze; session left ALIVE"
+      PREV_TAIL="$TAIL"
+      continue
+    fi
+    restart_session "no prompt rendered — heartbeat stale (Escape did not restore it)"
     continue
   fi
 
