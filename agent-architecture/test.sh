@@ -133,6 +133,46 @@ else
   ok "плагин нигде не линкуется симлинком в воркспейс"
 fi
 
+echo "── 10. Изоляция per-agent окружения (создание агента из сессии агента) ──"
+# new-agent.sh почти всегда запускается ИЗ сессии другого агента, а tmux
+# new-session строит env сессии из ГЛОБАЛЬНОГО env tmux-сервера (загрязнённого
+# первым стартовавшим агентом) плюс -e — НЕ из env процесса start-agent.
+# Отсюда класс тихих отказов: переменную добавили в channel.env, но забыли в
+# списке -e → у нового агента чужой bot_id ("bot_id mismatch -> poller exited")
+# и мёртвый webhook-порт, без единой ошибки в логах. Гейт статический.
+NA="skills/create-agent/new-agent.sh"
+SA="orchestration/start-agent.sh"
+
+ch_vars="$(awk '/cat > "\$CH_ENV" <<ENV/,/^ENV$/' "$NA" | grep -oE '^[A-Z_]+=' | tr -d '=' | sort -u)"
+e_vars="$(awk '/^tmux new-session/,/^ *"\$CLAUDE_BIN"/' "$SA" | grep -oE '^[[:space:]]*-e [A-Z_]+' | awk '{print $2}' | sort -u)"
+unset_vars="$(sed -n '/^unset /,/^$/p' "$NA" | grep -oE '\b[A-Z][A-Z_]+\b' | grep -v '^unset$' | sort -u)"
+
+# Пустая выборка = гейт проходит вхолостую и ничего не охраняет. Валим явно.
+if [ -z "$ch_vars" ] || [ -z "$e_vars" ] || [ -z "$unset_vars" ]; then
+  bad "env-isolation: не удалось извлечь списки переменных (изменилась структура $NA/$SA?) — гейт не работает"
+else
+  # A. всё, что пишется в channel.env, обязано пробрасываться через -e
+  missing_e="$(comm -23 <(echo "$ch_vars") <(echo "$e_vars") | tr '\n' ' ')"
+  if [ -n "${missing_e// /}" ]; then
+    bad "start-agent.sh: нет в списке tmux -e → утечёт значение агента-родителя: $missing_e"
+  else
+    ok "все переменные channel.env пробрасываются через tmux -e ($(echo "$ch_vars" | wc -l) шт.)"
+  fi
+
+  # B. идентичность агента обязана сбрасываться в new-agent.sh.
+  # Исключения: ввод оператора (не наследование, а намеренная передача) и
+  # константы, одинаковые у всех агентов.
+  exempt="TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USER_IDS TELEGRAM_ALLOWED_CHAT_IDS
+TELEGRAM_WEBHOOK_HOST TELEGRAM_MEMORY_ENABLED TELEGRAM_MEMORY_SOURCE_TAG"
+  identity="$(comm -23 <(echo "$ch_vars") <(echo "$exempt" | tr ' ' '\n' | sed '/^$/d' | sort -u))"
+  missing_unset="$(comm -23 <(echo "$identity") <(echo "$unset_vars") | tr '\n' ' ')"
+  if [ -n "${missing_unset// /}" ]; then
+    bad "new-agent.sh: идентичность агента не сбрасывается (unset) → унаследуется от родителя: $missing_unset"
+  else
+    ok "идентичность агента сбрасывается перед созданием нового ($(echo "$identity" | wc -l) шт.)"
+  fi
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
