@@ -85,12 +85,14 @@ fi
 # нельзя заsource'ить из теста).
 # shellcheck source=lib/pane.sh
 source "$SCRIPT_DIR/lib/pane.sh"
+# Надзор за task-поллером (тот же код, что и start-agent) — see lib/task-poller-launch.sh.
+# ВАЖНО: source ДО pane-recover.sh — тот при сорсинге перезаписывает $SCRIPT_DIR
+# на .../lib, и любой последующий "$SCRIPT_DIR/lib/..." собрал бы путь lib/lib/.
+# shellcheck source=lib/task-poller-launch.sh
+source "$SCRIPT_DIR/lib/task-poller-launch.sh"
 # Reliable stuck-input recovery (clear + retype) — see lib/pane-recover.sh.
 # shellcheck source=lib/pane-recover.sh
 source "$SCRIPT_DIR/lib/pane-recover.sh"
-# Надзор за task-поллером (тот же код, что и start-agent) — see lib/task-poller-launch.sh.
-# shellcheck source=lib/task-poller-launch.sh
-source "$SCRIPT_DIR/lib/task-poller-launch.sh"
 PREV_TAIL=""
 FROZEN_COUNT=0
 NUDGE_STAGE=0
