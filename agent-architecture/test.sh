@@ -198,11 +198,34 @@ if bash agent-template/scripts/task-poller.test.sh >/dev/null 2>&1; then
 else
   bad "task-poller.sh: юнит-тест провален (agent-template/scripts/task-poller.test.sh)"
 fi
+# Юнит-тест единого запуска/надзора (ensure_task_poller): noscript/running/launched
+# + точный подсчёт по /proc без self-match.
+if bash orchestration/lib/task-poller-launch.test.sh >/dev/null 2>&1; then
+  ok "task-poller-launch.sh: ensure_task_poller / _poller_count — юнит-тест зелёный"
+else
+  bad "task-poller-launch.sh: юнит-тест провален (orchestration/lib/task-poller-launch.test.sh)"
+fi
 # Регрессия: start-agent.sh обязан запускать поллер, иначе доставка задач мертва.
-if grep -q 'task-poller.sh' orchestration/start-agent.sh; then
-  ok "start-agent.sh запускает task-poller"
+if grep -q 'ensure_task_poller' orchestration/start-agent.sh; then
+  ok "start-agent.sh запускает task-poller (ensure_task_poller)"
 else
   bad "start-agent.sh не запускает task-poller — задачи не будут доставляться в сессию"
+fi
+# Регрессия: watchdog обязан НАДЗИРАТЬ за поллером (поднимать при живой сессии),
+# иначе тихо умерший поллер лежит мёртвым до полного рестарта сессии.
+if grep -q 'lib/task-poller-launch.sh' orchestration/watchdog.sh \
+     && grep -q 'ensure_task_poller "\$AGENT" "\$AGENT_WS"' orchestration/watchdog.sh; then
+  ok "watchdog.sh надзирает за task-poller (ensure_task_poller при живой сессии)"
+else
+  bad "watchdog.sh не надзирает за поллером — тихо умерший поллер не поднимется до рестарта"
+fi
+# Регрессия: тело цикла поллера захардено — под set -e прерванный sleep/флап tmux
+# роняли поллер без лога. Требуем set +e на цикле и допуск промахов сессии.
+if grep -q '^set +e' agent-template/scripts/task-poller.sh \
+     && grep -q 'GONE_LIMIT' agent-template/scripts/task-poller.sh; then
+  ok "task-poller.sh: цикл захарден (set +e + допуск флапа сессии GONE_LIMIT)"
+else
+  bad "task-poller.sh: цикл не захарден — транзиентный сбой уронит поллер без записи"
 fi
 # Регрессия: agent-template/install.sh обязан КОПИРОВАТЬ поллер в воркспейс нового
 # агента (список скриптов явный) — иначе новый агент не подключится к общению.

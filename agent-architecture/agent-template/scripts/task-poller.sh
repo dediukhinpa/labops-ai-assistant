@@ -180,10 +180,27 @@ poll_once() {
 [ "${TASK_POLLER_LIB:-0}" = "1" ] && return 0
 
 log "started (agent=$AGENT_ID session=$SESSION interval=${INTERVAL}s)"
+
+# Долгоживущий цикл ОБЯЗАН пережить транзиентные сбои. Снимаем -e на теле цикла:
+# под `set -e` прерванный сигналом `sleep` (в момент рестарта юнита) или мелькнув-
+# ший tmux роняли поллер БЕЗ записи в лог — ровно это наблюдалось в гонке рестарта.
+# Выходим ТОЛЬКО когда сессия реально исчезла, и подтверждаем это несколькими
+# промахами подряд, чтобы кратковременный флап tmux-сервера при рестарте не заставил
+# поллер выйти раньше времени (за ним всё равно следит watchdog/ensure_task_poller).
+set +e
+GONE_LIMIT="${TASK_POLLER_GONE_LIMIT:-3}"
+gone=0
 while true; do
-  # Exit cleanly if the session is gone — start-agent relaunches us on restart,
-  # so we never orphan a poller against a dead session.
-  tmux has-session -t "$SESSION" 2>/dev/null || { log "session gone — exiting"; exit 0; }
-  poll_once || true
-  sleep "$INTERVAL"
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    gone=0
+    poll_once || true
+  else
+    gone=$((gone + 1))
+    if [ "$gone" -ge "$GONE_LIMIT" ]; then
+      log "session gone (${gone}× подряд) — exiting"
+      exit 0
+    fi
+    log "session check failed (${gone}/${GONE_LIMIT}) — возможно рестарт, не выхожу"
+  fi
+  sleep "$INTERVAL" || true
 done

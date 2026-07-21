@@ -88,6 +88,9 @@ source "$SCRIPT_DIR/lib/pane.sh"
 # Reliable stuck-input recovery (clear + retype) — see lib/pane-recover.sh.
 # shellcheck source=lib/pane-recover.sh
 source "$SCRIPT_DIR/lib/pane-recover.sh"
+# Надзор за task-поллером (тот же код, что и start-agent) — see lib/task-poller-launch.sh.
+# shellcheck source=lib/task-poller-launch.sh
+source "$SCRIPT_DIR/lib/task-poller-launch.sh"
 PREV_TAIL=""
 FROZEN_COUNT=0
 NUDGE_STAGE=0
@@ -121,6 +124,13 @@ while true; do
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     restart_session "session gone"
     continue
+  fi
+
+  # Сессия жива → надзор за task-поллером: если он тихо умер (прибит systemd при
+  # рестарте юнита, убит сигналом, упал) — поднимаем заново, не дожидаясь полного
+  # рестарта сессии. Идемпотентно; логируем только фактический повторный подъём.
+  if [ "$(ensure_task_poller "$AGENT" "$AGENT_WS")" = "launched" ]; then
+    log "task-poller был мёртв при живой сессии — поднял заново (supervise)"
   fi
 
   TAIL=$(tmux capture-pane -pt "$SESSION" -S -8 2>/dev/null || true)
