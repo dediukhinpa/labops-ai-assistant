@@ -25,6 +25,7 @@ import type { MultichatPolicy } from '../chats/policy-loader.js'
 import type { MultichatRouter } from '../router/multichat-router.js'
 import type { InboundMessage } from '../router/inbox-bridge.js'
 import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
+import { ensureSubmitted, resolveAgentSession } from '../channel/ensure-submit.js'
 import { gateTelegramMessage, type GateInput } from './gate.js'
 import { isAddressedToBot } from './addressing.js'
 import {
@@ -60,6 +61,23 @@ import {
   type PersistedAlbumMeta,
 } from './album-persistence.js'
 import type { InboundWatcher } from './watcher.js'
+
+// Fire-and-forget: after an inbound is delivered via the channel notification,
+// make sure Claude Code actually submitted it. The research-preview channel
+// auto-submit intermittently leaves the message stuck in the input; this
+// re-submits the ORIGINAL text via the agent's tmux session when that happens.
+// Off unless we can resolve our own session (AGENT_ID) and not opted out.
+// Never awaited and never throws — delivery must not depend on it.
+function scheduleEnsureSubmit(content: string, log: Logger): void {
+  if (process.env.TELEGRAM_ENSURE_SUBMIT === '0') return
+  const session = resolveAgentSession()
+  if (session.length === 0) return
+  void ensureSubmitted({ session, content, log }).catch((err: unknown) => {
+    log.debug('ensure-submit: unexpected rejection (ignored)', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  })
+}
 
 // A single buffered album item — one Telegram update that belongs to an
 // album. We capture everything needed to emit a combined channel notification
@@ -578,6 +596,7 @@ async function gateAndNotify(
     // for a notify-transport failure — the channel may be torn down.
     throw new Error('channel notify failed — message dead-lettered')
   }
+  scheduleEnsureSubmit(event.content, deps.log)
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1007,6 +1026,7 @@ export async function sendAlbumNotification(
       `album notify failed — channel transport refused delivery (mgid=${ids.mediaGroupId})`,
     )
   }
+  scheduleEnsureSubmit(event.content, deps.log)
   return { dispatched: true }
 }
 
