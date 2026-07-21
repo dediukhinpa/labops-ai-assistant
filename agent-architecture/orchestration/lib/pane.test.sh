@@ -37,6 +37,53 @@ looks_like_overlay "$OVERLAY" && ok "overlay recognised"          || bad "overla
 looks_like_overlay "$IDLE"    && bad "idle misread as overlay"    || ok "idle is not an overlay"
 looks_like_overlay "$ACTIVE"  && bad "active turn misread as overlay" || ok "active turn is not an overlay"
 
+# ---- stuck-input detection (pure) ------------------------------------------
+STUCK='────────────────────
+❯ что дальше по плану, босс
+  ⏵⏵ bypass permissions on'
+HINT='────────────────────
+❯ Try"fix lint errors"
+  ⏵⏵ bypass permissions on'
+is_stuck_input "$STUCK"   && ok "stuck input detected"                 || bad "stuck input missed"
+is_stuck_input "$IDLE"    && bad "clean idle misread as stuck"         || ok "clean idle is not stuck"
+is_stuck_input "$ACTIVE"  && bad "active turn misread as stuck"        || ok "active turn is not stuck (would clobber work)"
+is_stuck_input "$HINT"    && bad "placeholder hint misread as stuck"   || ok "placeholder hint is not stuck"
+[ "$(pane_input_raw "$STUCK")" = "что дальше по плану, босс" ] \
+  && ok "pane_input_raw preserves the message text (for retype)" \
+  || bad "pane_input_raw mangled the text: [$(pane_input_raw "$STUCK")]"
+
+# ---- recover_stuck_input (mocked tmux) -------------------------------------
+# tmux is overridden with a stateful mock here, then `unset -f`d so the real
+# tmux section below uses the real binary.
+. "$HERE/pane-recover.sh"
+RECOVER_SETTLE=0
+SENT="$(mktemp)"; CLEARED=0
+tmux() {
+  case "$1" in
+    capture-pane) [ "$CLEARED" -eq 0 ] && printf '%s' "$STUCK" || printf '%s' "$IDLE" ;;
+    send-keys)
+      shift; [ "${1:-}" = "-t" ] && shift 2
+      case "${1:-}" in
+        C-u)    CLEARED=1 ;;
+        -l)     echo "TYPE:${2:-}" >> "$SENT" ;;
+        Enter)  echo "ENTER" >> "$SENT" ;;
+        BSpace) echo "BSPACE" >> "$SENT" ;;
+      esac ;;
+  esac
+}
+recover_stuck_input "fake-session"; rc=$?
+[ "$rc" -eq 0 ] && ok "recover: returns success on a stuck box" || bad "recover: rc=$rc"
+grep -q 'TYPE:что дальше по плану, босс' "$SENT" \
+  && ok "recover: re-types the captured message literally" || bad "recover: message not re-typed"
+grep -q '^ENTER$' "$SENT" && ok "recover: submits with Enter" || bad "recover: no Enter"
+# Not stuck → no-op (rc=2)
+CLEARED=1; : > "$SENT"
+recover_stuck_input "fake-session"; rc=$?
+{ [ "$rc" -eq 2 ] && [ ! -s "$SENT" ]; } && ok "recover: no-op on a clean prompt (rc=2)" \
+  || bad "recover: acted on a clean prompt (rc=$rc, sent=$(cat "$SENT"))"
+rm -f "$SENT"
+unset -f tmux    # restore real tmux for the live section below
+
 # ---- real tmux: Escape must restore the prompt after an overlay -------------
 # This is the actual discriminator the watchdog relies on, so stubbing it would
 # prove nothing. Skips cleanly where tmux is unavailable (CI containers).
@@ -98,6 +145,22 @@ if [ -n "$esc_line" ] && [ -n "$res_line" ] && [ "$esc_line" -lt "$res_line" ]; 
   ok "Escape attempt precedes the restart (line $esc_line < $res_line)"
 else
   bad "Escape attempt does not precede the restart (esc=$esc_line restart=$res_line)"
+fi
+
+# Reliable stuck-input recovery must be wired into the stuck-input ladder, and
+# must run BEFORE the operator-escalation (else a recoverable message escalates
+# needlessly).
+if grep -q 'source .*lib/pane-recover.sh' "$W" && grep -q 'recover_stuck_input' "$W"; then
+  ok "watchdog.sh wires recover_stuck_input (clear + retype)"
+else
+  bad "watchdog.sh does not use recover_stuck_input — stuck messages only escalate"
+fi
+rec_line="$(grep -n 'recover_stuck_input "\$SESSION"' "$W" | head -1 | cut -d: -f1)"
+esc2_line="$(grep -n 'escalating to operator' "$W" | head -1 | cut -d: -f1)"
+if [ -n "$rec_line" ] && [ -n "$esc2_line" ] && [ "$rec_line" -lt "$esc2_line" ]; then
+  ok "recovery is attempted before operator escalation (line $rec_line < $esc2_line)"
+else
+  bad "recovery does not precede escalation (recover=$rec_line escalate=$esc2_line)"
 fi
 
 echo

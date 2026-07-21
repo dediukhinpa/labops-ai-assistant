@@ -85,6 +85,9 @@ fi
 # нельзя заsource'ить из теста).
 # shellcheck source=lib/pane.sh
 source "$SCRIPT_DIR/lib/pane.sh"
+# Reliable stuck-input recovery (clear + retype) — see lib/pane-recover.sh.
+# shellcheck source=lib/pane-recover.sh
+source "$SCRIPT_DIR/lib/pane-recover.sh"
 PREV_TAIL=""
 FROZEN_COUNT=0
 NUDGE_STAGE=0
@@ -216,12 +219,21 @@ while true; do
        notify_op "$AGENT" "✉️ в поле ввода застрял неотправленный промпт — пробую дослать (Enter)"
        tmux send-keys -t "$SESSION" Enter 2>/dev/null || true
        NUDGE_STAGE=1 ;;
-    1) log "stuck input persists — Escape then Enter (bracketed-paste commit)"
-       tmux send-keys -t "$SESSION" Escape 2>/dev/null || true
-       sleep 1
-       tmux send-keys -t "$SESSION" Enter 2>/dev/null || true
-       NUDGE_STAGE=2 ;;
-    2) # Auto-commit failed. DO NOT restart — keep the session and its work alive;
+    1) # A plain Enter cannot finalise a stuck bracketed-paste (verified: Enter,
+       # Escape, Ctrl-C, ESC[201~ all fail). Reliable path — clear the box and
+       # RE-TYPE as literal keystrokes + Enter (task-poller proves literal typing
+       # submits). recover_stuck_input returns 1 only if the box won't clear.
+       log "stuck input persists — reliable resubmit (clear + retype)"
+       recover_stuck_input "$SESSION"; rc=$?
+       if [ "$rc" -ne 1 ]; then
+         log "stuck input recovered (clear + retype), rc=$rc"
+         notify_op "$AGENT" "✅ застрявшее сообщение дослал (очистка поля + повтор ввода). Если текст выглядит обрезанным — отправьте ещё раз."
+         NUDGE_STAGE=0   # recovered — reset the ladder
+       else
+         log "reliable resubmit failed — box won't clear, escalating next cycle"
+         NUDGE_STAGE=2
+       fi ;;
+    2) # Recovery failed. DO NOT restart — keep the session and its work alive;
        # escalate to the operator to submit manually. (Upstream: Claude Code
        # research-preview channels bug — see mode (B) note.)
        log "stuck input not auto-committing — session left ALIVE, escalating to operator (no restart)"
