@@ -20,6 +20,8 @@ chmod +x "$TMP/fake-send.sh" "$TMP/fail-send.sh"
 
 export NOTIFY_SEND_CMD="$TMP/fake-send.sh"
 export WATCHDOG_ALERT_COOLDOWN=300
+# Изолируем файловые метки троттла от реального ~/.claude-lab.
+export NOTIFY_STATE_DIR="$TMP/notify-state"
 
 # shellcheck disable=SC1091
 source "$HERE/notify.sh"
@@ -63,4 +65,35 @@ NOTIFY_TAG="sb-monitor" WATCHDOG_ALERT_COOLDOWN=0 notify_op demo "ping"
 grep -q "sb-monitor" "$SENT" || fail "NOTIFY_TAG not honored in the message"
 grep -q "watchdog/demo" "$SENT" && fail "default tag leaked while NOTIFY_TAG was set"
 
-echo "notify.sh: all 7 checks passed"
+# 8. РЕГРЕССИЯ (2026-08-09): троттл обязан переживать рестарт демона.
+# Раньше метки жили только в памяти процесса — падающий watchdog поднимался
+# systemd'ом с чистым состоянием и слал оператору один и тот же алерт каждые
+# ~2 минуты часами. Эмулируем рестарт: свежий bash, тот же NOTIFY_STATE_DIR.
+: > "$SENT"
+run_fresh() {   # отдельный процесс = «демон подняли заново»
+  env NOTIFY_SEND_CMD="$TMP/fake-send.sh" WATCHDOG_ALERT_COOLDOWN=300 \
+      NOTIFY_STATE_DIR="$TMP/notify-restart" \
+      bash -c 'source "$1"; notify_op demo "restart flapping"' _ "$HERE/notify.sh"
+}
+run_fresh
+[ "$(lines)" = "1" ] || fail "первый алерт после старта не ушёл: got $(lines)"
+run_fresh
+run_fresh
+[ "$(lines)" = "1" ] || fail "троттл не пережил рестарт демона: got $(lines) отправок вместо 1"
+
+# 9. Недоступный каталог состояния не должен ронять отправку (fallback в память).
+: > "$SENT"
+NOTIFY_STATE_DIR=/proc/nonexistent/notify WATCHDOG_ALERT_COOLDOWN=0 \
+  notify_op demo "state dir unavailable"
+[ "$(lines)" = "1" ] || fail "недоступный NOTIFY_STATE_DIR сломал отправку: got $(lines)"
+
+# 10. Не роняет вызывающего с `set -e` (в т.ч. когда троттл глушит сообщение).
+(
+  set -euo pipefail
+  notify_op demo "state dir unavailable"   # подавлено троттлом
+  notify_op demo "restart flapping"        # подавлено файловой меткой
+  echo ok > "$TMP/survived-throttle"
+)
+[ -f "$TMP/survived-throttle" ] || fail "notify_op уронил вызывающего с set -e при срабатывании троттла"
+
+echo "notify.sh: all 10 checks passed"

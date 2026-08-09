@@ -98,6 +98,10 @@ FROZEN_COUNT=0
 NUDGE_STAGE=0
 IDLE_COUNT=0
 IDLE_CONSOLIDATED=0
+# Рестарт по ошибке авторизации разрешён ровно один раз за эпизод — сбрасывается
+# только доказанным восстановлением (см. ветку (A2) и сброс ниже), НЕ рестартом:
+# иначе при реально отозванном доступе получился бы вечный цикл рестартов.
+AUTH_RESTARTED=0
 
 restart_session() {
   log "restarting ($1)"
@@ -140,6 +144,13 @@ while true; do
   # Pane moved since last cycle → agent is progressing; reset and move on
   if [ "$TAIL" != "$PREV_TAIL" ]; then
     FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
+    # Эпизод auth-сбоя считаем закрытым только по доказательству: ход реально
+    # прошёл (свежий heartbeat) и ошибки в панели нет. Просто перерисовка панели
+    # доказательством не является — после рестарта она новая всегда.
+    if [ "$AUTH_RESTARTED" -eq 1 ] && heartbeat_fresh && ! has_auth_error "$TAIL"; then
+      AUTH_RESTARTED=0
+      log "авторизация восстановлена (ход прошёл) — сброс auth-ладдера"
+    fi
     PREV_TAIL="$TAIL"
     continue
   fi
@@ -193,6 +204,24 @@ while true; do
     continue
   fi
 
+  # (A2) Промпт есть, но в панели — ошибка авторизации, и heartbeat протух: ходы
+  # падают, не начавшись. Для веток ниже это выглядит как здоровый простой, см.
+  # AUTH_ERR_RE в lib/pane.sh. Один рестарт (свежий процесс перечитает
+  # credentials.json), дальше — только эскалация оператору, чтобы не устроить
+  # цикл бесполезных рестартов при реально отозванном доступе.
+  if has_auth_error "$TAIL" && ! heartbeat_fresh; then
+    if [ "$AUTH_RESTARTED" -eq 0 ]; then
+      AUTH_RESTARTED=1
+      log "ошибка авторизации в панели, heartbeat протух ($(heartbeat_age)s) — пробую рестарт сессии"
+      restart_session "ошибка авторизации Claude — сессия жива, но ходы не выполняются"
+      continue
+    fi
+    log "ошибка авторизации сохраняется после рестарта — эскалация оператору"
+    WATCHDOG_ALERT_COOLDOWN="${WATCHDOG_AUTH_ALERT_COOLDOWN:-3600}" \
+      notify_op "$AGENT" "⛔ агент не может обращаться к модели: ошибка авторизации в сессии (рестарт не помог). Проверьте вход Claude Code: подписку/~/.claude/.credentials.json."
+    continue
+  fi
+
   # (B) Idle prompt. Is there unsubmitted text stuck in the input box?
   # Strip everything THROUGH the ❯ marker: the idle prompt renders "❯" + a
   # non-breaking space (U+00A0), NOT "❯ " with an ASCII space, so the old
@@ -227,16 +256,32 @@ while true; do
   # off to the operator. NEVER restart (see mode (B) note above): the session is
   # alive and a restart would lose the agent's work without delivering the message.
   case "$NUDGE_STAGE" in
-    0) log "stuck input detected — Enter"
-       notify_op "$AGENT" "✉️ в поле ввода застрял неотправленный промпт — пробую дослать (Enter)"
-       tmux send-keys -t "$SESSION" Enter 2>/dev/null || true
-       NUDGE_STAGE=1 ;;
+    0) if buffer_is_empty "$SESSION"; then
+         # Текст только НАРИСОВАН, буфера за ним нет (сорванный auto-submit
+         # канала). Enter тут отправлять нечего, а алерт «застрял промпт» —
+         # ложная тревога: пропускаем ступень и сразу идём в перепечатку,
+         # которая доставит потерянное сообщение.
+         log "нарисованный, но не набранный ввод (буфер пуст) — сразу перепечатка"
+         NUDGE_STAGE=1
+       else
+         log "stuck input detected — Enter"
+         notify_op "$AGENT" "✉️ в поле ввода застрял неотправленный промпт — пробую дослать (Enter)"
+         tmux send-keys -t "$SESSION" Enter 2>/dev/null || true
+         NUDGE_STAGE=1
+       fi ;;
     1) # A plain Enter cannot finalise a stuck bracketed-paste (verified: Enter,
        # Escape, Ctrl-C, ESC[201~ all fail). Reliable path — clear the box and
        # RE-TYPE as literal keystrokes + Enter (task-poller proves literal typing
        # submits). recover_stuck_input returns 1 only if the box won't clear.
        log "stuck input persists — reliable resubmit (clear + retype)"
-       recover_stuck_input "$SESSION"; rc=$?
+       # КРИТИЧНО: захват кода возврата ТОЛЬКО через `|| rc=$?`. Файл идёт под
+       # `set -e`, где `cmd; rc=$?` убивает демон на любом ненулевом коде — а
+       # recover_stuck_input штатно возвращает 1 (поле не чистится) и 2 (уже не
+       # залипло). Итог до фикса (найдено 2026-08-09): watchdog умирал ровно на
+       # этой строке, systemd поднимал его заново, NUDGE_STAGE обнулялся, и
+       # лестница вечно начиналась заново с «пробую дослать (Enter)» — часы
+       # алертов оператору и ни одного реального восстановления.
+       rc=0; recover_stuck_input "$SESSION" || rc=$?
        if [ "$rc" -ne 1 ]; then
          log "stuck input recovered (clear + retype), rc=$rc"
          notify_op "$AGENT" "✅ застрявшее сообщение дослал (очистка поля + повтор ввода). Если текст выглядит обрезанным — отправьте ещё раз."

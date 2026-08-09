@@ -242,6 +242,53 @@ else
   ok "task-poller.sh не тащит headless claude (остаётся на подписке)"
 fi
 
+echo "── 12. Демоны под set -e не убивают себя захватом кода возврата ──"
+# Регрессия 2026-08-09: в watchdog.sh стояло `recover_stuck_input "$SESSION"; rc=$?`.
+# Под `set -e` такая конструкция завершает скрипт на ЛЮБОМ ненулевом коде — а
+# функция штатно возвращает 1 и 2. Watchdog умирал ровно на этой строке, systemd
+# поднимал его заново, лестница эскалации обнулялась, и оператор часами получал
+# «пробую дослать (Enter)» вместо восстановления. Правильная форма — `|| rc=$?`.
+RC_HITS=""
+while IFS= read -r f; do
+  grep -q 'set -euo\? pipefail\|set -e' "$f" 2>/dev/null || continue
+  # grep -n по ОДНОМУ файлу печатает "NNN:строка" (без имени), поэтому отбрасываем
+  # строки-комментарии по шаблону ^NNN:<пробелы>#, а не :NNN:<пробелы>#.
+  hits="$(grep -nE ';[[:space:]]*[A-Za-z_]+=\$\?' "$f" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+  [ -n "$hits" ] && RC_HITS="$RC_HITS
+$f:
+$hits"
+done < <(find orchestration agent-template skills -name '*.sh' -not -name '*.test.sh' 2>/dev/null)
+if [ -n "${RC_HITS// /}" ]; then
+  bad "захват \$? через \`cmd; rc=\$?\` в скрипте с set -e — демон умрёт на первом ненулевом коде:"
+  echo "$RC_HITS" | sed 's/^/    /'
+else
+  ok "нигде нет \`cmd; rc=\$?\` под set -e (только безопасное \`|| rc=\$?\`)"
+fi
+# Регрессия: троттл алертов обязан переживать рестарт демона (файловые метки),
+# иначе флапающий супервизор спамит оператора одним и тем же сообщением.
+if grep -q 'NOTIFY_STATE_DIR' orchestration/lib/notify.sh; then
+  ok "notify.sh: троттл персистентный (переживает рестарт демона)"
+else
+  bad "notify.sh: троттл только в памяти процесса — рестарт демона обнулит cooldown и оператор получит спам"
+fi
+# Регрессия: мёртвая авторизация (сессия жива, ходы падают) обязана детектиться —
+# для остальных веток она неотличима от здорового простоя.
+if grep -q 'has_auth_error' orchestration/lib/pane.sh \
+     && grep -q 'has_auth_error "\$TAIL"' orchestration/watchdog.sh; then
+  ok "watchdog.sh ловит мёртвую авторизацию (сессия жива, но ходы не выполняются)"
+else
+  bad "watchdog.sh не ловит ошибку авторизации — агент будет молчать сутками, выглядя здоровым"
+fi
+# Регрессия: «залипло ли» нельзя решать по отрисовке — сорванный auto-submit
+# рисует текст, не кладя его в буфер. Единственный различитель — курсор.
+if grep -q 'buffer_is_empty' orchestration/lib/pane.sh \
+     && grep -q 'buffer_is_empty' orchestration/lib/pane-recover.sh \
+     && grep -q 'buffer_is_empty' orchestration/watchdog.sh; then
+  ok "восстановление ввода различает призрак отрисовки и реальный буфер (по курсору)"
+else
+  bad "восстановление судит о буфере по capture-pane — на призраке сдастся с «box won't clear»"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

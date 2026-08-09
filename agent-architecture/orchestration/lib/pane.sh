@@ -33,6 +33,24 @@ looks_like_overlay() {
     'Context Usage|Estimated usage by category|Auto-compact window|/context all to expand|Memory files ·|Skills ·'
 }
 
+# ── Мёртвая авторизация ──────────────────────────────────────────────────────
+# Самый коварный отказ: сессия ЖИВА (TUI рисует ❯, tmux цел, процесс на месте),
+# но каждый ход мгновенно падает на авторизации — Claude Code печатает ошибку и
+# завершает ход за 0s. Для всех прочих проверок это неотличимо от здорового
+# простоя: промпт есть, активного хода нет, поле ввода пусто. Heartbeat при этом
+# протухает (Stop-хук не срабатывает — ход не доходит до конца), но протухший
+# heartbeat сам по себе рестарт не запускает. Итог: агент молчит сутками, а
+# watchdog считает его здоровым (найдено 2026-08-09 на developer: токен истёк в
+# 15:00, процесс не смог обновиться, 16 часов тишины).
+#
+# Практически всегда лечится рестартом сессии: свежий процесс перечитывает
+# ~/.claude/.credentials.json. Если же доступ реально отозван — рестарт не
+# поможет, поэтому watchdog пробует его ОДИН раз и дальше зовёт оператора.
+AUTH_ERR_RE='disabled Claude subscription access|Invalid API key|Please run /login|OAuth token (has )?expired|Credit balance is too low|authentication_error|Unauthorized'
+
+# has_auth_error <pane-text> — в панели видна ошибка авторизации/доступа?
+has_auth_error() { printf '%s' "${1:-}" | grep -qaE "$AUTH_ERR_RE"; }
+
 # ── Stuck-input detection & recovery ─────────────────────────────────────────
 # The tg channel delivers an inbound by asking Claude Code (research-preview
 # `claude/channel`) to inject it into the input and auto-submit. That auto-submit
@@ -57,6 +75,34 @@ pane_input() {
 pane_input_raw() {
   printf '%s' "${1:-}" | grep -a '❯' | tail -1 \
     | sed -e 's/.*❯//' -e 's/\xc2\xa0//g' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+# ── Призрак отрисовки vs реальный буфер ──────────────────────────────────────
+# ПРОВЕРЕНО НА ЖИВОЙ СЕССИИ 2026-08-09 (developer): когда канал доставляет
+# входящее, а auto-submit срывается, Claude Code РИСУЕТ текст в поле, но НЕ
+# кладёт его в буфер ввода. Для capture-pane это неотличимо от набранного
+# текста, поэтому watchdog годами лечил не ту болезнь: слал Enter (отправлять
+# нечего), пытался очистить поле (оно и так пусто), читал призрак снова, решал
+# «поле не чистится» и звал оператора.
+#
+# Различает их ТОЛЬКО позиция курсора: в пустом поле курсор стоит сразу за
+# «❯ » (колонка 2), при реально набранном тексте — за последним символом.
+#   поле пусто + призрак «проверь второй мозг» → cursor_x=2
+#   набрано «тест»                              → cursor_x=6
+# Поэтому «залипло ли» решаем по курсору, а текст призрака используем как
+# ИСТОЧНИК потерянного сообщения — его достаточно перепечатать и отправить.
+PANE_INPUT_COL0="${PANE_INPUT_COL0:-2}"   # колонка курсора в пустом поле («❯ »)
+
+# pane_cursor_x <session> — колонка курсора (пусто, если tmux недоступен).
+pane_cursor_x() { tmux display -pt "$1" '#{cursor_x}' 2>/dev/null || true; }
+
+# buffer_is_empty <session> — в БУФЕРЕ ввода ничего нет (что бы ни рисовалось).
+# Неизвестный курсор трактуем как «не пусто»: тогда логика откатывается к
+# прежнему, текстовому поведению, а не начинает слать лишние клавиши.
+buffer_is_empty() {
+  local x; x="$(pane_cursor_x "$1")"
+  case "$x" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$x" -le "$PANE_INPUT_COL0" ]
 }
 
 # is_stuck_input <pane-text> — a message is sitting in the input unsubmitted:
