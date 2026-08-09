@@ -37,6 +37,26 @@ looks_like_overlay "$OVERLAY" && ok "overlay recognised"          || bad "overla
 looks_like_overlay "$IDLE"    && bad "idle misread as overlay"    || ok "idle is not an overlay"
 looks_like_overlay "$ACTIVE"  && bad "active turn misread as overlay" || ok "active turn is not an overlay"
 
+# ---- мёртвая авторизация ---------------------------------------------------
+# Реальный хвост панели developer 2026-08-09: сессия жива, промпт нарисован,
+# ход завершается за 0s ошибкой доступа. Все прочие проверки видят «здоровый
+# простой», поэтому агент молчал 16 часов.
+AUTH_DEAD='● Your organization has disabled Claude subscription access for Claude Code ·
+  Use an Anthropic API key instead, or ask your admin to enable access
+✻ Cogitated for 0s
+────────────────────
+❯
+  ⏵⏵ bypass permissions on'
+has_auth_error "$AUTH_DEAD" && ok "auth error detected"               || bad "auth error missed"
+has_auth_error "$IDLE"      && bad "idle misread as auth error"       || ok "idle is not an auth error"
+has_auth_error "$ACTIVE"    && bad "active turn misread as auth error" || ok "active turn is not an auth error"
+# И — главное — почему это нужно отдельной веткой: панель с мёртвой авторизацией
+# неотличима от здорового простоя для остальных классификаторов.
+has_prompt "$AUTH_DEAD"      && ok "auth-dead pane still renders a prompt (why it hid)" \
+                             || bad "auth-dead pane: prompt missed"
+is_stuck_input "$AUTH_DEAD"  && bad "auth-dead pane misread as stuck input" \
+                             || ok "auth-dead pane is not stuck input (nothing typed)"
+
 # ---- stuck-input detection (pure) ------------------------------------------
 STUCK='────────────────────
 ❯ что дальше по плану, босс
@@ -57,14 +77,27 @@ is_stuck_input "$HINT"    && bad "placeholder hint misread as stuck"   || ok "pl
 # tmux section below uses the real binary.
 . "$HERE/pane-recover.sh"
 RECOVER_SETTLE=0
+RECOVER_SUBMIT_DELAY=0
 SENT="$(mktemp)"; CLEARED=0
+# CURSOR_X — что мок сообщает про КУРСОР, независимо от отрисовки. Именно этим
+# отличается набранный текст (курсор ушёл вправо) от призрака отрисовки
+# (курсор в колонке 2 при «полном» на вид поле).
+CURSOR_X=21
+# PHANTOM=1 — воспроизводит боевой случай: буфер пуст, но текст ОСТАЁТСЯ
+# нарисованным что бы мы ни нажимали. Без этого мок «самоисцелялся» после C-u и
+# тест проходил даже со старым кодом, ничего не гарантируя.
+PHANTOM=0
 tmux() {
   case "$1" in
-    capture-pane) [ "$CLEARED" -eq 0 ] && printf '%s' "$STUCK" || printf '%s' "$IDLE" ;;
+    capture-pane)
+      if [ "$PHANTOM" -eq 1 ]; then printf '%s' "$STUCK"
+      elif [ "$CLEARED" -eq 0 ]; then printf '%s' "$STUCK"
+      else printf '%s' "$IDLE"; fi ;;
+    display)      printf '%s' "$CURSOR_X" ;;
     send-keys)
       shift; [ "${1:-}" = "-t" ] && shift 2
       case "${1:-}" in
-        C-u)    CLEARED=1 ;;
+        C-u)    [ "$PHANTOM" -eq 1 ] || { CLEARED=1; CURSOR_X=2; } ;;
         -l)     echo "TYPE:${2:-}" >> "$SENT" ;;
         Enter)  echo "ENTER" >> "$SENT" ;;
         BSpace) echo "BSPACE" >> "$SENT" ;;
@@ -81,6 +114,28 @@ CLEARED=1; : > "$SENT"
 recover_stuck_input "fake-session"; rc=$?
 { [ "$rc" -eq 2 ] && [ ! -s "$SENT" ]; } && ok "recover: no-op on a clean prompt (rc=2)" \
   || bad "recover: acted on a clean prompt (rc=$rc, sent=$(cat "$SENT"))"
+
+# --- РЕГРЕССИЯ 2026-08-09: призрак отрисовки при ПУСТОМ буфере --------------
+# Именно этот случай встречается в бою (сорванный auto-submit канала рисует
+# сообщение, но в буфер не кладёт) — и именно на нём старое восстановление
+# сдавалось с «box won't clear», хотя чистить было нечего.
+CLEARED=0; CURSOR_X=2; PHANTOM=1; : > "$SENT"   # текст нарисован, буфер пуст
+buffer_is_empty fake-session && ok "призрак распознан: буфер пуст, хотя текст нарисован" \
+                             || bad "призрак принят за набранный текст (курсор проигнорирован)"
+recover_stuck_input "fake-session"; rc=$?
+[ "$rc" -eq 0 ] && ok "recover: призрак → доставка (rc=0), а не отказ box-wont-clear" \
+                || bad "recover: сдался на призраке (rc=$rc) — регрессия вернулась"
+grep -q 'TYPE:что дальше по плану, босс' "$SENT" \
+  && ok "recover: потерянное сообщение перепечатано из отрисовки" \
+  || bad "recover: сообщение не восстановлено (sent=$(cat "$SENT"))"
+grep -q '^ENTER$' "$SENT" && ok "recover: призрак отправлен Enter'ом" || bad "recover: нет Enter"
+grep -q '^BSPACE$' "$SENT" && bad "recover: лупит BSpace по пустому буферу" \
+                           || ok "recover: не чистит то, что уже пусто"
+
+# Набранный оператором текст (курсор ушёл вправо) — поле чистим перед перепечаткой.
+CLEARED=0; CURSOR_X=21; PHANTOM=0; : > "$SENT"
+buffer_is_empty fake-session && bad "набранный текст принят за призрак" \
+                             || ok "набранный текст распознан как реальный буфер"
 rm -f "$SENT"
 unset -f tmux    # restore real tmux for the live section below
 

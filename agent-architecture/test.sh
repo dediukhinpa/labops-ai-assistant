@@ -198,11 +198,34 @@ if bash agent-template/scripts/task-poller.test.sh >/dev/null 2>&1; then
 else
   bad "task-poller.sh: юнит-тест провален (agent-template/scripts/task-poller.test.sh)"
 fi
+# Юнит-тест единого запуска/надзора (ensure_task_poller): noscript/running/launched
+# + точный подсчёт по /proc без self-match.
+if bash orchestration/lib/task-poller-launch.test.sh >/dev/null 2>&1; then
+  ok "task-poller-launch.sh: ensure_task_poller / _poller_count — юнит-тест зелёный"
+else
+  bad "task-poller-launch.sh: юнит-тест провален (orchestration/lib/task-poller-launch.test.sh)"
+fi
 # Регрессия: start-agent.sh обязан запускать поллер, иначе доставка задач мертва.
-if grep -q 'task-poller.sh' orchestration/start-agent.sh; then
-  ok "start-agent.sh запускает task-poller"
+if grep -q 'ensure_task_poller' orchestration/start-agent.sh; then
+  ok "start-agent.sh запускает task-poller (ensure_task_poller)"
 else
   bad "start-agent.sh не запускает task-poller — задачи не будут доставляться в сессию"
+fi
+# Регрессия: watchdog обязан НАДЗИРАТЬ за поллером (поднимать при живой сессии),
+# иначе тихо умерший поллер лежит мёртвым до полного рестарта сессии.
+if grep -q 'lib/task-poller-launch.sh' orchestration/watchdog.sh \
+     && grep -q 'ensure_task_poller "\$AGENT" "\$AGENT_WS"' orchestration/watchdog.sh; then
+  ok "watchdog.sh надзирает за task-poller (ensure_task_poller при живой сессии)"
+else
+  bad "watchdog.sh не надзирает за поллером — тихо умерший поллер не поднимется до рестарта"
+fi
+# Регрессия: тело цикла поллера захардено — под set -e прерванный sleep/флап tmux
+# роняли поллер без лога. Требуем set +e на цикле и допуск промахов сессии.
+if grep -q '^set +e' agent-template/scripts/task-poller.sh \
+     && grep -q 'GONE_LIMIT' agent-template/scripts/task-poller.sh; then
+  ok "task-poller.sh: цикл захарден (set +e + допуск флапа сессии GONE_LIMIT)"
+else
+  bad "task-poller.sh: цикл не захарден — транзиентный сбой уронит поллер без записи"
 fi
 # Регрессия: agent-template/install.sh обязан КОПИРОВАТЬ поллер в воркспейс нового
 # агента (список скриптов явный) — иначе новый агент не подключится к общению.
@@ -217,6 +240,53 @@ if grep -vE '^[[:space:]]*#' agent-template/scripts/task-poller.sh \
   bad "task-poller.sh использует headless claude — это SDK-кредиты, запрещено (см. AGENT_ROUTER.md)"
 else
   ok "task-poller.sh не тащит headless claude (остаётся на подписке)"
+fi
+
+echo "── 12. Демоны под set -e не убивают себя захватом кода возврата ──"
+# Регрессия 2026-08-09: в watchdog.sh стояло `recover_stuck_input "$SESSION"; rc=$?`.
+# Под `set -e` такая конструкция завершает скрипт на ЛЮБОМ ненулевом коде — а
+# функция штатно возвращает 1 и 2. Watchdog умирал ровно на этой строке, systemd
+# поднимал его заново, лестница эскалации обнулялась, и оператор часами получал
+# «пробую дослать (Enter)» вместо восстановления. Правильная форма — `|| rc=$?`.
+RC_HITS=""
+while IFS= read -r f; do
+  grep -q 'set -euo\? pipefail\|set -e' "$f" 2>/dev/null || continue
+  # grep -n по ОДНОМУ файлу печатает "NNN:строка" (без имени), поэтому отбрасываем
+  # строки-комментарии по шаблону ^NNN:<пробелы>#, а не :NNN:<пробелы>#.
+  hits="$(grep -nE ';[[:space:]]*[A-Za-z_]+=\$\?' "$f" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+  [ -n "$hits" ] && RC_HITS="$RC_HITS
+$f:
+$hits"
+done < <(find orchestration agent-template skills -name '*.sh' -not -name '*.test.sh' 2>/dev/null)
+if [ -n "${RC_HITS// /}" ]; then
+  bad "захват \$? через \`cmd; rc=\$?\` в скрипте с set -e — демон умрёт на первом ненулевом коде:"
+  echo "$RC_HITS" | sed 's/^/    /'
+else
+  ok "нигде нет \`cmd; rc=\$?\` под set -e (только безопасное \`|| rc=\$?\`)"
+fi
+# Регрессия: троттл алертов обязан переживать рестарт демона (файловые метки),
+# иначе флапающий супервизор спамит оператора одним и тем же сообщением.
+if grep -q 'NOTIFY_STATE_DIR' orchestration/lib/notify.sh; then
+  ok "notify.sh: троттл персистентный (переживает рестарт демона)"
+else
+  bad "notify.sh: троттл только в памяти процесса — рестарт демона обнулит cooldown и оператор получит спам"
+fi
+# Регрессия: мёртвая авторизация (сессия жива, ходы падают) обязана детектиться —
+# для остальных веток она неотличима от здорового простоя.
+if grep -q 'has_auth_error' orchestration/lib/pane.sh \
+     && grep -q 'has_auth_error "\$TAIL"' orchestration/watchdog.sh; then
+  ok "watchdog.sh ловит мёртвую авторизацию (сессия жива, но ходы не выполняются)"
+else
+  bad "watchdog.sh не ловит ошибку авторизации — агент будет молчать сутками, выглядя здоровым"
+fi
+# Регрессия: «залипло ли» нельзя решать по отрисовке — сорванный auto-submit
+# рисует текст, не кладя его в буфер. Единственный различитель — курсор.
+if grep -q 'buffer_is_empty' orchestration/lib/pane.sh \
+     && grep -q 'buffer_is_empty' orchestration/lib/pane-recover.sh \
+     && grep -q 'buffer_is_empty' orchestration/watchdog.sh; then
+  ok "восстановление ввода различает призрак отрисовки и реальный буфер (по курсору)"
+else
+  bad "восстановление судит о буфере по capture-pane — на призраке сдастся с «box won't clear»"
 fi
 
 echo

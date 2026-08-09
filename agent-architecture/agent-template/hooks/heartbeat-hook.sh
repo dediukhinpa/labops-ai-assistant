@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Drain stdin first (Claude passes JSON on it). Делаем это ДО любого раннего
+# выхода: если слить после sdk-guard, пишущий в нас процесс словит SIGPIPE на
+# гонке (мы вышли раньше, чем он успел записать). Слив всегда — читатель есть.
+cat >/dev/null 2>&1 || true
+
 # sdk-guard: skip when running as Agent SDK child to prevent recursion.
 if [ "${CLAUDE_SDK_CHILD:-0}" = "1" ]; then
     exit 0
@@ -26,9 +31,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STATE_DIR="$WS/state"
 HEARTBEAT="$STATE_DIR/heartbeat"
-
-# Drain stdin (Claude passes JSON on it) so the writer never hits a broken pipe.
-cat >/dev/null 2>&1 || true
 
 mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
 

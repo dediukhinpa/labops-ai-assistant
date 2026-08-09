@@ -20,6 +20,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Settle delay between key actions (override to 0 in tests).
 RECOVER_SETTLE="${RECOVER_SETTLE:-0.3}"
+# Пауза между литеральным вводом и Enter. Замерено на живой сессии 2026-08-09:
+# с паузой 1s Enter не коммитил строку, с 2s — коммитил. 0.3s (RECOVER_SETTLE)
+# заведомо мало, поэтому отдельная константа, а не переиспользование.
+RECOVER_SUBMIT_DELAY="${RECOVER_SUBMIT_DELAY:-2}"
 # Backspace-burst length when Ctrl-U leaves residue.
 RECOVER_BSPACE="${RECOVER_BSPACE:-64}"
 
@@ -36,24 +40,34 @@ recover_stuck_input() {
 
   text="$(pane_input_raw "$pane")"
 
-  # 1. clear the box
-  tmux send-keys -t "$session" C-u 2>/dev/null || return 1
-  sleep "$RECOVER_SETTLE"
-  pane="$(_recover_capture "$session")"
-  if [ -n "$(pane_input "$pane")" ]; then
-    # Ctrl-U left residue (stuck paste can resist it) → backspace burst.
-    local i
-    for ((i = 0; i < RECOVER_BSPACE; i++)); do
-      tmux send-keys -t "$session" BSpace 2>/dev/null || break
-    done
+  # 1. Очистка поля — ТОЛЬКО если в буфере действительно что-то есть.
+  # Чаще всего его там нет: сорванный auth-submit канала оставляет лишь
+  # ОТРИСОВКУ сообщения (см. buffer_is_empty в pane.sh). Раньше проверка
+  # «очистилось ли» читала ту же отрисовку, вечно видела текст и возвращала 1
+  # («box won't clear») — восстановление сдавалось ровно в том случае, ради
+  # которого написано, и звало оператора. Теперь пустоту подтверждает курсор.
+  if ! buffer_is_empty "$session"; then
+    tmux send-keys -t "$session" C-u 2>/dev/null || return 1
     sleep "$RECOVER_SETTLE"
-    pane="$(_recover_capture "$session")"
-    [ -z "$(pane_input "$pane")" ] || return 1   # still stuck — give up
+    if ! buffer_is_empty "$session"; then
+      # Ctrl-U left residue (stuck paste can resist it) → backspace burst.
+      local i
+      for ((i = 0; i < RECOVER_BSPACE; i++)); do
+        tmux send-keys -t "$session" BSpace 2>/dev/null || break
+      done
+      sleep "$RECOVER_SETTLE"
+      buffer_is_empty "$session" || return 1   # still stuck — give up
+    fi
   fi
 
-  # 2. re-type the captured text literally and submit
+  # 2. Перепечатываем текст литерально и отправляем. Литеральный ввод — не
+  # bracketed paste, поэтому Enter его коммитит (проверено вручную на живой
+  # сессии 2026-08-09: именно так потерянное сообщение оператора дошло до
+  # модели). Пауза перед Enter обязательна — на живой сессии отправка сразу
+  # после -l не срабатывала, TUI не успевал принять строку.
   if [ -n "$text" ]; then
     tmux send-keys -t "$session" -l "$text" 2>/dev/null || return 1
+    sleep "$RECOVER_SUBMIT_DELAY"
   fi
   tmux send-keys -t "$session" Enter 2>/dev/null || return 1
   return 0
