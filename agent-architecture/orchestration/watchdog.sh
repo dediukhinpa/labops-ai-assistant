@@ -8,6 +8,10 @@ AGENT="$1"
 SESSION="labops-$AGENT"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 START_SCRIPT="$SCRIPT_DIR/start-agent.sh"
+# Пути фиксируем здесь: lib/pane-recover.sh при сорсинге перезаписывает
+# SCRIPT_DIR на .../lib, и позже собрать их было бы уже нельзя.
+DOCTOR_SCRIPT="$SCRIPT_DIR/doctor.sh"
+TG_SEND="$SCRIPT_DIR/tg-send.sh"
 
 # Idle-triggered memory consolidation: after the agent sits on a clean idle prompt
 # for MEMORY_IDLE_CONSOLIDATE_MIN minutes, nudge the session to reflect (once per
@@ -42,6 +46,72 @@ heartbeat_fresh() { [ "$(heartbeat_age)" -le "$HEARTBEAT_GRACE" ]; }
 source "$SCRIPT_DIR/lib/notify.sh"
 
 log() { echo "[watchdog/$AGENT] $(date -u '+%H:%M:%S') $*"; }
+
+# ── Что оператор действительно хочет знать ───────────────────────────────────
+# РОВНО ДВА события заслуживают сообщения в Telegram:
+#   (1) агент не может работать из-за подписки/входа Claude;
+#   (2) агент недоступен, и автоматика не справилась сама.
+# Плюс парное «снова на связи» — оно приходит ТОЛЬКО после алерта, поэтому не
+# шум, а закрытие висящей тревоги.
+#
+# Всё остальное — рестарты сессии, подобранные осиротевшие процессы, ступени
+# досылки застрявшего ввода — внутренняя кухня автоматики: пишем в лог, оператора
+# не трогаем. Раньше каждый такой шаг слал сообщение, и оператор получал поток
+# отчётов, по которым нечего делать (обратная связь 2026-08-09: «технические
+# детали и копания в сессии — неактуальны»).
+NOTIFY_TAG="$AGENT"          # префикс «🔧 developer:», без внутреннего имени демона
+
+# Флаг «оператору сообщено о недоступности» лежит ФАЙЛОМ: переменная в памяти не
+# пережила бы рестарт демона, и висящая тревога никогда бы не закрылась.
+DOWN_FLAG="$CLAUDE_LAB/shared/state/$AGENT/agent-down"
+
+# report_down <причина-для-лога> [текст-оператору]
+# Второй аргумент отличает класс (1) «подписка/вход» от класса (2) «недоступен»;
+# флаг общий — для оператора это одна висящая тревога, закрываемая одним
+# «снова на связи».
+report_down() {
+  # Только `if`: `[ ... ] && return 0` при ложном условии возвращает 1 и под
+  # `set -e` убивает демон — тот самый класс бага, что ронял watchdog.
+  if [ -f "$DOWN_FLAG" ]; then return 0; fi
+  mkdir -p "$(dirname "$DOWN_FLAG")" 2>/dev/null || true
+  : > "$DOWN_FLAG" 2>/dev/null || true
+  log "эскалация оператору: $1"
+  WATCHDOG_ALERT_COOLDOWN="${WATCHDOG_DOWN_ALERT_COOLDOWN:-3600}" \
+    notify_op "$AGENT" "${2:-⛔ агент недоступен — сам не починился. Пришлите /doctor: проверю и отчитаюсь.}"
+  return 0
+}
+
+report_up() {
+  if [ ! -f "$DOWN_FLAG" ]; then return 0; fi
+  clear_down
+  log "агент восстановился — закрываю тревогу"
+  WATCHDOG_ALERT_COOLDOWN=0 notify_op "$AGENT" "✅ агент снова на связи."
+  return 0
+}
+
+# Тихо снять тревогу — когда оператор и так получает ответ (вердикт доктора).
+clear_down() { rm -f "$DOWN_FLAG" 2>/dev/null || true; return 0; }
+
+# Флап рестартов = недоступность с точки зрения оператора: сессия поднимается, но
+# не живёт. Один-два рестарта — норма самолечения, о них молчим.
+RESTART_FLAP_WINDOW="${WATCHDOG_RESTART_FLAP_WINDOW:-900}"
+RESTART_FLAP_COUNT="${WATCHDOG_RESTART_FLAP_COUNT:-3}"
+RESTART_TIMES=""             # unix-метки рестартов внутри окна, через пробел
+
+note_restart() {
+  local now t keep n
+  now="$(date +%s)"
+  keep=""
+  for t in $RESTART_TIMES $now; do
+    if [ "$((now - t))" -lt "$RESTART_FLAP_WINDOW" ]; then keep="$keep $t"; fi
+  done
+  RESTART_TIMES="${keep# }"
+  n="$(printf '%s' "$RESTART_TIMES" | wc -w)"
+  if [ "$n" -ge "$RESTART_FLAP_COUNT" ]; then
+    report_down "$n рестартов за ${RESTART_FLAP_WINDOW}s"
+  fi
+  return 0
+}
 
 # Initial start — but DON'T disrupt an already-running agent. This lets the
 # watchdog itself be restarted (e.g. to pick up new code) without killing the
@@ -90,6 +160,12 @@ source "$SCRIPT_DIR/lib/pane.sh"
 # на .../lib, и любой последующий "$SCRIPT_DIR/lib/..." собрал бы путь lib/lib/.
 # shellcheck source=lib/task-poller-launch.sh
 source "$SCRIPT_DIR/lib/task-poller-launch.sh"
+# Очередь запросов «/doctor» от плагина + аварийный приём команды из Telegram.
+# shellcheck source=lib/doctor-request.sh
+source "$SCRIPT_DIR/lib/doctor-request.sh"
+# agent_bot_token — нужен только аварийному приёму (см. serve_doctor_request).
+# shellcheck source=lib/agents.sh
+source "$SCRIPT_DIR/lib/agents.sh"
 # Reliable stuck-input recovery (clear + retype) — see lib/pane-recover.sh.
 # shellcheck source=lib/pane-recover.sh
 source "$SCRIPT_DIR/lib/pane-recover.sh"
@@ -103,16 +179,55 @@ IDLE_CONSOLIDATED=0
 # иначе при реально отозванном доступе получился бы вечный цикл рестартов.
 AUTH_RESTARTED=0
 
+# ── Обслуживание команды /doctor ─────────────────────────────────────────────
+# Исполняет запрос, положенный плагином (или аварийным приёмом), и САМ отвечает
+# оператору. Отвечает именно watchdog, а не плагин: доктор вправе перезапустить
+# сессию, и тогда плагин умрёт вместе с ней, не успев отправить вердикт.
+serve_doctor_request() {
+  local chat out rc=0
+  chat="$(doctor_request_take "$AGENT")" || return 0
+  log "запрос /doctor принят — проверяю и чиню"
+  out="$(bash "$DOCTOR_SCRIPT" "$AGENT" --fix --quiet 2>&1)" || rc=$?
+  # Вердикт доктора сам сообщает состояние — тревогу снимаем молча, чтобы
+  # оператор не получил два сообщения об одном и том же.
+  if [ "$rc" -eq 0 ]; then clear_down; fi
+  ( TG_CHAT_ID="$chat" "$TG_SEND" "$AGENT" "$out" ) >/dev/null 2>&1 || true
+  log "ответ на /doctor отправлен (код $rc)"
+  # Доктор мог перезапустить сессию или дослать ввод — прежний снимок панели
+  # больше ничего не значит.
+  PREV_TAIL=""; NUDGE_STAGE=0
+  return 0
+}
+
 restart_session() {
+  # Молча: одиночный рестарт — штатное самолечение, оператору сообщать не о чем.
+  # Тревога поднимается только если рестарты пошли по кругу (см. note_restart).
   log "restarting ($1)"
-  notify_op "$AGENT" "⚠️ перезапуск tmux-сессии — причина: $1"
   "$START_SCRIPT" "$AGENT"
-  notify_op "$AGENT" "✅ сессия снова в строю (после: $1)"
   PREV_TAIL=""; FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
+  note_restart
 }
 
 while true; do
-  sleep 30
+  # Пауза цикла нарезана мелко: прямая команда оператора не должна ждать полминуты
+  # ответа. Всё остальное по-прежнему проверяется раз в ~30 секунд.
+  for _ in $(seq 1 15); do
+    sleep 2
+    if doctor_request_pending "$AGENT"; then serve_doctor_request; fi
+  done
+
+  # Аварийный приём: пока висит тревога, плагин почти наверняка не читает
+  # Telegram — и команда /doctor нужна ровно тогда, когда доставить её нечем.
+  # Заглядываем сами. При живом плагине этого НЕ делаем: второй читатель
+  # getUpdates оборвал бы его long-poll.
+  if [ -f "$DOWN_FLAG" ]; then
+    BOT_TOKEN="$(agent_bot_token "$AGENT" 2>/dev/null || true)"
+    if [ -n "$BOT_TOKEN" ] && doctor_poll_telegram "$AGENT" "$BOT_TOKEN"; then
+      log "команда /doctor принята напрямую из Telegram (плагин недоступен)"
+      serve_doctor_request
+    fi
+    BOT_TOKEN=""
+  fi
 
   # Defense in depth: reap any ORPHANED channel-server bun for this agent — its
   # claude parent died but the bun is spinning (PPID==1). The live bun is a child
@@ -120,9 +235,9 @@ while true; do
   # path (crash, manual kill, restart race), not just start-agent.sh restarts.
   for p in $(pgrep -f "\.claude-lab/$AGENT/\.claude/plugins/labops-channel/plugin/src/server\.ts" 2>/dev/null || true); do
     if [ "$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null)" = "1" ]; then
+      # Уборка мусора — оператору знать незачем, только в лог.
       log "reaping orphaned channel-bun pid=$p (ppid=1, parent claude died)"
       kill -9 "$p" 2>/dev/null || true
-      notify_op "$AGENT" "♻️ подобрал осиротевший channel-сервер (pid=$p): родительский claude умер"
     fi
   done
 
@@ -151,6 +266,9 @@ while true; do
       AUTH_RESTARTED=0
       log "авторизация восстановлена (ход прошёл) — сброс auth-ладдера"
     fi
+    # Панель движется и в ней нет ошибки доступа — агент работает. Если висела
+    # тревога, закрываем её: оператор должен узнать не только о поломке.
+    if ! has_auth_error "$TAIL"; then report_up; fi
     PREV_TAIL="$TAIL"
     continue
   fi
@@ -217,8 +335,8 @@ while true; do
       continue
     fi
     log "ошибка авторизации сохраняется после рестарта — эскалация оператору"
-    WATCHDOG_ALERT_COOLDOWN="${WATCHDOG_AUTH_ALERT_COOLDOWN:-3600}" \
-      notify_op "$AGENT" "⛔ агент не может обращаться к модели: ошибка авторизации в сессии (рестарт не помог). Проверьте вход Claude Code: подписку/~/.claude/.credentials.json."
+    report_down "подписка/вход Claude недействительны (рестарт не помог)" \
+      "⛔ подписка Claude недействительна — агент работать не может. Нужно заново войти в Claude Code на сервере."
     continue
   fi
 
@@ -241,6 +359,10 @@ while true; do
   # the idle branch below, same as an empty INPUT.
   if [ -z "$INPUT" ] || printf '%s' "$INPUT" | grep -qE '^Try".*"$'; then
     NUDGE_STAGE=0          # clean idle prompt — healthy, leave it alone
+    # Чистый простой = агент на связи (сессия жива, промпт рисуется, ввод не
+    # залип). Закрываем висящую тревогу — иначе она не закрылась бы никогда:
+    # heartbeat у спокойно простаивающего агента протухает штатно.
+    report_up
     # Idle-triggered consolidation: once the agent has been idle long enough,
     # nudge it to reflect (episodic → passive). Fire once per idle period.
     IDLE_COUNT=$((IDLE_COUNT + 1))
@@ -264,8 +386,8 @@ while true; do
          log "нарисованный, но не набранный ввод (буфер пуст) — сразу перепечатка"
          NUDGE_STAGE=1
        else
+         # Молча: это первая ступень автоматики, а не событие для оператора.
          log "stuck input detected — Enter"
-         notify_op "$AGENT" "✉️ в поле ввода застрял неотправленный промпт — пробую дослать (Enter)"
          tmux send-keys -t "$SESSION" Enter 2>/dev/null || true
          NUDGE_STAGE=1
        fi ;;
@@ -284,7 +406,13 @@ while true; do
        rc=0; recover_stuck_input "$SESSION" || rc=$?
        if [ "$rc" -ne 1 ]; then
          log "stuck input recovered (clear + retype), rc=$rc"
-         notify_op "$AGENT" "✅ застрявшее сообщение дослал (очистка поля + повтор ввода). Если текст выглядит обрезанным — отправьте ещё раз."
+         # Единственное исключение из «молчим о технике»: пропала ЧАСТЬ текста
+         # оператора. Это не отчёт о работе автоматики, а потеря его данных —
+         # без сообщения он будет ждать ответа на то, чего агент не видел.
+         # Формулировка без внутренней кухни: что потерялось и что сделать.
+         if [ "${RECOVER_TRUNCATED:-0}" -eq 1 ]; then
+           notify_op "$AGENT" "✂️ ваше сообщение дошло не полностью — уцелела только последняя строка. Пришлите его ещё раз."
+         fi
          NUDGE_STAGE=0   # recovered — reset the ladder
        else
          log "reliable resubmit failed — box won't clear, escalating next cycle"
@@ -293,8 +421,10 @@ while true; do
     2) # Recovery failed. DO NOT restart — keep the session and its work alive;
        # escalate to the operator to submit manually. (Upstream: Claude Code
        # research-preview channels bug — see mode (B) note.)
+       # С точки зрения оператора это и есть «агент недоступен»: сообщения до
+       # него не доходят. Инструкций с tmux не даём — чинить должен /doctor.
        log "stuck input not auto-committing — session left ALIVE, escalating to operator (no restart)"
-       notify_op "$AGENT" "⚠️ застрявшее сообщение не отправляется само (баг research-preview channels Claude Code). Сессия ЖИВА, работу агента не трогаю. Отправьте вручную: tmux attach -t $SESSION → Enter (detach: Ctrl-B D)."
+       report_down "застрявший ввод не лечится"
        NUDGE_STAGE=3 ;;
     *) : ;;  # оператор уведомлён; ждём его — НЕ рестартуем (работа важнее застрявшего сообщения)
   esac

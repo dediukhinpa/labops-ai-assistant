@@ -24,13 +24,16 @@
 //   - /reset and /new without `force` return a short reply asking for the
 //     flag, no channel notification.
 
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+
 import type { AppConfig } from '../config.js'
 import type { Logger } from '../log.js'
 import type { TelegramApi } from '../channel/tools.js'
 import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 
-export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'new'
+export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'new' | 'doctor'
 
 const KNOWN_COMMANDS = new Set<OobCommandName>([
   'help',
@@ -38,6 +41,7 @@ const KNOWN_COMMANDS = new Set<OobCommandName>([
   'stop',
   'reset',
   'new',
+  'doctor',
 ])
 
 export interface ParsedOobCommand {
@@ -109,6 +113,9 @@ export interface OobContext {
   // Identity bits surfaced by /status.
   botId?: number
   stateDir?: string
+  // Путь файла-заявки, которую подхватывает watchdog (см. /doctor). Не задан —
+  // значит агент запущен без надзора, и чинить его этой командой некому.
+  doctorRequestPath?: string
 }
 
 export interface OobResult {
@@ -116,6 +123,12 @@ export interface OobResult {
   command: OobCommandName
   notifyChannel?: { content: string; meta: Record<string, string> }
   replyToTelegram?: { text: string; parseMode?: 'HTML' }
+  // /doctor: файл-заявка для watchdog. Писать её должен исполнитель результата,
+  // а не обработчик — тот остаётся чистой функцией над данными.
+  writeDoctorRequest?: { path: string; chatId: string }
+  // Чем ответить, если заявку записать не удалось: обещать проверку, которой не
+  // будет, хуже, чем честно сказать, что позвать доктора не вышло.
+  replyOnWriteFailure?: { text: string; parseMode?: 'HTML' }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -128,6 +141,7 @@ function helpText(): string {
     '<b>команды</b>\n\n'
     + '<code>/help</code> — эта справка\n'
     + '<code>/status</code> — снимок плагина и сессии\n'
+    + '<code>/doctor</code> — проверить агента и починить, если сломан\n'
     + '<code>/stop</code> — попросить Claude остановить текущую задачу\n'
     + '<code>/reset force</code> — сбросить состояние сессии (подтверди флагом <code>force</code>)\n'
     + '<code>/new force</code> — начать новую сессию (подтверди флагом <code>force</code>)\n\n'
@@ -145,6 +159,7 @@ export interface BotCommandSpec {
 export const BOT_COMMANDS: ReadonlyArray<BotCommandSpec> = [
   { command: 'help', description: 'справка по командам' },
   { command: 'status', description: 'снимок плагина и сессии' },
+  { command: 'doctor', description: 'проверить и починить агента' },
   { command: 'stop', description: 'попросить Claude остановиться' },
   { command: 'reset', description: 'сбросить сессию (нужен force)' },
   { command: 'new', description: 'начать новую сессию (нужен force)' },
@@ -181,6 +196,20 @@ function statusText(ctx: OobContext): string {
   }
 
   return lines.join('\n')
+}
+
+// Путь файла-заявки для watchdog. ДОЛЖЕН совпадать с _doctor_state_dir из
+// agent-architecture/orchestration/lib/doctor-request.sh — контракт живёт в двух
+// языках, и расхождение сделало бы /doctor тихо неработающим (заявка легла бы
+// туда, куда никто не смотрит). Пусто ⇒ команда недоступна.
+export function resolveDoctorRequestPath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const id = env.AGENT_ID ?? env.TELEGRAM_MEMORY_AGENT_LABEL ?? ''
+  if (id.length === 0) return ''
+  const lab = env.CLAUDE_LAB ?? (env.HOME !== undefined ? `${env.HOME}/.claude-lab` : '')
+  if (lab.length === 0) return ''
+  return `${lab}/shared/state/${id.toLowerCase()}/doctor.request`
 }
 
 function escapeHtml(s: string): string {
@@ -224,6 +253,31 @@ export async function handleOobCommand(
         handled: true,
         command: 'status',
         replyToTelegram: { text: statusText(ctx), parseMode: 'HTML' },
+      }
+    }
+
+    case 'doctor': {
+      ctx.log.info('oob /doctor', { chat_id: ctx.chatId })
+      // Сами не диагностируем и тем более не чиним: плагин живёт ВНУТРИ сессии
+      // агента, а починка может её перезапустить — тогда ответ отправлять будет
+      // уже некому. Кладём заявку, исполняет и отвечает watchdog (внешний
+      // супервизор). Claude при этом не будим: команда про агента, не для него.
+      if (ctx.doctorRequestPath === undefined || ctx.doctorRequestPath === '') {
+        return {
+          handled: true,
+          command: 'doctor',
+          replyToTelegram: {
+            text: 'Проверять некому: агент запущен без надзора.',
+            parseMode: 'HTML',
+          },
+        }
+      }
+      return {
+        handled: true,
+        command: 'doctor',
+        writeDoctorRequest: { path: ctx.doctorRequestPath, chatId: ctx.chatId },
+        replyToTelegram: { text: '🩺 Проверяю агента, скоро отвечу.' },
+        replyOnWriteFailure: { text: 'Не смог позвать доктора — надзор недоступен.' },
       }
     }
 
@@ -317,11 +371,27 @@ export async function executeOobResult(
   ctx: OobContext,
   server: Server,
 ): Promise<void> {
-  if (result.replyToTelegram) {
+  // Заявка пишется ПЕРЕД ответом: иначе оператор получил бы «скоро отвечу» на
+  // проверку, которая не запустилась.
+  let reply = result.replyToTelegram
+  if (result.writeDoctorRequest) {
+    const { path: reqPath, chatId } = result.writeDoctorRequest
     try {
-      await ctx.telegramApi.sendMessage(ctx.chatId, result.replyToTelegram.text, {
-        ...(result.replyToTelegram.parseMode !== undefined
-          ? { parse_mode: result.replyToTelegram.parseMode }
+      await mkdir(dirname(reqPath), { recursive: true })
+      await writeFile(reqPath, chatId, 'utf8')
+    } catch (err) {
+      ctx.log.warn('doctor request write failed', {
+        command: result.command,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      reply = result.replyOnWriteFailure ?? reply
+    }
+  }
+  if (reply) {
+    try {
+      await ctx.telegramApi.sendMessage(ctx.chatId, reply.text, {
+        ...(reply.parseMode !== undefined
+          ? { parse_mode: reply.parseMode }
           : {}),
       })
     } catch (err) {

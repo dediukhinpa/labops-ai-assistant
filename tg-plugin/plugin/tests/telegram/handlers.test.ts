@@ -661,7 +661,11 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
     },
   )
 
-  test('plain text + NOT busy → watcher no-ops, channel notify still runs', async () => {
+  // Обновлено 2026-08-09: раньше здесь не отправлялось НИЧЕГО. Теперь на каждое
+  // принятое сообщение оператор получает «принял в работу» — по требованию, что
+  // подтверждение приёма должно приходить сразу, а ответ по существу отдельным
+  // сообщением. Автоответ «занят» при этом по-прежнему не срабатывает.
+  test('plain text + NOT busy → watcher no-ops, ack sent, channel notify still runs', async () => {
     const sendCalls: Array<{ chatId: string; text: string }> = []
     const tg = makeTelegramApi()
     const api: TelegramApi = {
@@ -693,7 +697,10 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
     await handleInboundText(ctx, deps)
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(sendCalls.length).toBe(0)
+    expect(sendCalls.length).toBe(1)
+    expect(sendCalls[0]!.text).toContain('Принял в работу')
+    // Автоответ «занят» — это НЕ он: агент свободен, дублировать нечего.
+    expect(sendCalls[0]!.text).not.toContain('занят')
     // Channel notification still fired.
     expect(serverSpy.calls.length).toBe(1)
     rmSync(statePaths.root, { recursive: true, force: true })

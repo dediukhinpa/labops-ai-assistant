@@ -289,6 +289,58 @@ else
   bad "восстановление судит о буфере по capture-pane — на призраке сдастся с «box won't clear»"
 fi
 
+echo "── 13. Оператору сообщают только то, по чему он может действовать ──"
+# Обратная связь оператора 2026-08-09: «всё, что мне нужно знать — просрочена ли
+# подписка и недоступен ли агент; технические детали и копания в сессии
+# неактуальны». Рестарт сессии, подобранные процессы и ступени досылки — работа
+# автоматики: их место в логе, а не в Telegram.
+if awk '/^restart_session\(\)/,/^}/' orchestration/watchdog.sh | grep -q 'notify_op'; then
+  bad "watchdog.sh шлёт алерт на каждый рестарт сессии — оператор получит поток отчётов, по которым нечего делать"
+else
+  ok "штатный рестарт сессии оператора не беспокоит (только лог)"
+fi
+if grep -q 'report_down' orchestration/watchdog.sh && grep -q 'report_up' orchestration/watchdog.sh; then
+  ok "тревога о недоступности парная: поднимается и закрывается"
+else
+  bad "watchdog.sh не умеет закрывать тревогу — оператор останется с висящим «агент недоступен»"
+fi
+# Флаг тревоги обязан быть файловым: в памяти он не переживёт рестарт демона,
+# и «снова на связи» не придёт никогда.
+if grep -q 'DOWN_FLAG=' orchestration/watchdog.sh; then
+  ok "флаг тревоги переживает рестарт демона (файл, не переменная)"
+else
+  bad "флаг тревоги живёт в памяти процесса — после рестарта watchdog тревога не закроется"
+fi
+if bash orchestration/doctor.test.sh >/dev/null 2>&1; then
+  ok "doctor.sh: диагноз и починка на подменённом окружении — юнит-тест зелёный"
+else
+  bad "doctor.sh: юнит-тест провален (bash orchestration/doctor.test.sh)"
+fi
+if bash orchestration/lib/doctor-request.test.sh >/dev/null 2>&1; then
+  ok "очередь /doctor: запрос исполняется один раз, команда не зацикливается — юнит-тест зелёный"
+else
+  bad "очередь /doctor: юнит-тест провален (bash orchestration/lib/doctor-request.test.sh)"
+fi
+# Отвечать на /doctor обязан watchdog, а не плагин: доктор вправе перезапустить
+# сессию, и плагин (он живёт ВНУТРИ неё) умрёт, не успев отправить вердикт.
+if grep -q 'serve_doctor_request' orchestration/watchdog.sh; then
+  ok "на /doctor отвечает watchdog — вердикт переживёт перезапуск сессии"
+else
+  bad "watchdog не обслуживает /doctor — ответ пропадёт, если доктор перезапустит сессию"
+fi
+# Путь заявки описан дважды — в bash и в TypeScript плагина. Расхождение сделало
+# бы /doctor тихо неработающим: заявка легла бы туда, куда никто не смотрит.
+OOB_TS="../tg-plugin/plugin/src/commands/oob.ts"
+if [ -f "$OOB_TS" ]; then
+  if grep -q 'shared/state/\${id.toLowerCase()}/doctor.request' "$OOB_TS" \
+       && grep -q 'shared/state/' orchestration/lib/doctor-request.sh \
+       && grep -q "doctor.request" orchestration/lib/doctor-request.sh; then
+    ok "путь заявки /doctor одинаков в watchdog и в плагине"
+  else
+    bad "путь заявки /doctor разошёлся между bash и плагином — команда молча перестанет работать"
+  fi
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
