@@ -105,6 +105,33 @@ buffer_is_empty() {
   [ "$x" -le "$PANE_INPUT_COL0" ]
 }
 
+# input_is_multiline <pane-text> — занимает ли ввод больше одной визуальной
+# строки. Из панели восстанавливается только строка с «❯», поэтому многострочный
+# ввод перепечатывается С ПОТЕРЕЙ — единственный случай, когда оператору есть
+# смысл сообщать об успешном восстановлении. Для однострочного сообщения
+# восстановление точное, и алерт — чистый шум (обратная связь оператора
+# 2026-08-09: «зачем мне это знать?»).
+# Разметка поля: рамка ─── / строка с ❯ / [продолжение] / рамка ───.
+input_is_multiline() {
+  # Два прохода: в панели строк с ❯ несколько (история промптов), нас интересует
+  # ТОЛЬКО последняя — текущее поле ввода.
+  printf '%s' "${1:-}" | awk '
+    { line[NR] = $0; if ($0 ~ /❯/) last = NR }
+    END {
+      if (!last) exit 1
+      for (i = last + 1; i <= NR; i++) {
+        # Границы блока ввода: нижняя рамка ИЛИ строка статуса под полем
+        # («⏵⏵ bypass permissions …»). Без второго условия статус читался как
+        # продолжение ввода и любое сообщение выглядело многострочным.
+        if (line[i] ~ /^[─[:space:]]*$/)               exit 1
+        if (line[i] ~ /bypass permissions|⏵⏵|esc to interrupt/) exit 1
+        if (line[i] ~ /[^[:space:]]/)                  exit 0   # продолжение ввода
+      }
+      exit 1
+    }
+  '
+}
+
 # is_stuck_input <pane-text> — a message is sitting in the input unsubmitted:
 # prompt visible, no active turn, input non-empty, and NOT the rotating
 # placeholder hint Try"...". This is the state to recover.

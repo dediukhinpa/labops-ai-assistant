@@ -33,12 +33,19 @@ _recover_capture() { tmux capture-pane -pt "$1" -S -8 2>/dev/null || true; }
 #   0 — input was stuck and has been cleared+resubmitted
 #   1 — input was stuck but could NOT be cleared (caller should escalate)
 #   2 — nothing to do (input not stuck)
+# RECOVER_TRUNCATED — выставляется каждым вызовом recover_stuck_input: 1, если
+# восстановленный текст заведомо неполон (ввод занимал больше одной строки, а из
+# панели читается только строка с «❯»). Вызывающий решает, беспокоить ли этим
+# оператора: точное восстановление его не касается, потерянный хвост — касается.
+RECOVER_TRUNCATED=0
+
 recover_stuck_input() {
   local session="$1" pane text
   pane="$(_recover_capture "$session")"
   is_stuck_input "$pane" || return 2
 
   text="$(pane_input_raw "$pane")"
+  if input_is_multiline "$pane"; then RECOVER_TRUNCATED=1; else RECOVER_TRUNCATED=0; fi
 
   # 1. Очистка поля — ТОЛЬКО если в буфере действительно что-то есть.
   # Чаще всего его там нет: сорванный auth-submit канала оставляет лишь
