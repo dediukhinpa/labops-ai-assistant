@@ -316,6 +316,18 @@ if bash orchestration/doctor.test.sh >/dev/null 2>&1; then
 else
   bad "doctor.sh: юнит-тест провален (bash orchestration/doctor.test.sh)"
 fi
+if bash orchestration/lib/doctor-request.test.sh >/dev/null 2>&1; then
+  ok "очередь /doctor: запрос исполняется один раз, команда не зацикливается — юнит-тест зелёный"
+else
+  bad "очередь /doctor: юнит-тест провален (bash orchestration/lib/doctor-request.test.sh)"
+fi
+# Отвечать на /doctor обязан watchdog, а не плагин: доктор вправе перезапустить
+# сессию, и плагин (он живёт ВНУТРИ неё) умрёт, не успев отправить вердикт.
+if grep -q 'serve_doctor_request' orchestration/watchdog.sh; then
+  ok "на /doctor отвечает watchdog — вердикт переживёт перезапуск сессии"
+else
+  bad "watchdog не обслуживает /doctor — ответ пропадёт, если доктор перезапустит сессию"
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then

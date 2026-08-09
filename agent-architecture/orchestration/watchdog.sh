@@ -8,6 +8,10 @@ AGENT="$1"
 SESSION="labops-$AGENT"
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 START_SCRIPT="$SCRIPT_DIR/start-agent.sh"
+# Пути фиксируем здесь: lib/pane-recover.sh при сорсинге перезаписывает
+# SCRIPT_DIR на .../lib, и позже собрать их было бы уже нельзя.
+DOCTOR_SCRIPT="$SCRIPT_DIR/doctor.sh"
+TG_SEND="$SCRIPT_DIR/tg-send.sh"
 
 # Idle-triggered memory consolidation: after the agent sits on a clean idle prompt
 # for MEMORY_IDLE_CONSOLIDATE_MIN minutes, nudge the session to reflect (once per
@@ -79,11 +83,14 @@ report_down() {
 
 report_up() {
   if [ ! -f "$DOWN_FLAG" ]; then return 0; fi
-  rm -f "$DOWN_FLAG" 2>/dev/null || true
+  clear_down
   log "агент восстановился — закрываю тревогу"
   WATCHDOG_ALERT_COOLDOWN=0 notify_op "$AGENT" "✅ агент снова на связи."
   return 0
 }
+
+# Тихо снять тревогу — когда оператор и так получает ответ (вердикт доктора).
+clear_down() { rm -f "$DOWN_FLAG" 2>/dev/null || true; return 0; }
 
 # Флап рестартов = недоступность с точки зрения оператора: сессия поднимается, но
 # не живёт. Один-два рестарта — норма самолечения, о них молчим.
@@ -153,6 +160,12 @@ source "$SCRIPT_DIR/lib/pane.sh"
 # на .../lib, и любой последующий "$SCRIPT_DIR/lib/..." собрал бы путь lib/lib/.
 # shellcheck source=lib/task-poller-launch.sh
 source "$SCRIPT_DIR/lib/task-poller-launch.sh"
+# Очередь запросов «/doctor» от плагина + аварийный приём команды из Telegram.
+# shellcheck source=lib/doctor-request.sh
+source "$SCRIPT_DIR/lib/doctor-request.sh"
+# agent_bot_token — нужен только аварийному приёму (см. serve_doctor_request).
+# shellcheck source=lib/agents.sh
+source "$SCRIPT_DIR/lib/agents.sh"
 # Reliable stuck-input recovery (clear + retype) — see lib/pane-recover.sh.
 # shellcheck source=lib/pane-recover.sh
 source "$SCRIPT_DIR/lib/pane-recover.sh"
@@ -166,6 +179,26 @@ IDLE_CONSOLIDATED=0
 # иначе при реально отозванном доступе получился бы вечный цикл рестартов.
 AUTH_RESTARTED=0
 
+# ── Обслуживание команды /doctor ─────────────────────────────────────────────
+# Исполняет запрос, положенный плагином (или аварийным приёмом), и САМ отвечает
+# оператору. Отвечает именно watchdog, а не плагин: доктор вправе перезапустить
+# сессию, и тогда плагин умрёт вместе с ней, не успев отправить вердикт.
+serve_doctor_request() {
+  local chat out rc=0
+  chat="$(doctor_request_take "$AGENT")" || return 0
+  log "запрос /doctor принят — проверяю и чиню"
+  out="$(bash "$DOCTOR_SCRIPT" "$AGENT" --fix --quiet 2>&1)" || rc=$?
+  # Вердикт доктора сам сообщает состояние — тревогу снимаем молча, чтобы
+  # оператор не получил два сообщения об одном и том же.
+  if [ "$rc" -eq 0 ]; then clear_down; fi
+  ( TG_CHAT_ID="$chat" "$TG_SEND" "$AGENT" "$out" ) >/dev/null 2>&1 || true
+  log "ответ на /doctor отправлен (код $rc)"
+  # Доктор мог перезапустить сессию или дослать ввод — прежний снимок панели
+  # больше ничего не значит.
+  PREV_TAIL=""; NUDGE_STAGE=0
+  return 0
+}
+
 restart_session() {
   # Молча: одиночный рестарт — штатное самолечение, оператору сообщать не о чем.
   # Тревога поднимается только если рестарты пошли по кругу (см. note_restart).
@@ -176,7 +209,25 @@ restart_session() {
 }
 
 while true; do
-  sleep 30
+  # Пауза цикла нарезана мелко: прямая команда оператора не должна ждать полминуты
+  # ответа. Всё остальное по-прежнему проверяется раз в ~30 секунд.
+  for _ in $(seq 1 15); do
+    sleep 2
+    if doctor_request_pending "$AGENT"; then serve_doctor_request; fi
+  done
+
+  # Аварийный приём: пока висит тревога, плагин почти наверняка не читает
+  # Telegram — и команда /doctor нужна ровно тогда, когда доставить её нечем.
+  # Заглядываем сами. При живом плагине этого НЕ делаем: второй читатель
+  # getUpdates оборвал бы его long-poll.
+  if [ -f "$DOWN_FLAG" ]; then
+    BOT_TOKEN="$(agent_bot_token "$AGENT" 2>/dev/null || true)"
+    if [ -n "$BOT_TOKEN" ] && doctor_poll_telegram "$AGENT" "$BOT_TOKEN"; then
+      log "команда /doctor принята напрямую из Telegram (плагин недоступен)"
+      serve_doctor_request
+    fi
+    BOT_TOKEN=""
+  fi
 
   # Defense in depth: reap any ORPHANED channel-server bun for this agent — its
   # claude parent died but the bun is spinning (PPID==1). The live bun is a child
