@@ -328,6 +328,18 @@ if grep -q 'serve_doctor_request' orchestration/watchdog.sh; then
 else
   bad "watchdog не обслуживает /doctor — ответ пропадёт, если доктор перезапустит сессию"
 fi
+# Путь заявки описан дважды — в bash и в TypeScript плагина. Расхождение сделало
+# бы /doctor тихо неработающим: заявка легла бы туда, куда никто не смотрит.
+OOB_TS="../tg-plugin/plugin/src/commands/oob.ts"
+if [ -f "$OOB_TS" ]; then
+  if grep -q 'shared/state/\${id.toLowerCase()}/doctor.request' "$OOB_TS" \
+       && grep -q 'shared/state/' orchestration/lib/doctor-request.sh \
+       && grep -q "doctor.request" orchestration/lib/doctor-request.sh; then
+    ok "путь заявки /doctor одинаков в watchdog и в плагине"
+  else
+    bad "путь заявки /doctor разошёлся между bash и плагином — команда молча перестанет работать"
+  fi
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then

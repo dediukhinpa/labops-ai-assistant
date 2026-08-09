@@ -1,8 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import {
+  BOT_COMMANDS,
+  executeOobResult,
   handleOobCommand,
   parseOobCommand,
+  resolveDoctorRequestPath,
   type OobContext,
 } from '../../src/commands/oob.js'
 import type { AppConfig } from '../../src/config.js'
@@ -259,5 +266,121 @@ describe('handleOobCommand', () => {
     const result = await handleOobCommand(parsed, makeCtx())
     expect(result.notifyChannel).toBeUndefined()
     expect(result.replyToTelegram!.text).toContain('force')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// /doctor — единственная команда, которую плагин НЕ исполняет сам.
+// Плагин живёт внутри сессии агента; починка может её перезапустить, и
+// тогда отвечать оператору будет уже некому. Поэтому плагин лишь кладёт
+// заявку, а выполняет и отчитывается watchdog.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('/doctor', () => {
+  test('parses /doctor and /doctor@botname', () => {
+    expect(parseOobCommand('/doctor')!.name).toBe('doctor')
+    expect(parseOobCommand('/doctor@christopher_coderbot')!.name).toBe('doctor')
+  })
+
+  test('files a request for the watchdog and acks immediately', async () => {
+    const parsed = parseOobCommand('/doctor')!
+    const result = await handleOobCommand(
+      parsed,
+      makeCtx({ doctorRequestPath: '/tmp/doctor.request' }),
+    )
+    expect(result.command).toBe('doctor')
+    expect(result.writeDoctorRequest).toBeDefined()
+    expect(result.writeDoctorRequest!.path).toBe('/tmp/doctor.request')
+    // chat_id уходит в заявку, чтобы watchdog ответил в тот же чат.
+    expect(result.writeDoctorRequest!.chatId).toBe('100000001')
+    expect(result.replyToTelegram).toBeDefined()
+  })
+
+  test('does NOT wake Claude — the command is about the agent, not for it', async () => {
+    const parsed = parseOobCommand('/doctor')!
+    const result = await handleOobCommand(
+      parsed,
+      makeCtx({ doctorRequestPath: '/tmp/doctor.request' }),
+    )
+    expect(result.notifyChannel).toBeUndefined()
+  })
+
+  test('says so plainly when there is no supervisor to ask', async () => {
+    const parsed = parseOobCommand('/doctor')!
+    const result = await handleOobCommand(parsed, makeCtx())
+    expect(result.writeDoctorRequest).toBeUndefined()
+    expect(result.replyToTelegram!.text).toContain('без надзора')
+  })
+
+  test('is listed in /help and in the bot command menu', async () => {
+    const parsed = parseOobCommand('/help')!
+    const result = await handleOobCommand(parsed, makeCtx())
+    expect(result.replyToTelegram!.text).toContain('/doctor')
+    expect(BOT_COMMANDS.some((c) => c.command === 'doctor')).toBe(true)
+  })
+})
+
+describe('executeOobResult writes the doctor request', () => {
+  test('writes chat_id to the request path before replying', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'doctor-req-'))
+    const reqPath = join(dir, 'nested', 'doctor.request')
+    const sent: string[] = []
+    const api = makeTelegramApi()
+    api.sendMessage = (async (_chat: string, text: string) => {
+      sent.push(text)
+      return { message_id: 1 }
+    }) as TelegramApi['sendMessage']
+
+    const ctx = makeCtx({ telegramApi: api, doctorRequestPath: reqPath })
+    const parsed = parseOobCommand('/doctor')!
+    const result = await handleOobCommand(parsed, ctx)
+    await executeOobResult(result, ctx, {} as never)
+
+    expect(readFileSync(reqPath, 'utf8')).toBe('100000001')
+    expect(sent).toHaveLength(1)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('an unwritable path is admitted, not papered over with a false ack', async () => {
+    const sent: string[] = []
+    const api = makeTelegramApi()
+    api.sendMessage = (async (_chat: string, text: string) => {
+      sent.push(text)
+      return { message_id: 1 }
+    }) as TelegramApi['sendMessage']
+
+    // Путь внутри файла — создать каталог невозможно.
+    const dir = mkdtempSync(join(tmpdir(), 'doctor-req-'))
+    const blocker = join(dir, 'blocker')
+    writeFileSync(blocker, 'x')
+    const ctx = makeCtx({
+      telegramApi: api,
+      doctorRequestPath: join(blocker, 'doctor.request'),
+    })
+    const parsed = parseOobCommand('/doctor')!
+    const result = await handleOobCommand(parsed, ctx)
+    await executeOobResult(result, ctx, {} as never)
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('Не смог позвать доктора')
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('resolveDoctorRequestPath', () => {
+  test('mirrors the bash contract: <lab>/shared/state/<agent>/doctor.request', () => {
+    expect(
+      resolveDoctorRequestPath({ AGENT_ID: 'developer', CLAUDE_LAB: '/lab' } as NodeJS.ProcessEnv),
+    ).toBe('/lab/shared/state/developer/doctor.request')
+  })
+
+  test('falls back to $HOME/.claude-lab, like the bash side', () => {
+    expect(
+      resolveDoctorRequestPath({ AGENT_ID: 'developer', HOME: '/home/x' } as NodeJS.ProcessEnv),
+    ).toBe('/home/x/.claude-lab/shared/state/developer/doctor.request')
+  })
+
+  test('empty when the agent is unknown — the command then reports it honestly', () => {
+    expect(resolveDoctorRequestPath({ HOME: '/home/x' } as NodeJS.ProcessEnv)).toBe('')
   })
 })
