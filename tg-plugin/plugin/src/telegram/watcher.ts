@@ -78,6 +78,19 @@ export class InboundWatcher {
   }
 
   /**
+   * Занят ли агент прямо сейчас (тот же критерий, что и у автоответа).
+   *
+   * Нужен подтверждению приёма (ack-taken.ts): когда агент занят, оператору
+   * уходит «Тралл занят», и второе сообщение «принял в работу» было бы тем же
+   * смыслом дважды. Одна и та же проверка в обоих местах гарантирует, что
+   * оператор всегда получает ровно одно подтверждение.
+   */
+  isBusy(chatId: string): boolean {
+    if (!this.config.watcher.enabled) return false
+    return this.progressReporter.isBusy(chatId, this.config.watcher.busy_threshold_ms)
+  }
+
+  /**
    * Fire-and-forget entry point — caller MUST schedule via `void` so
    * channel-notification latency never depends on Telegram round-trips.
    * The method itself never throws: send failures are caught and logged.

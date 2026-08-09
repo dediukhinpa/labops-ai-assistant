@@ -62,6 +62,7 @@ import {
   type PersistedAlbumMeta,
 } from './album-persistence.js'
 import type { InboundWatcher } from './watcher.js'
+import { ackTaken } from './ack-taken.js'
 
 // Fire-and-forget: after an inbound is delivered via the channel notification,
 // make sure Claude Code actually submitted it. The research-preview channel
@@ -453,6 +454,11 @@ async function gateAndNotify(
   // is if this 👀 is still mid-retry (e.g. a long 429 backoff) when a whole
   // turn finishes: the message could end up stuck on 👀. Rare, self-corrects
   // on the next turn's receipt, and strictly better than no eyes for minutes.
+  // Занятость фиксируем ЗДЕСЬ, до открытия статуса и доставки: и то и другое
+  // само делает сессию занятой, и проверка после них всегда давала бы «занят».
+  // Это же значение решает, нужно ли подтверждение приёма (см. ack-taken.ts).
+  const busyOnArrival = deps.watcher?.isBusy(decision.chatId) ?? false
+
   const ackMessageId = ctx.message?.message_id
   if (ackMessageId !== undefined) {
     void deps.telegramApi
@@ -543,6 +549,15 @@ async function gateAndNotify(
     deps.log.info('inbound dispatched to router', { kind, chat_id: decision.chatId })
     try {
       await deps.router.dispatch(inboundMsg)
+      void ackTaken({
+        telegramApi: deps.telegramApi,
+        log: deps.log,
+        chatId: decision.chatId,
+        busy: busyOnArrival,
+        ...(ctx.message?.message_id !== undefined
+          ? { replyToMessageId: ctx.message.message_id }
+          : {}),
+      })
     } catch (err) {
       // Router errors are logged and swallowed inside dispatch() for the
       // pool/spawn/inbox-write branches, but a top-level throw is still
@@ -598,6 +613,17 @@ async function gateAndNotify(
     throw new Error('channel notify failed — message dead-lettered')
   }
   scheduleEnsureSubmit(event.content, deps.log)
+  // Подтверждаем приём ТОЛЬКО здесь — после доказанной доставки. Не ждём:
+  // подтверждение не должно задерживать обработку хода.
+  void ackTaken({
+    telegramApi: deps.telegramApi,
+    log: deps.log,
+    chatId: decision.chatId,
+    busy: busyOnArrival,
+    ...(ctx.message?.message_id !== undefined
+      ? { replyToMessageId: ctx.message.message_id }
+      : {}),
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────
