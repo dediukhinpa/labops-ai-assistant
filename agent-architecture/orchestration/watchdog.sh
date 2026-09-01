@@ -414,9 +414,9 @@ while true; do
        # этой строке, systemd поднимал его заново, NUDGE_STAGE обнулялся, и
        # лестница вечно начиналась заново с «пробую дослать (Enter)» — часы
        # алертов оператору и ни одного реального восстановления.
-       rc=0; recover_stuck_input "$SESSION" || rc=$?
+       rc=0; recover_stuck_input "$SESSION" "$AGENT" || rc=$?
        if [ "$rc" -ne 1 ]; then
-         log "stuck input recovered (clear + retype), rc=$rc"
+         log "stuck input recovered (clear + retype), rc=$rc, текст из: ${RECOVER_SOURCE:-pane}"
          # Единственное исключение из «молчим о технике»: пропала ЧАСТЬ текста
          # оператора. Это не отчёт о работе автоматики, а потеря его данных —
          # без сообщения он будет ждать ответа на то, чего агент не видел.

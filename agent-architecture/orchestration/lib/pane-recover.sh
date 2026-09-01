@@ -5,14 +5,19 @@
 # Strategy (all via tmux, the same session the watchdog owns):
 #   1. read the input box (best-effort — only the last visual line survives);
 #   2. clear it: Ctrl-U, then a Backspace burst as fallback;
-#   3. re-type the captured text as LITERAL keystrokes + Enter — this submits
-#      cleanly because it is not a bracketed paste (task-poller proves it).
+#   3. re-type the text as LITERAL keystrokes + Enter — this submits cleanly
+#      because it is not a bracketed paste (task-poller proves it).
+#
+# ОТКУДА БЕРЁТСЯ ТЕКСТ. Из панели читается только визуальная строка с «❯», то
+# есть НАЧАЛО сообщения: замерено на 80 колонках — 202 символа превращаются в
+# 77, и агент выполнял обрезанную на полуслове инструкцию. Поэтому, если
+# нарисованное подтверждено меткой доставки (lib/pane.sh::inbound_matches),
+# перепечатываем ПОЛНЫЙ текст из метки, а панель остаётся запасным вариантом.
+# Переносы строк при этом склеиваются в пробелы: литеральный перевод строки в
+# поле ввода означает отправку, и многострочное сообщение ушло бы кусками.
 #
 # If the box cannot be cleared, we bail and let the caller escalate to the
-# operator (same as today). If the inbound was long/multi-line, the retype is
-# lossy by nature; the real fix for fidelity is prevention in the plugin
-# (deliver via send-keys instead of the channel paste) — see AGENT_ROUTER.md /
-# the tg-plugin. This recovery is the immediate safety net.
+# operator (same as today).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/pane.sh
@@ -29,23 +34,39 @@ RECOVER_BSPACE="${RECOVER_BSPACE:-64}"
 
 _recover_capture() { tmux capture-pane -pt "$1" -S -8 2>/dev/null || true; }
 
-# recover_stuck_input <session>
+# _reflow_inbound <text> — склеить переносы строк в пробелы (см. шапку).
+_reflow_inbound() {
+  printf '%s' "${1:-}" | tr '\n\t' '  ' | tr -s ' ' | sed -e 's/^ //' -e 's/ $//'
+}
+
+# recover_stuck_input <session> [agent]
 #   0 — input was stuck and has been cleared+resubmitted
 #   1 — input was stuck but could NOT be cleared (caller should escalate)
 #   2 — nothing to do (input not stuck)
-# RECOVER_TRUNCATED — выставляется каждым вызовом recover_stuck_input: 1, если
-# восстановленный текст заведомо неполон (ввод занимал больше одной строки, а из
-# панели читается только строка с «❯»). Вызывающий решает, беспокоить ли этим
-# оператора: точное восстановление его не касается, потерянный хвост — касается.
+# Без <agent> метка доставки недоступна и текст берётся только из панели.
+# RECOVER_TRUNCATED — выставляется каждым вызовом: 1, если восстановленный текст
+# заведомо неполон (ввод занимал больше строки, а метки, из которой можно взять
+# полный текст, не нашлось). Вызывающий решает, беспокоить ли этим оператора:
+# точное восстановление его не касается, потерянный хвост — касается.
+# RECOVER_SOURCE — marker | pane, откуда взят перепечатанный текст (для логов).
 RECOVER_TRUNCATED=0
+RECOVER_SOURCE=pane
 
 recover_stuck_input() {
-  local session="$1" pane text
+  local session="$1" agent="${2:-}" pane text full
   pane="$(_recover_capture "$session")"
   is_stuck_input "$pane" || return 2
 
   text="$(pane_input_raw "$pane")"
-  if input_is_multiline "$pane"; then RECOVER_TRUNCATED=1; else RECOVER_TRUNCATED=0; fi
+  RECOVER_TRUNCATED=0
+  RECOVER_SOURCE=pane
+  if [ -n "$agent" ] && inbound_matches "$agent" "$text" \
+     && full="$(inbound_delivered_text "$agent")" && [ -n "$full" ]; then
+    text="$(_reflow_inbound "$full")"
+    RECOVER_SOURCE=marker
+  elif input_is_multiline "$pane"; then
+    RECOVER_TRUNCATED=1
+  fi
 
   # 1. Очистка поля — ТОЛЬКО если в буфере действительно что-то есть.
   # Чаще всего его там нет: сорванный auth-submit канала оставляет лишь
