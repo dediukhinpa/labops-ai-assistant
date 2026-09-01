@@ -176,14 +176,24 @@ for it in items:
 # Is the session sitting on a CLEAN idle prompt? Replicates the watchdog's check
 # so we never type into an active turn or a stuck input box.
 session_clean_idle() {
-  local tail input
+  local tail input x
   tail="$(tmux capture-pane -pt "$SESSION" -S -8 2>/dev/null || true)"
   [ -n "$tail" ] || return 1
   printf '%s' "$tail" | grep -qa '❯' || return 1          # no prompt → not idle
+  printf '%s' "$tail" | grep -qa 'esc to interrupt' && return 1   # активный ход
   input="$(printf '%s' "$tail" | grep -a '❯' | tail -1 \
             | sed -e 's/.*❯//' -e 's/\xc2\xa0//g' -e 's/[[:space:]]//g')"
   # Empty, or the rotating placeholder hint Try"..." → clean idle.
-  [ -z "$input" ] || printf '%s' "$input" | grep -qE '^Try".*"$'
+  [ -z "$input" ] && return 0
+  printf '%s' "$input" | grep -qE '^Try".*"$' && return 0
+  # Текст в поле бывает НАРИСОВАН, но не набран: Claude Code рисует подсказку
+  # следующего промпта, буфер при этом пуст (курсор стоит сразу за «❯ »). По
+  # тексту это неотличимо от занятого поля, и поллер считал агента вечно
+  # занятым: у developer 2026-09-01 призрак висел часами, а межагентские задачи
+  # копились недоставленными, потому что «чистого промпта» не наступало никогда.
+  x="$(tmux display -pt "$SESSION" '#{cursor_x}' 2>/dev/null || true)"
+  case "$x" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$x" -le "${PANE_INPUT_COL0:-2}" ]
 }
 
 # Type a one-line task-delivery instruction into the session and submit it.

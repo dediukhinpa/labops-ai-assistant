@@ -28,6 +28,9 @@ sb_recent_json() { printf '%s' "$ITEMS"; }   # stub the network layer
 PANE_IDLE=$'some earlier output\n❯\xc2\xa0'
 PANE_HINT=$'output\n❯\xc2\xa0Try"fix lint errors"'
 PANE_BUSY=$'esc to interrupt\ndoing tool work'
+# Призрак: текст НАРИСОВАН в поле, но буфер пуст (курсор сразу за «❯ »).
+PANE_PHANTOM=$'output\n\xe2\x9d\xaf\xc2\xa0разберись кто съел память'
+CURSOR_X=2
 
 SENT="$TMP/sent.log"; : > "$SENT"
 PANE_STATE="idle"          # switched per-case
@@ -38,7 +41,10 @@ tmux() {                                     # tmux stub
         idle) printf '%s' "$PANE_IDLE" ;;
         hint) printf '%s' "$PANE_HINT" ;;
         busy) printf '%s' "$PANE_BUSY" ;;
+        phantom) printf '%s' "$PANE_PHANTOM" ;;
+        typed) printf '%s' "$PANE_PHANTOM" ;;
       esac ;;
+    display) printf '%s' "$CURSOR_X" ;;
     has-session) return 0 ;;
     send-keys)
       # record literal payloads (-l) and Enter
@@ -125,6 +131,23 @@ PANE_STATE="busy"; : > "$SENT"; poll_once
 [ ! -s "$SENT" ] && ok "busy session: delivery deferred, nothing typed" \
   || bad "typed into a busy session: $(cat "$SENT")"
 [ ! -s "$SEEN2" ] && ok "deferred task left unseen for retry" || bad "deferred task wrongly marked seen"
+
+# ---- case 6: призрак отрисовки не считается занятостью ----------------------
+# Регрессия 2026-09-01 (developer): Claude Code нарисовал в поле подсказку
+# следующего промпта. Текст есть, буфер пуст. Поллер считал агента занятым и
+# переставал доставлять задачи ВООБЩЕ — «чистый промпт» не наступал никогда.
+SEEN3="$AGENT_WORKSPACE/core/active/.task-seen"; : > "$SEEN3"
+PANE_STATE="phantom"; CURSOR_X=2; : > "$SENT"; poll_once
+grep -q 'SEND:' "$SENT" && ok "призрак в поле не мешает доставке задачи" \
+  || bad "призрак принят за занятость — задача не доставлена"
+
+# ---- case 7: реально набранный текст по-прежнему откладывает доставку -------
+: > "$SEEN3"
+PANE_STATE="typed"; CURSOR_X=30; : > "$SENT"; poll_once
+[ ! -s "$SENT" ] && ok "реально набранный ввод: доставка отложена" \
+  || bad "поллер напечатал поверх набранного текста: $(cat "$SENT")"
+[ ! -s "$SEEN3" ] && ok "отложенная задача осталась неотмеченной" \
+  || bad "отложенная задача помечена доставленной"
 
 echo
 echo "passed=$pass failed=$fail"
