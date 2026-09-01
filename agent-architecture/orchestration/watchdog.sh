@@ -359,6 +359,7 @@ while true; do
   # the idle branch below, same as an empty INPUT.
   if [ -z "$INPUT" ] || printf '%s' "$INPUT" | grep -qE '^Try".*"$'; then
     NUDGE_STAGE=0          # clean idle prompt — healthy, leave it alone
+    LAST_PHANTOM=""        # поле очистилось — следующий призрак снова стоит лога
     # Чистый простой = агент на связи (сессия жива, промпт рисуется, ввод не
     # залип). Закрываем висящую тревогу — иначе она не закрылась бы никогда:
     # heartbeat у спокойно простаивающего агента протухает штатно.
@@ -392,7 +393,14 @@ while true; do
            log "нарисованный, но не набранный ввод (буфер пуст) — сразу перепечатка"
            NUDGE_STAGE=1
          else
-           log "нарисованный ввод не подтверждён доставкой — чищу поле, не отправляю"
+           # Логируем ОДИН раз на призрак, а не каждый цикл: призрак висит
+           # часами, и построчный лог (2880 строк в сутки на агента) прятал бы
+           # в себе настоящие события watchdog.
+           PHANTOM="$(pane_input_raw "$TAIL")"
+           if [ "$PHANTOM" != "${LAST_PHANTOM:-}" ]; then
+             log "нарисованный ввод не подтверждён доставкой — чищу поле, не отправляю"
+             LAST_PHANTOM="$PHANTOM"
+           fi
            tmux send-keys -t "$SESSION" C-u 2>/dev/null || true
            NUDGE_STAGE=0
          fi
