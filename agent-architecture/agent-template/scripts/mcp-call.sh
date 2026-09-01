@@ -40,10 +40,26 @@ mcp_open_session() {
     printf '%s' "$sid"
 }
 
+# mcp_close_session <url> <bearer> <sid> -- завершить сессию (HTTP DELETE).
+#
+# ЗАЧЕМ: сервер держит состояние сессии, пока клиент её не закроет, и сам её не
+# протухает. Брошенная сессия -- утечка на стороне сервера. Замерено на живом
+# memory_router 2026-09-01: 56 КБ на каждый initialize без DELETE против 6 КБ с
+# ним. Поллер задач открывает сессию каждые 5 секунд на агента, то есть ~24
+# сессии в минуту -- около 1.9 ГБ в сутки; за 30 часов сервис вырос до 4.9 ГБ и
+# выел весь swap хоста.
+mcp_close_session() {
+    local url="$1" bearer="$2" sid="$3"
+    [ -n "$sid" ] || return 0
+    curl -sS -m "$MCP_TIMEOUT_S" -o /dev/null -X DELETE "$url" \
+        -H "Authorization: Bearer ${bearer}" \
+        -H "mcp-session-id: ${sid}" 2>/dev/null || true
+}
+
 # mcp_tools_call <url> <bearer> <payload> -- полный цикл: initialize,
-# notifications/initialized, затем сам вызов. Печатает тело ответа.
+# notifications/initialized, сам вызов и закрытие сессии. Печатает тело ответа.
 mcp_tools_call() {
-    local url="$1" bearer="$2" payload="$3" sid
+    local url="$1" bearer="$2" payload="$3" sid body rc=0
     sid="$(mcp_open_session "$url" "$bearer")" || return 1
 
     # Уведомление обязательно по протоколу; ответа у него нет, ошибку глотаем.
@@ -54,10 +70,16 @@ mcp_tools_call() {
         -H "mcp-session-id: ${sid}" \
         --data '{"jsonrpc":"2.0","method":"notifications/initialized"}' 2>/dev/null || true
 
-    curl -sS -m "$MCP_TIMEOUT_S" -X POST "$url" \
+    body="$(curl -sS -m "$MCP_TIMEOUT_S" -X POST "$url" \
         -H "Authorization: Bearer ${bearer}" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
         -H "mcp-session-id: ${sid}" \
-        --data "$payload" 2>/dev/null || return 1
+        --data "$payload" 2>/dev/null)" || rc=1
+
+    # Закрываем в любом случае: сессия висит на сервере и после неудачного вызова.
+    mcp_close_session "$url" "$bearer" "$sid"
+
+    [ "$rc" -eq 0 ] || return 1
+    printf '%s' "$body"
 }
