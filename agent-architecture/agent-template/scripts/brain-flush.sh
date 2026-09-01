@@ -32,6 +32,9 @@ TIMEOUT_S="${BRAIN_FLUSH_TIMEOUT_S:-3}"
 mkdir -p "$STATE_DIR" "$(dirname "$LOG")"
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [brain-flush] $1" >> "$LOG"; }
 
+# shellcheck source=mcp-call.sh
+. "$SCRIPT_DIR/mcp-call.sh"
+
 # Guard: same placeholder rule as everywhere else -- CHANGE_ME means "second
 # brain not deployed yet", never a credential to send.
 if [ -z "${AGENT_BEARER:-}" ] || [ "${AGENT_BEARER:-}" = "CHANGE_ME" ] \
@@ -73,11 +76,11 @@ print(json.dumps({
 PY
 ) || { log "skip ($REASON): payload build failed"; exit 0; }
 
-RESP=$(curl -sS -m "$TIMEOUT_S" -X POST "$SECOND_BRAIN_MEMORY_URL" \
-    -H "Authorization: Bearer ${AGENT_BEARER}" \
-    -H "Content-Type: application/json" \
-    -H "Accept: application/json, text/event-stream" \
-    --data "$PAYLOAD" 2>/dev/null) || { log "flush ($REASON) failed: backend unreachable"; exit 0; }
+# Через рукопожатие: одиночный POST FastMCP отвергает ("Missing session ID"),
+# из-за чего flush молча не доходил вообще никогда (см. mcp-call.sh).
+MCP_TIMEOUT_S="$TIMEOUT_S"
+RESP=$(mcp_tools_call "$SECOND_BRAIN_MEMORY_URL" "$AGENT_BEARER" "$PAYLOAD") \
+    || { log "flush ($REASON) failed: backend unreachable"; exit 0; }
 
 if printf '%s' "$RESP" | grep -qE '"error"[[:space:]]*:[[:space:]]*\{'; then
     log "flush ($REASON) rejected by backend"

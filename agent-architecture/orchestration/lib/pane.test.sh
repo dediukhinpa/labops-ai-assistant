@@ -237,6 +237,59 @@ else
   bad "recovery does not precede escalation (recover=$rec_line escalate=$esc2_line)"
 fi
 
+# ---- атрибуция досылки -----------------------------------------------------
+# Регрессия 2026-09-01: watchdog отправлял агенту любой нарисованный в поле
+# текст, агент его выполнял, и рой уходил в цикл самоуказаний. Досылать можно
+# только подтверждённое меткой доставки.
+MARKER_DIR="$(mktemp -d)"
+trap 'rm -rf "$MARKER_DIR"' EXIT
+TELEGRAM_STATE_DIR="$MARKER_DIR"
+MARKER="$MARKER_DIR/last-inbound"
+
+printf '%s\n%s' "$(date +%s)" 'проверь статус второго мозга' > "$MARKER"
+inbound_matches agent 'проверь статус второго мозга' \
+  && ok "свежая метка: доставленное сообщение досылается" \
+  || bad "свежая метка: доставленное сообщение НЕ распознано"
+
+# Панель отдаёт только первую визуальную строку, возможно обрезанную.
+inbound_matches agent 'проверь статус' \
+  && ok "обрезанная панелью строка распознаётся как префикс доставленного" \
+  || bad "префикс доставленного не распознан"
+
+inbound_matches agent 'подними task-mcp и добавь в .mcp.json' \
+  && bad "ЧУЖОЙ текст досылается — цикл самоуказаний возможен" \
+  || ok "текст без доставки не досылается"
+
+printf '%s\n%s' "$(( $(date +%s) - 3600 ))" 'проверь статус второго мозга' > "$MARKER"
+inbound_matches agent 'проверь статус второго мозга' \
+  && bad "протухшая метка принята — старое сообщение может выстрелить позже" \
+  || ok "метка старше INBOUND_MARKER_MAX_AGE не принимается"
+
+rm -f "$MARKER"
+inbound_matches agent 'проверь статус второго мозга' \
+  && bad "без метки досылка разрешена" \
+  || ok "без метки досылка запрещена"
+
+printf '%s\n%s' "$(date +%s)" 'ок' > "$MARKER"
+inbound_matches agent 'ок' \
+  && bad "слишком короткое совпадение принято (случайные совпадения)" \
+  || ok "слишком короткий текст не считается подтверждением"
+
+# Гейт на сам watchdog: ветка пустого буфера обязана спрашивать атрибуцию.
+W="$HERE/../watchdog.sh"
+if grep -q 'inbound_matches "\$AGENT"' "$W"; then
+  ok "watchdog.sh проверяет атрибуцию перед перепечаткой"
+else
+  bad "watchdog.sh перепечатывает нарисованный текст без проверки доставки"
+fi
+gate_line="$(grep -n 'inbound_matches "\$AGENT"' "$W" | head -1 | cut -d: -f1)"
+retype_line="$(grep -n 'сразу перепечатка' "$W" | head -1 | cut -d: -f1)"
+if [ -n "$gate_line" ] && [ -n "$retype_line" ] && [ "$gate_line" -lt "$retype_line" ]; then
+  ok "проверка атрибуции стоит ДО перепечатки (строка $gate_line < $retype_line)"
+else
+  bad "перепечатка не защищена проверкой (gate=$gate_line retype=$retype_line)"
+fi
+
 echo
 echo "passed=$pass failed=$fail"
 [ $fail -eq 0 ]

@@ -479,7 +479,12 @@ function tgMethodFromUrl(url: string | URL | Request): string {
 }
 
 const _nativeFetch = globalThis.fetch.bind(globalThis)
-globalThis.fetch = function timedTelegramFetch(
+// `preconnect` — расширение Bun поверх fetch, часть типа globalThis.fetch.
+// bind() свойства функции не переносит, поэтому подменяющая функция обязана
+// пробросить его сама: иначе присваивание не проходит по типу (TS2741), а в
+// рантайме любой вызов fetch.preconnect() падал бы на undefined.
+const _nativePreconnect = globalThis.fetch.preconnect
+function timedTelegramFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
@@ -510,6 +515,8 @@ globalThis.fetch = function timedTelegramFetch(
 
   return _nativeFetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer))
 }
+timedTelegramFetch.preconnect = _nativePreconnect
+globalThis.fetch = timedTelegramFetch
 
 const bot = new Bot(env.TELEGRAM_BOT_TOKEN)
 // Raw API talks to grammy. Safe wrapper sits in front of every downstream

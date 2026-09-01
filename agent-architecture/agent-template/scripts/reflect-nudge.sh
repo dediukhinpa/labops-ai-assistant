@@ -36,6 +36,9 @@ MARKER="$WS/core/active/consolidate.request"
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [reflect-nudge] $1" >> "$HOOK_LOG"; }
 
+# shellcheck source=mcp-call.sh
+. "$SCRIPT_DIR/mcp-call.sh"
+
 # Bearer: prefer env, else parse the agent's own .mcp.json (as night-learnings does).
 bearer() {
     if [ -n "${AGENT_BEARER:-}" ]; then printf '%s' "$AGENT_BEARER"; return; fi
@@ -98,11 +101,10 @@ if [ -z "$TOKEN" ]; then
     exit 0
 fi
 
-RESP=$(curl -s --max-time 5 -X POST "$ROUTER_URL" \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Accept: application/json, text/event-stream" \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD" 2>&1 || echo "ERROR")
+# Через рукопожатие: FastMCP отвергает одиночный tools/call ("Missing session
+# ID"), поэтому побудка молча падала в маркер каждый раз (см. mcp-call.sh).
+MCP_TIMEOUT_S=5
+RESP=$(mcp_tools_call "$ROUTER_URL" "$TOKEN" "$PAYLOAD" 2>&1 || echo "ERROR")
 
 if printf '%s' "$RESP" | grep -qiE '"error"|\bERROR\b|^null$'; then
     log "notify failed (${REASON}); falling back to marker: ${RESP:0:120}"
