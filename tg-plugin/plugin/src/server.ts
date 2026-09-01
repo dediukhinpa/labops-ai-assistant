@@ -591,7 +591,7 @@ const progressReporter = new ProgressReporter({ telegramApi, config, log })
 // through redact + HTML validation before leaving the process.
 const taskMirror = new TaskMirror({ telegramApi, config, log })
 
-// InboundWatcher (PR-A3, 2026-05-20) — auto-reply «Тралл занят» when the
+// InboundWatcher (PR-A3, 2026-05-20) — auto-reply «<агент> занят» when the
 // operator sends plain text while ProgressReporter says the session is
 // mid-tool. The watcher receives `progressReporter` for read-only busy
 // detection — never mutates reporter state. Debounce + safe-api enforced

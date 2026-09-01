@@ -475,11 +475,12 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
     await handleInboundText(ctx, deps)
     await new Promise((r) => setTimeout(r, 0))
 
-    // /help replies via sendMessage but the auto-reply «🔧 Тралл занят» must
-    // NOT appear — OOB short-circuits before the watcher hook. The single
-    // sendMessage we see is the /help body itself.
+    // /help replies via sendMessage but the busy auto-reply must NOT appear —
+    // OOB short-circuits before the watcher hook. The single sendMessage we
+    // see is the /help body itself. Проверяем по неизменной части текста, а не
+    // по имени агента: имя берётся из конфигурации и у каждого своё.
     expect(sendCalls.length).toBe(1)
-    expect(sendCalls[0]!.text).not.toContain('Тралл занят')
+    expect(sendCalls[0]!.text).not.toContain('занят, активный инструмент')
     // OOB handled inline — no channel notify.
     expect(serverSpy.calls.length).toBe(0)
     rmSync(statePaths.root, { recursive: true, force: true })
