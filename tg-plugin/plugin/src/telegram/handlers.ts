@@ -160,7 +160,7 @@ export interface HandlerDeps {
   // tests still compile — when absent, every media message goes through
   // the single-media path (no album merging).
   albumBuffer?: AlbumBuffer<AlbumEntry>
-  // PR-A3 (2026-05-20): InboundWatcher fires an auto-reply «Тралл занят»
+  // PR-A3 (2026-05-20): InboundWatcher fires an auto-reply «<агент> занят»
   // when the operator sends plain text mid-tool. Optional so older tests
   // compile — when absent, the watcher branch is skipped and behaviour
   // matches the pre-A3 path. Insertion point in handleInboundText sits
@@ -274,7 +274,7 @@ function isSideEffectAllowed(
 // no-op when the watcher isn't configured — older tests stay compatible.
 //
 // Bug #3 (TASK-4): use `isSideEffectAllowed` (allowlist AND addressing)
-// so a non-addressed group message never triggers «Тралл занят».
+// so a non-addressed group message never triggers «<агент> занят».
 function maybeTriggerWatcher(ctx: Context, deps: HandlerDeps): void {
   if (!deps.watcher) return
   if (!isSideEffectAllowed(ctx, deps.config, deps.policy)) return
@@ -1196,7 +1196,7 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
   }
 
   // PR-A3 watcher hook (after OOB resolution, before gate/notify): if Claude
-  // is mid-tool for this chat, auto-reply «Тралл занят». Gated on the
+  // is mid-tool for this chat, auto-reply «<агент> занят». Gated on the
   // allowlist — only allowed senders in allowed chats can trigger it.
   // Fire-and-forget — channel-notification latency must NOT depend on the
   // auto-reply round-trip. Auto-reply does NOT replace the channel notification
@@ -1211,7 +1211,7 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
 
 export async function handleInboundPhoto(ctx: Context, deps: HandlerDeps): Promise<void> {
   // PR-A3: same watcher hook as text. Media handlers must surface
-  // «Тралл занят» too — otherwise a busy-session photo/voice silently waits.
+  // «<агент> занят» too — otherwise a busy-session photo/voice silently waits.
   maybeTriggerWatcher(ctx, deps)
   const buildPhoto = async (): Promise<MediaDescriptor[]> => {
     const sizes = ctx.message?.photo
