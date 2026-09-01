@@ -117,6 +117,20 @@ if bash agent-template/scripts/brain-flush.test.sh >/dev/null 2>&1; then
 else
   bad "brain-flush.sh: юнит-тест провален (agent-template/scripts/brain-flush.test.sh)"
 fi
+# Обращения к second_brain идут через рукопожатие MCP: одиночный tools/call
+# FastMCP отвергает, и записи в общий мозг молча не доходили (2026-09-01).
+if bash agent-template/scripts/mcp-call.test.sh >/dev/null 2>&1; then
+  ok "mcp-call.sh: рукопожатие MCP (initialize + session-id) — юнит-тест зелёный"
+else
+  bad "mcp-call.sh: юнит-тест провален (agent-template/scripts/mcp-call.test.sh)"
+fi
+for hook_script in brain-flush.sh reflect-nudge.sh; do
+  if grep -q 'mcp_tools_call' "agent-template/scripts/$hook_script"; then
+    ok "$hook_script ходит в second_brain через рукопожатие"
+  else
+    bad "$hook_script шлёт одиночный POST — запись в общий мозг не дойдёт"
+  fi
+done
 
 echo "── 9. Изоляция плагина по агентам (lib/plugin.sh) ──"
 if bash orchestration/lib/plugin.test.sh >/dev/null 2>&1; then

@@ -15,15 +15,19 @@ mkdir -p "$WS/core/active" "$WS/logs" "$WS/state"
 echo "- did a thing" > "$WS/core/active/episodic.md"
 echo "next: continue" > "$WS/core/active/handoff.md"
 
-# curl stub: records the request body, returns success JSON
+# curl stub: records the request body, returns success JSON. Отдаёт и
+# mcp-session-id при запросе с -D: FastMCP требует рукопожатия, без сессии
+# tools/call не принимается (см. mcp-call.sh).
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/curl" <<EOF
 #!/usr/bin/env bash
-prev=""
+prev=""; hdr=""
 for a in "\$@"; do
   [ "\$prev" = "--data" ] && printf '%s' "\$a" > "$TMP/last-request.json"
+  [ "\$prev" = "-D" ] && hdr="\$a"
   prev="\$a"
 done
+[ -n "\$hdr" ] && printf 'HTTP/1.1 200 OK\r\nmcp-session-id: sess-test\r\n\r\n' > "\$hdr"
 echo '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}'
 EOF
 chmod +x "$TMP/bin/curl"
