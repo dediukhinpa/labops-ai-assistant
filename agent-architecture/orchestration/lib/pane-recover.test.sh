@@ -11,13 +11,13 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP="$(mktemp -d)"
 export TMUX_TMPDIR="$TMP/tmux"; mkdir -p "$TMUX_TMPDIR"
-SESSION="pane-recover-test-$$"
-OUT="$TMP/submitted.txt"
+SESSION_BASE="pane-recover-test-$$"
+SESSION="$SESSION_BASE-0"
+OUT="$TMP/submitted-0.txt"
 export TELEGRAM_STATE_DIR="$TMP/state"; mkdir -p "$TELEGRAM_STATE_DIR"
 MARKER="$TELEGRAM_STATE_DIR/last-inbound"
 
 cleanup() {
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
   tmux kill-server 2>/dev/null || true
   rm -rf "$TMP"
 }
@@ -37,8 +37,14 @@ export RECOVER_SETTLE RECOVER_SUBMIT_DELAY
 # shellcheck source=lib/pane-recover.sh
 . "$HERE/pane-recover.sh"
 
+# Каждый случай — своя сессия и свой файл: убивать последнюю сессию нельзя,
+# вместе с ней уходит сервер, и следующий new-session попадает в умирающий
+# («server exited unexpectedly» — поймано на прогоне). Всё чистит cleanup.
+CASE=0
 start_pane() {   # <текст-в-поле>
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  CASE=$((CASE+1))
+  SESSION="$SESSION_BASE-$CASE"
+  OUT="$TMP/submitted-$CASE.txt"
   : > "$OUT"
   tmux new-session -d -s "$SESSION" -x 80 -y 20 \
     "bash -c 'printf \"❯ \"; cat > \"$OUT\"'"
@@ -102,6 +108,33 @@ start_pane "$FIRST_LINE"
 rc=0; recover_stuck_input "$SESSION" || rc=$?
 sleep 0.3
 [ "${RECOVER_SOURCE}" = "pane" ] && ok "без агента метка не используется" || bad "метка прочитана без агента"
+
+# 6. Спецсимволы доезжают дословно: перепечатка идёт литерально (send-keys -l),
+#    а сравнение с меткой — через case-шаблон с кавычками, поэтому ни $VAR, ни
+#    backtick, ни glob не должны ни раскрываться, ни ломать сопоставление.
+SPECIAL='посмотри $HOME/logs/*.log | grep "ошибка" && echo `date` — 100% срочно, ага?'
+write_marker "$SPECIAL"
+start_pane 'посмотри $HOME/logs'
+rc=0; recover_stuck_input "$SESSION" developer || rc=$?
+sleep 0.3
+got="$(head -1 "$OUT" 2>/dev/null || true)"
+[ "$got" = "$SPECIAL" ] && ok "спецсимволы дошли дословно" || bad "спецсимволы искажены: $got"
+[ "${RECOVER_SOURCE}" = "marker" ] && ok "спецсимволы не сорвали сопоставление с меткой" \
+  || bad "сопоставление с меткой сорвалось на спецсимволах"
+
+# 7. Unicode и эмодзи в ДОСТАВЛЕННОМ тексте доезжают без искажений.
+#    Эмодзи специально нет в нарисованной строке: в поддельном TUI (обычный
+#    `cat` в каноническом режиме) Ctrl-U стирает по числу символов, а терминал
+#    считает колонки, и двухколоночный символ оставляет хвост — артефакт
+#    харнесса, а не системы: у настоящего TUI своя отрисовка поля, а в реальном
+#    сценарии призрака буфер и вовсе пуст и чистить нечего.
+UNI='срочно проверь очередь — там «кавычки-ёлочки», тире и эмодзи 🙂 ⚡ в конце'
+write_marker "$UNI"
+start_pane 'срочно проверь очередь'
+rc=0; recover_stuck_input "$SESSION" developer || rc=$?
+sleep 0.3
+got="$(head -1 "$OUT" 2>/dev/null || true)"
+[ "$got" = "$UNI" ] && ok "unicode и эмодзи не искажены" || bad "unicode искажён: $got"
 
 echo
 echo "passed=$pass failed=$fail"
