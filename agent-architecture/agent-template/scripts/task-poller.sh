@@ -41,12 +41,31 @@ mkdir -p "$(dirname "$SEEN")"; touch "$SEEN"
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [task-poller] $1" >> "$LOG"; }
 
 # Bearer for memory_router — prefer env, else parse the agent's own .mcp.json.
+# Разбираем .mcp.json как JSON, а не как строки. Прежний `grep -A3 memory_router`
+# зависел от ФОРМАТИРОВАНИЯ файла: пока "headers" держались в одну строку, всё
+# работало, а стоило файлу стать pretty-print — Authorization уезжает на 4-ю
+# строку от имени сервера, из окна выпадает, и поллер молча остаётся без токена.
+# Ровно это случилось на живом хосте 2026-09-01: агент переписал себе .mcp.json,
+# и приём межагентских задач у developer умер на 791 цикл подряд («no bearer —
+# skip» каждые 5 секунд), причём ни одной ошибки в логе — только пропуск.
 poller_bearer() {
   if [ -n "${AGENT_BEARER:-}" ]; then printf '%s' "$AGENT_BEARER"; return; fi
   local mcp="$WS/.mcp.json"
   [ -f "$mcp" ] || return 0
-  grep -A3 'memory_router' "$mcp" 2>/dev/null | grep 'Authorization' \
-    | grep -oE 'Bearer [^"]+' | head -1 | sed 's/^Bearer //'
+  MCP_FILE="$mcp" python3 -c '
+import json, os
+try:
+    cfg = json.load(open(os.environ["MCP_FILE"]))
+except Exception:
+    raise SystemExit(0)
+for name, srv in (cfg.get("mcpServers") or {}).items():
+    if "memory_router" not in name:
+        continue
+    auth = str(((srv or {}).get("headers") or {}).get("Authorization") or "")
+    if auth.startswith("Bearer "):
+        print(auth[7:], end="")
+    break
+' 2>/dev/null || true
 }
 
 # sb_recent_json <token> — print the raw items JSON array from recent(decisions).
@@ -85,6 +104,28 @@ def post(payload, sid=None):
     except Exception:
         return {}, got
 
+def close(sid):
+    """Завершить сессию.
+
+    Сервер держит её состояние, пока клиент не закроет, и сам не протухает.
+    Поллер стучится каждые 5 секунд, то есть ~24 брошенные сессии в минуту на
+    двух агентов. Замер на живом memory_router 2026-09-01: 56 КБ на сессию без
+    DELETE против 6 КБ с ним — за 30 часов сервис вырос до 4.9 ГБ и выел весь
+    swap хоста. Ошибку глотаем: не закрыть сессию досадно, уронить опрос нельзя.
+    """
+    if not sid:
+        return
+    req = urllib.request.Request(url, method="DELETE")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("mcp-session-id", sid)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout):
+            pass
+    except Exception:
+        pass
+
+
+sid = None
 try:
     _, sid = post({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                    "params": {"protocolVersion": "2024-11-05", "capabilities": {},
@@ -97,6 +138,8 @@ try:
     print(resp["result"]["content"][0]["text"])
 except Exception:
     raise SystemExit(0)
+finally:
+    close(sid)
 PY
 }
 
@@ -133,14 +176,24 @@ for it in items:
 # Is the session sitting on a CLEAN idle prompt? Replicates the watchdog's check
 # so we never type into an active turn or a stuck input box.
 session_clean_idle() {
-  local tail input
+  local tail input x
   tail="$(tmux capture-pane -pt "$SESSION" -S -8 2>/dev/null || true)"
   [ -n "$tail" ] || return 1
   printf '%s' "$tail" | grep -qa '❯' || return 1          # no prompt → not idle
+  printf '%s' "$tail" | grep -qa 'esc to interrupt' && return 1   # активный ход
   input="$(printf '%s' "$tail" | grep -a '❯' | tail -1 \
             | sed -e 's/.*❯//' -e 's/\xc2\xa0//g' -e 's/[[:space:]]//g')"
   # Empty, or the rotating placeholder hint Try"..." → clean idle.
-  [ -z "$input" ] || printf '%s' "$input" | grep -qE '^Try".*"$'
+  [ -z "$input" ] && return 0
+  printf '%s' "$input" | grep -qE '^Try".*"$' && return 0
+  # Текст в поле бывает НАРИСОВАН, но не набран: Claude Code рисует подсказку
+  # следующего промпта, буфер при этом пуст (курсор стоит сразу за «❯ »). По
+  # тексту это неотличимо от занятого поля, и поллер считал агента вечно
+  # занятым: у developer 2026-09-01 призрак висел часами, а межагентские задачи
+  # копились недоставленными, потому что «чистого промпта» не наступало никогда.
+  x="$(tmux display -pt "$SESSION" '#{cursor_x}' 2>/dev/null || true)"
+  case "$x" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$x" -le "${PANE_INPUT_COL0:-2}" ]
 }
 
 # Type a one-line task-delivery instruction into the session and submit it.

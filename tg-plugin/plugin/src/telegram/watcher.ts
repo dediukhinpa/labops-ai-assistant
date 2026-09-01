@@ -1,4 +1,4 @@
-// InboundWatcher — auto-reply «Тралл занят» when the operator sends plain
+// InboundWatcher — auto-reply «<агент> занят» when the operator sends plain
 // text while a Claude session is mid-tool. Sits between OOB resolution and
 // the gate/notify call in `handleInboundText` — OOB always takes priority,
 // and the watcher NEVER replaces the channel notification (auto-reply AND
@@ -16,7 +16,7 @@
 //
 // Tone constraints (rules.md):
 //   * No emoji in production paths. The operator explicitly asked for «🔧»
-//     prefix on auto-reply (visual cue that Тралл is mid-tool — single
+//     prefix on auto-reply (visual cue that the agent is mid-tool — single
 //     character, anchored, NOT a decorative emoji string).
 //   * HTML output through `escapeHtml` for the tool name; the safe-wrapper
 //     also validates HTML before send.
@@ -81,7 +81,7 @@ export class InboundWatcher {
    * Занят ли агент прямо сейчас (тот же критерий, что и у автоответа).
    *
    * Нужен подтверждению приёма (ack-taken.ts): когда агент занят, оператору
-   * уходит «Тралл занят», и второе сообщение «принял в работу» было бы тем же
+   * уходит «<агент> занят», и второе сообщение «принял в работу» было бы тем же
    * смыслом дважды. Одна и та же проверка в обоих местах гарантирует, что
    * оператор всегда получает ровно одно подтверждение.
    */
@@ -123,7 +123,7 @@ export class InboundWatcher {
       this.lastReplyMs.set(input.chatId, now)
 
       const toolName = this.progressReporter.getActiveToolName(input.chatId)
-      const text = composeAutoReply(toolName)
+      const text = composeAutoReply(toolName, this.config.memory.agent_label)
 
       try {
         await this.telegramApi.sendMessage(input.chatId, text, {
@@ -173,8 +173,16 @@ export class InboundWatcher {
 /**
  * Compose the auto-reply body. Exposed for tests so the HTML shape is
  * pinned without invoking the full class.
+ *
+ * Имя агента берётся из конфигурации (`memory.agent_label`), а не зашито:
+ * до 2026-09-01 здесь стояло имя пилотного агента, и любой другой агент в рое
+ * представлялся оператору чужим именем. Метки нет — говорим нейтрально «Агент».
  */
-export function composeAutoReply(toolName: string | undefined): string {
+export function composeAutoReply(
+  toolName: string | undefined,
+  agentName?: string,
+): string {
   const tool = toolName ?? '…'
-  return `🔧 Тралл занят, активный инструмент: <code>${escapeHtml(tool)}</code>. Жди или /stop.`
+  const who = (agentName ?? '').trim() || 'Агент'
+  return `🔧 ${escapeHtml(who)} занят, активный инструмент: <code>${escapeHtml(tool)}</code>. Жди или /stop.`
 }
