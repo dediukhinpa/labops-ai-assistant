@@ -48,6 +48,52 @@ tmux() {                                     # tmux stub
   esac
 }
 
+# ---- case 0: bearer читается из .mcp.json при ЛЮБОМ форматировании ---------
+# Регрессия 2026-09-01: прежний `grep -A3 memory_router` находил Authorization
+# только пока "headers" стояли в одну строку. Агент переписал себе .mcp.json в
+# pretty-print — и поллер developer 791 цикл подряд писал «no bearer — skip»,
+# то есть приём межагентских задач умер молча, без единой ошибки.
+cat > "$AGENT_WORKSPACE/.mcp.json" <<'JSON'
+{
+  "mcpServers": {
+    "second_brain-memory": {
+      "type": "http",
+      "url": "http://127.0.0.1:5001/mcp",
+      "headers": {
+        "Authorization": "Bearer wrong-one"
+      }
+    },
+    "second_brain-memory_router": {
+      "type": "http",
+      "url": "http://127.0.0.1:5002/mcp",
+      "headers": {
+        "Authorization": "Bearer router-token-42"
+      }
+    }
+  }
+}
+JSON
+got="$(AGENT_BEARER='' poller_bearer)"
+[ "$got" = "router-token-42" ] \
+  && ok "bearer найден в pretty-print .mcp.json (и взят именно у memory_router)" \
+  || bad "bearer не прочитан из pretty-print .mcp.json: «$got»"
+
+cat > "$AGENT_WORKSPACE/.mcp.json" <<'JSON'
+{
+  "mcpServers": {
+    "second_brain-memory_router": {
+      "type": "http",
+      "url": "http://127.0.0.1:5002/mcp",
+      "headers": { "Authorization": "Bearer oneline-token" }
+    }
+  }
+}
+JSON
+got="$(AGENT_BEARER='' poller_bearer)"
+[ "$got" = "oneline-token" ] && ok "однострочный формат по-прежнему читается" \
+  || bad "однострочный формат сломан: «$got»"
+rm -f "$AGENT_WORKSPACE/.mcp.json"
+
 # ---- case 1: fetch keeps only open tasks addressed to this agent ------------
 tasks="$(fetch_open_tasks "faketoken")"
 [ "$tasks" = "decisions/2026-07-20-task-carmella-alpha.md" ] \
