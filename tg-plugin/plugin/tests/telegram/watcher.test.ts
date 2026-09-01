@@ -352,4 +352,19 @@ describe('InboundWatcher', () => {
   test('composeAutoReply: known tool name appears wrapped in <code>', () => {
     expect(composeAutoReply('Read')).toContain('<code>Read</code>')
   })
+
+  // Регрессия 2026-09-01: в автоответе было зашито имя пилотного агента, и
+  // любой другой агент роя представлялся оператору чужим именем.
+  test('composeAutoReply: представляется именем агента из конфигурации', () => {
+    expect(composeAutoReply('Read', 'Developer')).toContain('🔧 Developer занят')
+  })
+
+  test('composeAutoReply: без метки агента — нейтральное «Агент»', () => {
+    expect(composeAutoReply('Read')).toContain('🔧 Агент занят')
+    expect(composeAutoReply('Read', '   ')).toContain('🔧 Агент занят')
+  })
+
+  test('composeAutoReply: имя агента экранируется как HTML', () => {
+    expect(composeAutoReply('Read', '<b>X</b>')).toContain('&lt;b&gt;X&lt;/b&gt; занят')
+  })
 })
