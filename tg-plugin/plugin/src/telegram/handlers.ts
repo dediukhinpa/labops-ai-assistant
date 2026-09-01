@@ -26,6 +26,7 @@ import type { MultichatRouter } from '../router/multichat-router.js'
 import type { InboundMessage } from '../router/inbox-bridge.js'
 import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import { ensureSubmitted, resolveAgentSession } from '../channel/ensure-submit.js'
+import { recordInboundDelivery } from '../channel/inbound-marker.js'
 import { gateTelegramMessage, type GateInput } from './gate.js'
 import { isAddressedToBot } from './addressing.js'
 import {
@@ -71,6 +72,10 @@ import { ackTaken } from './ack-taken.js'
 // Off unless we can resolve our own session (AGENT_ID) and not opted out.
 // Never awaited and never throws — delivery must not depend on it.
 function scheduleEnsureSubmit(content: string, log: Logger): void {
+  // Метку пишем ДО любых ранних выходов: watchdog решает по ней, можно ли
+  // досылать нарисованное в поле, и это решение не должно зависеть от того,
+  // включена ли досылка на стороне плагина.
+  recordInboundDelivery(content, log)
   if (process.env.TELEGRAM_ENSURE_SUBMIT === '0') return
   const session = resolveAgentSession()
   if (session.length === 0) return

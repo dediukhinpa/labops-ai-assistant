@@ -132,6 +132,50 @@ input_is_multiline() {
   '
 }
 
+# ── Атрибуция досылки ────────────────────────────────────────────────────────
+# ЖИВОЙ ИНЦИДЕНТ 2026-09-01 (developer, до этого carmella 2026-08-15): в поле
+# ввода оказывается нарисованный текст, которого оператор НЕ отправлял, а
+# перепечатка ниже честно жмёт по нему Enter. Агент выполняет придуманную
+# инструкцию, её результат порождает новый нарисованный текст — и рой уходит в
+# самоподдерживающийся цикл (10 «сообщений» за 15 минут; агент успел дописать
+# себе .mcp.json и просил root). Пустой буфер сам по себе НЕ доказывает, что
+# перед нами потерянное сообщение оператора: он лишь означает «в буфере пусто».
+#
+# Поэтому досылать разрешено ТОЛЬКО текст, подтверждённый доставкой: плагин на
+# каждое входящее пишет метку (см. tg-plugin/plugin/src/channel/inbound-marker.ts),
+# и нарисованное должно совпасть со свежей меткой. Нет метки — не наше сообщение,
+# отправлять его нельзя ни при каких обстоятельствах.
+INBOUND_MARKER_MAX_AGE="${INBOUND_MARKER_MAX_AGE:-600}"   # метка старше — не в счёт
+INBOUND_MIN_MATCH_CHARS="${INBOUND_MIN_MATCH_CHARS:-8}"   # короче — совпадение случайно
+
+# inbound_marker_file <agent> — путь метки последнего доставленного входящего.
+inbound_marker_file() {
+  local dir="${TELEGRAM_STATE_DIR:-${CLAUDE_LAB:-$HOME/.claude-lab}/shared/state/$1/telegram}"
+  printf '%s/last-inbound' "$dir"
+}
+
+# _squash <text> — схлопнуть пробелы: панель переносит и дополняет строки, из-за
+# чего побайтовое сравнение с оригиналом бессмысленно.
+_squash() { printf '%s' "${1:-}" | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//'; }
+
+# inbound_matches <agent> <painted-text> — подтверждён ли нарисованный текст
+# свежей доставкой. Панель отдаёт только строку с «❯» (первая визуальная строка
+# длинного сообщения, возможно обрезанная), поэтому ищем её как подстроку
+# доставленного текста, а не полное равенство.
+inbound_matches() {
+  local agent="${1:-}" painted; painted="$(_squash "${2:-}")"
+  local file ts now delivered
+  [ "${#painted}" -ge "$INBOUND_MIN_MATCH_CHARS" ] || return 1
+  file="$(inbound_marker_file "$agent")"
+  [ -f "$file" ] || return 1
+  ts="$(head -1 "$file" 2>/dev/null || echo '')"
+  case "$ts" in ''|*[!0-9]*) return 1 ;; esac
+  now="$(date +%s)"
+  [ $(( now - ts )) -le "$INBOUND_MARKER_MAX_AGE" ] || return 1
+  delivered="$(_squash "$(tail -n +2 "$file" 2>/dev/null || true)")"
+  case "$delivered" in *"$painted"*) return 0 ;; *) return 1 ;; esac
+}
+
 # is_stuck_input <pane-text> — a message is sitting in the input unsubmitted:
 # prompt visible, no active turn, input non-empty, and NOT the rotating
 # placeholder hint Try"...". This is the state to recover.
