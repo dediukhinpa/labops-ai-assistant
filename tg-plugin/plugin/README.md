@@ -6,11 +6,17 @@ Custom Claude Code channel plugin для labops Telegram agents. Замена Py
 
 ## Why this exists
 
-Миграция nova / vega / sol / orion / Claude с Python gateway.py на Claude Code Channels до `2026-06-15` billing cutover. См. [../DEPRECATION-PATH.md](../DEPRECATION-PATH.md).
+Плагин заменил старый Python-gateway на `claude -p`: тот поднимал headless-процесс на
+каждое сообщение и терял контекст между ними. Здесь Telegram — это канал ввода/вывода
+к одной живой сессии, поэтому контекст, память и инструменты общие. Сравнение подходов —
+в [../README.md](../README.md).
 
 ## Status
 
-Под активной разработкой. Последний смерженный PR: **#25** (`fix(status)`: suppress «Печатает…» bubble). Полный актуальный список — `gh pr list --state merged --limit 10` в этом репо. CI: `bun test` + `bun run typecheck` должны проходить чисто перед merge.
+Под активной разработкой, в составе монорепозитория `labops-ai-assistant`
+(компонент `tg-plugin/`). Актуальный список изменений — `git log`/`gh pr list` в
+монорепозитории; нумерация PR из времён отдельного репозитория больше не сходится.
+CI: `bun test` + `bun run typecheck` должны проходить чисто перед merge.
 
 ## Quick start
 

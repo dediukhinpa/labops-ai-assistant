@@ -213,7 +213,7 @@ flowchart LR
     L2["L2 ACTIVE<br/>episodic.md (raw diary) · working-set.md (recall) · handoff.md"]
     L3["L3 PASSIVE (semantic)<br/>insights · decisions · errors · preferences<br/>ARCHIVE: archived/{episodic,superseded} · MEMORY.md (on demand)"]
   end
-  L4["L4 SHARED BRAIN<br/>labops-second-brain · memory_router/memory/agent_router over MCP"]
+  L4["L4 SHARED BRAIN<br/>labops-second-brain · memory_router/memory/agent_router/tasks over MCP"]
   L1 --> L2 --> L3 --> L4
   classDef brand fill:#8B5CF6,stroke:#6D28D9,color:#ffffff,font-weight:bold
   classDef ext fill:#CCFBF1,stroke:#0D9488,color:#0F766E
@@ -230,47 +230,48 @@ flowchart LR
 | **L2 Active** | `active/episodic.md` (raw diary, salience-tagged), `active/working-set.md` (materialised recall), `active/handoff.md` | yes (working-set + handoff) | `active-writer.sh` (Stop hook) writes episodic; `working-set-build.sh` rebuilds the working set |
 | **L3 Passive** (semantic) | `passive/insights.md · decisions.md · errors.md · preferences.md` (distilled insights + decay frontmatter) | yes | the **live session** during reflection (skill `memory-consolidate`); `decay-sweep.sh` prunes |
 | **ARCHIVE** | `archived/episodic/YYYY-MM.md`, `archived/superseded/`, `MEMORY.md`, `LEARNINGS.md` | no — on demand (Read) | `archive-roll.sh` / `decay-sweep.sh` (pure bash) |
-| **L4 Shared** | second_brain `memory_router` / `memory` / `agent_router` | no — on demand (MCP) | per RBAC scopes (dual-write on reflection) |
+| **L4 Shared** | second_brain `memory_router` / `memory` / `agent_router` / `tasks` (the board) | no — on demand (MCP) | per RBAC scopes (dual-write on reflection) |
 
 Episodic is **never model-compressed** — only size-rolled to `archived/episodic/`; the semantic layer is *synthesised* from it (reversible via `provenance`). File access zones: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — Operator only; **YELLOW** (`passive/*`, `AGENTS.md`, `TOOLS.md`) — agent with justification; **GREEN** (`LEARNINGS.md`, `active/episodic.md`, `feedback_*`) — agent autonomously.
 
-The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SECONDBRAIN_WRITE_RULES.md) — a single canonical file (RED zone) that is symlinked into every agent's `core/` and **@-imported into its `CLAUDE.md`** (`@core/SECONDBRAIN_WRITE_RULES.md`). Edit one file → every agent picks it up. Four disciplines: (1) `recall` **before** writing — don't breed duplicates; (2) **dual-write** what matters — both to the local `.md` and to second_brain (idempotent by sha256); (3) write **immediately**, not "later" (knowledge compaction does not flush); (4) write into your own `scope`. The write tools are hard-fixed in code: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_personal_note` (→ `personal`), `create_project_note` (→ `projects`), `create_handoff`, `append_daily_log`, `supersede_decision`.
+The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SECONDBRAIN_WRITE_RULES.md) — a single canonical file (RED zone). `agent-template/install.sh` copies it into the workspace root alongside `AGENT_ROUTER.md`, and both are **@-imported by `CLAUDE.md`** (`@SECONDBRAIN_WRITE_RULES.md`, `@AGENT_ROUTER.md`). Until 2026-09-02 neither document was copied at all — the poller told agents to consult `AGENT_ROUTER.md` and the file did not exist in any workspace. Four disciplines: (1) `recall` **before** writing — don't breed duplicates; (2) **dual-write** what matters — both to the local `.md` and to second_brain (idempotent by sha256); (3) write **immediately**, not "later" (knowledge compaction does not flush); (4) write into your own `scope`. The write tools are hard-fixed in code: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_personal_note` (→ `personal`), `create_project_note` (→ `projects`), `create_handoff`, `append_daily_log`, `supersede_decision`.
 
 ---
 
 ## agent-template — scaffolder
 
-[`agent-template/`](agent-template/) is a complete Claude Code workspace template, wired to the shared `labops-second-brain` (memory + memory_router + agent_router). The interactive `install.sh` asks for the agent's identity and brain connection parameters, renders the templates, and assembles the workspace into `~/.claude-lab/<agent-id>/.claude/`.
+[`agent-template/`](agent-template/) is a complete Claude Code workspace template, wired to the shared `labops-second-brain` (memory + memory_router + agent_router + tasks). The interactive `install.sh` asks for the agent's identity and brain connection parameters, renders the templates, and assembles the workspace into `~/.claude-lab/<agent-id>/.claude/`.
 
-**Prompts during scaffolding** (they fill `CLAUDE.md` placeholders): name (`{{AGENT_NAME}}`), role (`{{AGENT_ROLE}}` / `{{AGENT_ROLE_DESCRIPTION}}`), character (`{{CHARACTER_TRAITS}}`), how to address the Operator, response language, model; plus brain parameters — `MCP_HOST` (host/IP only), `AGENT_BEARER`, `AGENT_SCOPES`. Three per-service endpoint vars (`SECOND_BRAIN_MEMORY_URL`, `SECOND_BRAIN_MEMORY_ROUTER_URL`, `SECOND_BRAIN_AGENT_ROUTER_URL`) are derived automatically from `MCP_HOST` but can be overridden directly.
+**Prompts during scaffolding** (they fill `CLAUDE.md` placeholders): name (`{{AGENT_NAME}}`), role (`{{AGENT_ROLE}}` / `{{AGENT_ROLE_DESCRIPTION}}`), character (`{{CHARACTER_TRAITS}}`), how to address the Operator, response language, model; plus brain parameters — `MCP_HOST` (host/IP only), `AGENT_BEARER`, `AGENT_SCOPES`. Four per-service endpoint vars (`SECOND_BRAIN_MEMORY_URL`, `SECOND_BRAIN_MEMORY_ROUTER_URL`, `SECOND_BRAIN_AGENT_ROUTER_URL`, `SECOND_BRAIN_TASKS_URL`) are derived automatically from `MCP_HOST` but can be overridden directly.
 
 **What gets generated:**
 
 ```
 ~/.claude-lab/<agent-id>/.claude/
 ├── CLAUDE.md            # SOUL / identity (from templates/CLAUDE.md.template)
-├── .mcp.json            # ONLY the 3 second_brain servers (memory/memory_router/agent_router), chmod 600
-├── settings.json        # SessionStart / Stop / PreCompact hooks
+├── .mcp.json            # ONLY the 4 second_brain servers (memory/memory_router/agent_router/tasks), chmod 600
+├── settings.json        # SessionStart / UserPromptSubmit / Stop / PreCompact hooks (+ heartbeat on every event)
 ├── agent.env            # source before launch: MCP_HOST / SECOND_BRAIN_*_URL / AGENT_BEARER
 ├── core/
 │   ├── USER.md · rules.md · AGENTS.md · MEMORY.md · LEARNINGS.md
 │   ├── passive/decisions.md           # PASSIVE (last 14d)
 │   └── active/{episodic.md, handoff.md, archived/, pre-compact/}
 ├── tools/TOOLS.md
-├── scripts/             # episodic writer, working-set recall, reflect nudge, decay/archive housekeeping
-├── hooks/               # session-start, stop, precompact
+├── scripts/             # episodic writer, working-set recall, reflect nudge, decay/archive housekeeping,
+│                       #   brain-flush, mcp-call helper, task-board poller
+├── hooks/               # session-start, user-prompt-submit, stop, precompact, heartbeat
 ├── logs/
 └── skills/              # symlink to the shared skill bundle
 ```
 
 | Template directory | Contents |
 |---|---|
-| `templates/` | `CLAUDE.md`, `rules.md`, `USER.md`, `tools.md`, `agents.md`, `decisions.md`, `episodic.md`, `MEMORY.md`, `LEARNINGS.md`, `mcp.json`, `settings.json` |
-| `hooks/` | `session-start-hook.sh`, `stop-hook.sh`, `precompact-hook.sh` |
-| `scripts/` | `active-writer.sh`, `working-set-build.sh`, `reflect-nudge.sh`, `decay-sweep.sh`, `archive-roll.sh` |
+| `templates/` | `CLAUDE.md`, `rules.md`, `USER.md`, `tools.md`, `agents.md`, `decisions.md`, `episodic.md`, `MEMORY.md`, `LEARNINGS.md`, `mcp.json`, `settings.json`, `global-CLAUDE.md` |
+| `hooks/` | `session-start-hook.sh`, `user-prompt-submit-hook.sh`, `stop-hook.sh`, `precompact-hook.sh`, `heartbeat-hook.sh` |
+| `scripts/` | `active-writer.sh`, `working-set-build.sh`, `reflect-nudge.sh`, `decay-sweep.sh`, `archive-roll.sh`, `brain-flush.sh`, `mcp-call.sh`, `task-poller.sh` + `task_poller.py` |
 | `docs/` | `ARCHITECTURE.md`, `MEMORY.md`, `HOOKS.md`, `MULTI-AGENT.md`, `SETUP-GUIDE.md`, `AGENT-LAWS.md`, … (16 files) |
 
-Important: `mcp.json.template` connects the agent to **only** second_brain (3 servers). The channel (`labops-channel`) is loaded separately at launch via `claude … server:labops-channel`, and the task-board MCP (`:5003`) is deliberately **not** wired to agents (the heartbeat runs as a separate cron).
+Important: `mcp.json.template` connects the agent to **only** second_brain — now **4 servers**, the task board (`:5003`) included: it is the swarm's agent-to-agent channel, so every agent is wired to it and is granted the `task-board` scope by default. The channel (`labops-channel`) is still loaded separately at launch via `claude … server:labops-channel`. Two documents governing shared memory and routing — `SECONDBRAIN_WRITE_RULES.md` and `AGENT_ROUTER.md` — are copied into the workspace root and `@`-imported from `CLAUDE.md`. Nothing here needs cron: housekeeping rides the Stop hook, and the board poller is supervised by the watchdog.
 
 ---
 
@@ -329,7 +330,7 @@ The Telegram bot token is pulled **not from a hardcode** but from `channel.env` 
 
 ### Lifecycle hooks
 
-A hook is **not a server**: the Claude Code engine emits an event at a defined moment, reads `settings.json`, spawns the command as a child process (stdin carries JSON with the transcript path and `session_id`), the script does its work in milliseconds-to-seconds and exits. All three hooks are **fail-open**: any error → `exit 0`, the harness never hangs. More on how `settings.json` is loaded — in `labops-tg-plugin/docs/06`.
+A hook is **not a server**: the Claude Code engine emits an event at a defined moment, reads `settings.json`, spawns the command as a child process (stdin carries JSON with the transcript path and `session_id`), the script does its work in milliseconds-to-seconds and exits. Every hook is **fail-open**: any error → `exit 0`, the harness never hangs. More on how `settings.json` is loaded — in [`tg-plugin/docs/06`](../tg-plugin/docs/06-how-claude-loads-session.md).
 
 | Event | Hook (`agent-template/hooks/`) | What it does |
 |---|---|---|
@@ -343,7 +344,7 @@ All hooks carry an `sdk-guard`: on `CLAUDE_SDK_CHILD=1` (or `entrypoint=sdk-ts`)
 
 ### Swarm automation
 
-The scripts in [`orchestration/`](orchestration/) are trigger-driven "one-shots" (cron / event), not long-running processes. The agent roster is taken via `orchestration/lib/agents.sh::list_agents` — **not hardcoded**: first `$CLAUDE_LAB/agents.conf` (one line per agent-id, see `agents.conf.example`), otherwise a scan of `$CLAUDE_LAB/*/.claude` excluding infra directories (`shared`, `logs`, `mcp-servers`).
+Most scripts in [`orchestration/`](orchestration/) are trigger-driven "one-shots" (cron / event). The exception is the **task poller**: `lib/task-poller-launch.sh` (sourced by both `watchdog.sh` and `start-agent.sh`) keeps one long-lived daemon per agent — `agent-template/scripts/task-poller.sh` supervising `task_poller.py`, which holds a single MCP session open and polls the board every 5 s. It was a bash loop re-handshaking on every tick until 2026-09-02; the rewrite cut it from ~8% of a core to ~0.3%. The agent roster is taken via `orchestration/lib/agents.sh::list_agents` — **not hardcoded**: first `$CLAUDE_LAB/agents.conf` (one line per agent-id, see `agents.conf.example`), otherwise a scan of `$CLAUDE_LAB/*/.claude` excluding infra directories (`shared`, `logs`, `mcp-servers`).
 
 <details>
 <summary><b>Orchestration scripts</b></summary>
@@ -359,8 +360,25 @@ The scripts in [`orchestration/`](orchestration/) are trigger-driven "one-shots"
 | `agent-boot-sequence.sh` | SessionStart | deterministically pulls delegated tasks (`list_my_pending`) |
 | `reflect-error-pattern.sh` | Stop | nudge to record an error-pattern on a correction from the Operator |
 | `update-rules.sh`, `tg-send.sh`, `second_brain-heartbeat.py` | helpers | rules updates, sending to TG, heartbeat client |
+| `lib/task-poller-launch.sh` | sourced by `watchdog.sh` / `start-agent.sh` | starts and supervises the per-agent board poller (the one long-running exception) |
 
 </details>
+
+#### Agent-to-agent work goes through the board
+
+Since 2026-09-02 the default channel between agents is the **task board** (`task_mcp`, port 5003), not shared-memory notes. Notes are still readable, but they were never a queue: every task cost two permanent rows in a 30-entry `recent()` window (the original plus its `supersede`), so a busy scope silently pushed tasks out of sight. The board filters in SQL and has a real state machine.
+
+The round trip:
+
+```
+task_create (assignee=<agent>)      →  the caller
+  ↓  poller sees status=new within ~5s and types a line into the live pane
+task_claim   →  task_review  →  task_done
+```
+
+`progress → done` is **rejected** — review is not optional. Every write needs the `task-board` scope, part of the default set an agent is issued.
+
+Delivery uses no headless `claude -p`: the poller types into the live subscription session, so a delegated task costs no SDK credits. The full agent-side contract is [`AGENT_ROUTER.md`](AGENT_ROUTER.md), copied into every workspace at scaffold time.
 
 **Two-stage reactions (2026-06-25):** 👀 "received" — instantly on receipt (≈1 s, fire-and-forget) and 👌 "done" — at the end of the turn (the read-receipt hook). Two emoji = two meanings, so the signal doesn't "lie" on a busy session. `✅` is deliberately not used — it's not in the Telegram bot reaction whitelist.
 

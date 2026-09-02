@@ -117,7 +117,9 @@ flowchart LR
     WD["watchdog.sh &lt;agent&gt;<br/>eternal supervisor"]
     SA["start-agent.sh<br/>injects env/secrets"]
     TM["tmux session labops-&lt;agent&gt;"]
+    PL["task-poller.sh + task_poller.py<br/>board poller, one MCP session"]
     SD -->|ExecStart| WD --> SA --> TM
+    WD -->|supervises| PL
   end
   subgraph live["Live runtime"]
     direction TB
@@ -126,7 +128,7 @@ flowchart LR
   end
   TM --> CC
   CC -->|spawn child, stdio MCP| BUN
-  CC -->|HTTP + Bearer| SB["second_brain MCP<br/>memory / memory_router / agent_router"]
+  CC -->|HTTP + Bearer| SB["second_brain MCP<br/>memory / memory_router / agent_router / tasks"]
   BUN <-->|getUpdates / sendMessage| TG["Telegram (Operator)"]
   classDef brand fill:#8B5CF6,stroke:#6D28D9,color:#ffffff,font-weight:bold
   classDef ext fill:#CCFBF1,stroke:#0D9488,color:#0F766E
@@ -134,7 +136,7 @@ flowchart LR
   classDef sys fill:#E2E8F0,stroke:#334155,color:#1E293B
   linkStyle default stroke:#8B5CF6,stroke-width:1.5px
   class CC brand
-  class SD,WD,SA,TM sys
+  class SD,WD,SA,TM,PL sys
   class BUN,SB,TG ext
 ```
 
@@ -142,6 +144,8 @@ flowchart LR
 
 > [!IMPORTANT]
 > An incoming Telegram message does **not** go through the webhook server. Poller → MCP notification → session. The `:6000+` webhook only receives **Claude Code lifecycle hooks**, not Telegram traffic.
+
+**Agent-to-agent flow:** a caller writes `task_create(assignee=…)` on the board → the agent's poller sees `status=new` within ~5 s and types a line into its live pane → the agent runs `task_claim` → `task_review` → `task_done`. No headless `claude -p` anywhere, so a delegated task costs no SDK credits.
 
 ---
 
@@ -160,7 +164,7 @@ bash install.sh
 
 The root `install.sh` installs `agent-architecture` (deps, Claude Code, the first agent) and then the bundled `tg-plugin` from this tree — nothing is cloned for the channel, it is already here. Flags pass through: `bash install.sh --no-agent` (prepare only), `bash install.sh --test-only` (self-test).
 
-**Shared memory** — `labops-second-brain` is a *separate* dependency, not part of this repo. `install.sh` clones it next to the repo (unless `SKIP_SECOND_BRAIN=1`); install it with `sudo bash ~/labops-second-brain/scripts/install.sh` (or hand it to a Claude Code agent following its `AGENT.md`). It issues the agent a Bearer token and brings up MCP `memory:5001` / `memory_router:5002` / `agent_router:5000`.
+**Shared memory** — `labops-second-brain` is a *separate* dependency, not part of this repo. `install.sh` clones it next to the repo (unless `SKIP_SECOND_BRAIN=1`); install it with `sudo bash ~/labops-second-brain/scripts/install.sh` (or hand it to a Claude Code agent following its `AGENT.md`). It issues the agent a Bearer token and brings up MCP `memory:5001` / `memory_router:5002` / `agent_router:5000` / `tasks:5003` (the task board).
 
 > [!TIP]
 > For the first agent (Developer) the default model is `opus` (Opus 4.8). You install only the **first** agent — then the swarm grows itself: the Developer spawns the rest via the `create-agent` skill.
