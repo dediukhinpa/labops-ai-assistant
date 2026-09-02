@@ -149,6 +149,50 @@ PANE_STATE="typed"; CURSOR_X=30; : > "$SENT"; poll_once
 [ ! -s "$SEEN3" ] && ok "отложенная задача осталась неотмеченной" \
   || bad "отложенная задача помечена доставленной"
 
+# ---- case 8: занятая сессия не ходит в сеть ---------------------------------
+# Опрос стоит ~250 мс (три старта python3 + рукопожатие MCP), проверка простоя
+# ~16 мс. Доставить в занятую сессию всё равно нельзя, так что сеть при занятом
+# агенте не должна дёргаться вовсе — это и есть основная экономия CPU.
+NET_CALLS="$TMP/net-calls"; : > "$NET_CALLS"
+_orig_items="$ITEMS"
+sb_recent_json() { echo x >> "$NET_CALLS"; printf '%s' "$_orig_items"; }
+
+: > "$SEEN3"
+PANE_STATE="busy"; CURSOR_X=2; poll_once
+[ ! -s "$NET_CALLS" ] && ok "занятая сессия: в сеть не ходили" \
+  || bad "при занятой сессии всё равно сделан запрос"
+
+PANE_STATE="idle"; CURSOR_X=2; poll_once
+[ -s "$NET_CALLS" ] && ok "на чистом промпте запрос делается" \
+  || bad "на простое запрос не сделан"
+
+sb_recent_json() { printf '%s' "$_orig_items"; }
+
+# ---- case 9: токен разбирается один раз, пока .mcp.json не тронут -----------
+# Разбор стоит ~50 мс при цикле раз в 5 секунд — пятая часть всего времени
+# поллера ради значения, которое не меняется неделями.
+PARSE_CALLS="$TMP/parse-calls"; : > "$PARSE_CALLS"
+_parse_bearer() { echo x >> "$PARSE_CALLS"; printf 'cached-token'; }
+_BEARER_CACHE=""; _BEARER_MTIME=""
+cat > "$AGENT_WORKSPACE/.mcp.json" <<'JSON'
+{"mcpServers":{"second_brain-memory_router":{"headers":{"Authorization":"Bearer x"}}}}
+JSON
+
+AGENT_BEARER='' poller_refresh_bearer
+AGENT_BEARER='' poller_refresh_bearer
+AGENT_BEARER='' poller_refresh_bearer
+[ "$(grep -c . "$PARSE_CALLS")" = "1" ] && ok "токен разобран один раз на три вызова" \
+  || bad "разборов файла: $(grep -c . "$PARSE_CALLS") вместо 1"
+[ "$POLLER_BEARER" = "cached-token" ] && ok "из кэша вернулось то же значение" \
+  || bad "кэш вернул «$POLLER_BEARER»"
+
+# Файл тронули — кэш обязан протухнуть, иначе смена токена не подхватится.
+sleep 1; touch "$AGENT_WORKSPACE/.mcp.json"
+AGENT_BEARER='' poller_refresh_bearer
+[ "$(grep -c . "$PARSE_CALLS")" = "2" ] && ok "правка .mcp.json сбрасывает кэш" \
+  || bad "после touch разборов: $(grep -c . "$PARSE_CALLS") вместо 2"
+rm -f "$AGENT_WORKSPACE/.mcp.json"
+
 echo
 echo "passed=$pass failed=$fail"
 [ $fail -eq 0 ]

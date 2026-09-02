@@ -48,11 +48,45 @@ log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [task-poller] $1" >> "$LOG"; }
 # Ровно это случилось на живом хосте 2026-09-01: агент переписал себе .mcp.json,
 # и приём межагентских задач у developer умер на 791 цикл подряд («no bearer —
 # skip» каждые 5 секунд), причём ни одной ошибки в логе — только пропуск.
-poller_bearer() {
-  if [ -n "${AGENT_BEARER:-}" ]; then printf '%s' "$AGENT_BEARER"; return; fi
-  local mcp="$WS/.mcp.json"
+#
+# Результат кэшируется по mtime файла: разбор стоит ~50 мс, а цикл идёт раз в
+# 5 секунд -- это была пятая часть всего процессорного времени поллера при том,
+# что токен не меняется неделями. Перечитываем, только если .mcp.json тронули
+# (агент действительно переписывает его себе, см. историю выше).
+_BEARER_CACHE=""
+_BEARER_MTIME=""
+
+# poller_refresh_bearer — положить токен в POLLER_BEARER, перечитав файл только
+# если его тронули.
+#
+# ВАЖНО: вызывать НЕ через подстановку команд. Кэш живёт в переменных оболочки,
+# а `$( )` порождает подоболочку, из которой присваивания не возвращаются, —
+# кэш бы просто никогда не срабатывал.
+poller_refresh_bearer() {
+  POLLER_BEARER=""
+  if [ -n "${AGENT_BEARER:-}" ]; then POLLER_BEARER="$AGENT_BEARER"; return 0; fi
+  local mcp="$WS/.mcp.json" mtime
   [ -f "$mcp" ] || return 0
-  MCP_FILE="$mcp" python3 -c '
+  mtime="$(stat -c %Y "$mcp" 2>/dev/null || echo 0)"
+  if [ -n "$_BEARER_CACHE" ] && [ "$mtime" = "$_BEARER_MTIME" ]; then
+    POLLER_BEARER="$_BEARER_CACHE"
+    return 0
+  fi
+  _BEARER_CACHE="$(_parse_bearer "$mcp")"
+  _BEARER_MTIME="$mtime"
+  POLLER_BEARER="$_BEARER_CACHE"
+}
+
+# poller_bearer — печатающая обёртка. Через неё кэш не работает (подоболочка),
+# поэтому в горячем цикле зовём poller_refresh_bearer напрямую.
+poller_bearer() {
+  poller_refresh_bearer
+  printf '%s' "$POLLER_BEARER"
+}
+
+# _parse_bearer <путь к .mcp.json> — вытащить токен memory_router.
+_parse_bearer() {
+  MCP_FILE="$1" python3 -c '
 import json, os
 try:
     cfg = json.load(open(os.environ["MCP_FILE"]))
@@ -132,9 +166,22 @@ try:
                               "clientInfo": {"name": "task-poller", "version": "0"}}})
     if sid:
         post({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}, sid)
+    # body_contains отбирает заметки задач на стороне БД, ДО применения limit.
+    # Без него окно из 30 последних записей scope "decisions" занимали любые
+    # заметки -- решения других агентов, дуальные записи консолидации, -- и
+    # задача, за которой успело появиться тридцать записей, пропадала из
+    # выдачи навсегда. Ошибки при этом не было: поллер просто больше её не
+    # видел. Игла ровно одна и обрывается на двоеточии: имя агента и статус
+    # доматчивает регулярка ниже, она терпима к пробелам, а ILIKE -- нет.
+    args = {"scope": "decisions", "limit": 30, "body_contains": ["TASK-FOR:"]}
     resp, _ = post({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                    "params": {"name": "recent",
-                               "arguments": {"scope": "decisions", "limit": 30}}}, sid)
+                    "params": {"name": "recent", "arguments": args}}, sid)
+    if "error" in resp or "result" not in resp:
+        # Сервер старше правки и не знает про body_contains -- повторяем без
+        # него, чтобы выкат в любом порядке не оставил агентов без доставки.
+        args.pop("body_contains")
+        resp, _ = post({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                        "params": {"name": "recent", "arguments": args}}, sid)
     print(resp["result"]["content"][0]["text"])
 except Exception:
     raise SystemExit(0)
@@ -208,7 +255,14 @@ deliver_task() {
 # One poll pass. Returns 0 always (fail-open).
 poll_once() {
   local token paths p
-  token="$(poller_bearer || true)"
+  # Проверку простоя делаем ПЕРВОЙ. Доставить задачу в занятую сессию всё
+  # равно нельзя (ниже стоит тот же самый гейт), а стоит она ~16 мс против
+  # ~250 мс на опрос с тремя стартами python3 и рукопожатием MCP. Пока агент
+  # ведёт ход, цикл теперь почти ничего не тратит; задача дождётся следующего.
+  session_clean_idle || return 0
+  # Напрямую, а не через $( ): иначе кэш токена остался бы в подоболочке.
+  poller_refresh_bearer || true
+  token="$POLLER_BEARER"
   [ -n "$token" ] || { log "no bearer — skip"; return 0; }
   paths="$(fetch_open_tasks "$token" || true)"
   [ -n "$paths" ] || return 0
@@ -216,7 +270,7 @@ poll_once() {
     [ -n "$p" ] || continue
     grep -Fxq "$p" "$SEEN" && continue                    # already delivered
     if ! session_clean_idle; then
-      # Busy/active turn — leave unseen, retry when the agent frees up.
+      # Сессия могла занять себя, пока мы ходили в сеть — проверяем ещё раз.
       continue
     fi
     if deliver_task "$p"; then
