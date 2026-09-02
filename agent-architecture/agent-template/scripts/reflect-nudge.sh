@@ -40,12 +40,32 @@ log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [reflect-nudge] $1" >> "$HOOK_LOG";
 . "$SCRIPT_DIR/mcp-call.sh"
 
 # Bearer: prefer env, else parse the agent's own .mcp.json (as night-learnings does).
+#
+# Разбираем .mcp.json как JSON, а не как строки -- та же поломка, что уже
+# чинили в task-poller.sh. Прежний `grep -A3 agent_router` зависел от
+# ФОРМАТИРОВАНИЯ файла: в живом .mcp.json между именем сервера и Authorization
+# лежат "type", "url", "headers" -- четыре строки, из окна -A3 токен выпадает.
+# Замер 2026-09-02: bearer() возвращал пустоту, побудка каждый раз уходила в
+# ветку "shared layer off" и роняла файловый маркер, ни разу не дойдя до
+# agent_router -- и это НЕ видно в логе как ошибка, только как штатный фолбэк.
 bearer() {
     if [ -n "${AGENT_BEARER:-}" ]; then printf '%s' "$AGENT_BEARER"; return; fi
     local mcp="$WS/.mcp.json"
     [ -f "$mcp" ] || return 0
-    grep -A3 'agent_router' "$mcp" 2>/dev/null | grep 'Authorization' \
-        | grep -oE 'Bearer [^"]+' | head -1 | sed 's/^Bearer //'
+    MCP_FILE="$mcp" python3 -c '
+import json, os
+try:
+    cfg = json.load(open(os.environ["MCP_FILE"]))
+except Exception:
+    raise SystemExit(0)
+for name, srv in (cfg.get("mcpServers") or {}).items():
+    if "agent_router" not in name:
+        continue
+    auth = str(((srv or {}).get("headers") or {}).get("Authorization") or "")
+    if auth.startswith("Bearer "):
+        print(auth[7:], end="")
+    break
+' 2>/dev/null || true
 }
 
 BODY="Reflection nudge (${REASON}). Run the memory-consolidate skill: read new \
@@ -97,14 +117,21 @@ if [ -f "$STAMP" ]; then
 fi
 echo "$now" > "$STAMP"
 
+# drop_marker <причина> -- уронить файловый маркер и записать, ПОЧЕМУ.
+#
+# Причина обязательна: раньше обе ветки (нет токена / отправка не удалась)
+# писали одну строку "shared layer off", и по логу нельзя было отличить
+# "агент не знает своего токена" от "роутер не ответил" -- диагностика
+# 2026-09-02 из-за этого пошла по ложному следу.
 drop_marker() {
+    local cause="$1"
     { echo "# consolidate requested: ${REASON} @ $(date -u +%Y-%m-%dT%H:%M:%SZ)"; } >> "$MARKER"
-    log "shared layer off -> dropped marker for file-only reflection (${REASON})"
+    log "file-only reflection (${REASON}): ${cause}"
 }
 
 TOKEN="$(bearer || true)"
 if [ -z "$TOKEN" ]; then
-    drop_marker
+    drop_marker "no bearer in .mcp.json"
     exit 0
 fi
 
@@ -115,7 +142,7 @@ RESP=$(mcp_tools_call "$ROUTER_URL" "$TOKEN" "$PAYLOAD" 2>&1 || echo "ERROR")
 
 if printf '%s' "$RESP" | grep -qiE '"error"|\bERROR\b|^null$'; then
     log "notify failed (${REASON}); falling back to marker: ${RESP:0:120}"
-    drop_marker
+    drop_marker "notify rejected by agent_router"
 else
     log "notify queued (${REASON})"
 fi

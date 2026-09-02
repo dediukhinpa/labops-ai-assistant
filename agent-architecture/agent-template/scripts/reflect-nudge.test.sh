@@ -59,6 +59,38 @@ AGENT_WORKSPACE="$WS" AGENT_ID=nova AGENT_BEARER="" MEMORY_NUDGE_COOLDOWN=9999 \
 after=$(wc -l < "$WS/core/active/consolidate.request")
 [ "$before" = "$after" ] && ok 0 "cooldown suppressed 2nd marker" || ok 1 "cooldown suppressed 2nd marker"
 
+echo "== bearer читается из pretty-printed .mcp.json =="
+# Живой .mcp.json разложен по строкам: между именем сервера и Authorization
+# лежат "type", "url", "headers". Старый `grep -A3` их не переживал, токен
+# терялся, и побудка молча уходила в файловый маркер вместо agent_router.
+WS2="$TMP/pretty/.claude"; mkdir -p "$WS2/core/active" "$WS2/logs"
+cat > "$WS2/.mcp.json" <<'JSON'
+{
+  "mcpServers": {
+    "second_brain-agent_router": {
+      "type": "http",
+      "url": "http://127.0.0.1:5000/mcp",
+      "headers": {
+        "Authorization": "Bearer test-token-123"
+      }
+    }
+  }
+}
+JSON
+# Роутер заведомо недоступен: важно отличить "токен нашёлся, сеть не ответила"
+# от "токена нет" -- это разные ветки лога.
+AGENT_WORKSPACE="$WS2" AGENT_ID=nova SECOND_BRAIN_AGENT_ROUTER_URL="http://127.0.0.1:1/mcp" \
+    bash "$NUDGE" --reason checkpoint
+ok $? "exit 0 при недоступном роутере"
+if grep -q 'no bearer' "$WS2/logs/hooks.log"; then
+    ok 1 "токен не найден в pretty-printed .mcp.json"
+else
+    ok 0 ""
+fi
+grep -q 'notify failed' "$WS2/logs/hooks.log"; ok $? "дошли до отправки"
+# Причина в маркере должна отличать «нет токена» от «роутер не ответил».
+grep -q 'notify rejected by agent_router' "$WS2/logs/hooks.log"; ok $? "причина маркера записана"
+
 echo ""
 echo "reflect-nudge.test.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
