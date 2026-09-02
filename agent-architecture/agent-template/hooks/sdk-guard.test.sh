@@ -37,12 +37,19 @@ make_ws() {
 # Уборку глушим: без маркера last-housekeeping stop-hook считает, что она не
 # запускалась никогда, и уводит decay-sweep + archive-roll в фон -- посторонние
 # записи в тех же файлах, которые проверяет тест.
+# Stdin подаём ФАЙЛОМ, а не каналом. Через `printf ... | bash hook` тест мигал
+# примерно раз на восемь прогонов: хук с сработавшей защитой выходит ДО чтения
+# stdin, printf упирается в закрытый канал, получает SIGPIPE и возвращает 141, а
+# `set -o pipefail` объявляет это провалом самого хука. Гонка чистая: короткая
+# нагрузка обычно успевает лечь в буфер канала, но не обязана.
 run_hook() {
     local hook="$1" ws="$2" stdin="$3"; shift 3
-    printf '%s' "$stdin" | env "$@" \
+    local in="$TMP/stdin.$$"
+    printf '%s' "$stdin" > "$in"
+    env "$@" \
         AGENT_WORKSPACE="$ws" AGENT_ID=test-agent \
         MEMORY_HOUSEKEEPING_INTERVAL_SEC=0 \
-        bash "$ws/hooks/$hook"
+        bash "$ws/hooks/$hook" < "$in"
 }
 
 echo "== CLAUDE_SDK_CHILD=1: stop-hook не трогает память =="

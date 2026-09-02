@@ -158,6 +158,29 @@ buffer_is_empty fake-session && bad "набранный текст принят 
 rm -f "$SENT"
 unset -f tmux    # restore real tmux for the live section below
 
+# wait_pane <session> <предикат> -- ждать, пока панель не отрисуется.
+#
+# Раньше здесь стоял фиксированный `sleep 1`. Хватало его не всегда: гейт гоняет
+# эти случаи вместе с десятком других, а на живом хосте рядом работают два
+# агента и сервисы мозга. Под нагрузкой панель не успевала отрисоваться, capture
+# возвращал пустоту, и тест падал примерно раз на четыре прогона -- мигающий
+# гейт, который приучает не верить красному. Ждём появления нужного содержимого,
+# а не абстрактную секунду.
+PANE_WAIT_TRIES="${PANE_WAIT_TRIES:-40}"   # 40 x 0.25с = до 10с
+wait_pane() {
+  local s="$1" pred="$2" i
+  for ((i = 0; i < PANE_WAIT_TRIES; i++)); do
+    t="$(tmux capture-pane -pt "$s" -S -8 2>/dev/null)"
+    if "$pred" "$t"; then return 0; fi
+    sleep 0.25
+  done
+  return 1
+}
+
+# Предикат «панель не пуста»: для случаев, где ждём смены картинки, а не
+# конкретного признака.
+pane_not_empty() { [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]; }
+
 # ---- real tmux: Escape must restore the prompt after an overlay -------------
 # This is the actual discriminator the watchdog relies on, so stubbing it would
 # prove nothing. Skips cleanly where tmux is unavailable (CI containers).
@@ -168,8 +191,7 @@ if command -v tmux >/dev/null 2>&1; then
   # for the overlay — it hides the prompt and exits on Escape via its keymap.
   if tmux new-session -d -s "$S" -x 80 -y 20 \
        "bash -c 'while :; do printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; read -r -n1 -s k; done'" 2>/dev/null; then
-    sleep 1
-    t="$(tmux capture-pane -pt "$S" -S -8 2>/dev/null)"
+    wait_pane "$S" has_prompt || true
     has_prompt "$t" && ok "tmux: prompt visible before overlay" || bad "tmux: no prompt at start"
 
     # Cover the prompt the way a slash-command overlay does.
@@ -180,8 +202,8 @@ if command -v tmux >/dev/null 2>&1; then
     # Paint overlay text over the pane
     tmux respawn-pane -k -t "$S" \
       "bash -c 'printf \"  Context Usage\\n  Auto-compact window: 400k tokens\\n  /context all to expand\\n\"; sleep 30'" 2>/dev/null
-    sleep 1
-    t="$(tmux capture-pane -pt "$S" -S -8 2>/dev/null)"
+    no_prompt() { ! has_prompt "$1"; }
+    wait_pane "$S" no_prompt || true
     if has_prompt "$t"; then
       bad "tmux: overlay still shows a prompt — fixture wrong"
     else
@@ -193,8 +215,7 @@ if command -v tmux >/dev/null 2>&1; then
     # Restore a prompt-bearing pane — stands for Escape dismissing the overlay.
     tmux respawn-pane -k -t "$S" \
       "bash -c 'printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'" 2>/dev/null
-    sleep 1
-    t="$(tmux capture-pane -pt "$S" -S -8 2>/dev/null)"
+    wait_pane "$S" has_prompt || true
     has_prompt "$t" && ok "tmux: prompt returns once the overlay is dismissed" \
                     || bad "tmux: prompt did not return"
     tmux kill-session -t "$S" 2>/dev/null || true
