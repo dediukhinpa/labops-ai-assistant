@@ -84,6 +84,46 @@ class RedactingFormatterTest(unittest.TestCase):
 
 
 class BuildPromptTest(unittest.TestCase):
+    def test_memory_consolidate_gets_its_own_prompt(self) -> None:
+        """Побудка на консолидацию -- работа над файлами, а не задача с доски.
+
+        Общий промпт велит искать задачу на доске и при пустой доске
+        завершиться шагом "fluke retry -> ack and exit". Для побудки это
+        означало бы, что она снова съедена молча.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            module = _load_listener(Path(raw))
+            prompt = module._build_prompt({
+                "from_agent": "testagent",
+                "task_id": "tid-7",
+                "title": "Memory consolidation",
+                "body": "Run the memory-consolidate skill.",
+                "instruction_type": "memory_consolidate",
+                "reason": "checkpoint",
+            })
+
+            self.assertIn("Memory consolidation requested", prompt)
+            self.assertIn("core/active/episodic.md", prompt)
+            self.assertIn("core/passive/.consolidated-at", prompt)
+            self.assertIn("checkpoint", prompt)
+            self.assertIn("tid-7", prompt)
+            # Ветка доски задач сюда попасть не должна.
+            self.assertNotIn("task_list", prompt)
+            self.assertNotIn("fluke retry", prompt)
+
+    def test_ordinary_task_still_uses_the_board_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            module = _load_listener(Path(raw))
+            prompt = module._build_prompt({
+                "from_agent": "sender-x",
+                "task_id": "tid-8",
+                "title": "Do the thing",
+                "body": "body-here",
+            })
+
+            self.assertIn("task_list", prompt)
+            self.assertNotIn("Memory consolidation requested", prompt)
+
     def test_prompt_includes_agent_name_and_task_id(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             module = _load_listener(Path(raw))

@@ -119,6 +119,28 @@ def _build_prompt(payload: dict) -> str:
     body = payload.get("body") or ""
     context = payload.get("context") or ""
 
+    if payload.get("instruction_type") == "memory_consolidate":
+        # Побудка на консолидацию памяти -- это работа над файлами воркспейса,
+        # а не задача с доски. Общий промпт погнал бы агента искать задачу,
+        # не нашёл бы её и завершился шагом 2c ("fluke retry -> ack and exit"),
+        # то есть побудка снова была бы съедена молча.
+        return (
+            f"Memory consolidation requested for agent {AGENT_NAME}.\n\n"
+            f"Reason: {payload.get('reason') or 'unspecified'}\n"
+            f"task_id: {task_id}\n\n"
+            f"{body}\n\n"
+            f"Steps:\n"
+            f"1) Read core/active/episodic.md entries newer than the watermark in "
+            f"core/passive/.consolidated-at (if the file is missing, take the whole log).\n"
+            f"2) Distil them into core/passive/*.md by kind: decisions, errors, "
+            f"preferences, insights. Keep provenance and decay frontmatter.\n"
+            f"3) Dual-write only what is worth sharing to second_brain, recall before "
+            f"write, and stay inside your can_write_scopes.\n"
+            f"4) Update the watermark in core/passive/.consolidated-at.\n"
+            f"5) Do not report to the owner: this is routine housekeeping.\n"
+            f"6) Call mcp__second_brain-agent_router__ack(task_id=\"{task_id}\").\n"
+        )
+
     return (
         f"Inter-agent task delivered via swarm webhook.\n\n"
         f"From agent: {from_agent}\n"
