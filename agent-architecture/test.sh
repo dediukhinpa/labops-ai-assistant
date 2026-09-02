@@ -217,9 +217,23 @@ fi
 
 echo "── 11. Near-real-time межагентная доставка задач (task-poller.sh) ──"
 if bash agent-template/scripts/task-poller.test.sh >/dev/null 2>&1; then
-  ok "task-poller.sh: адресный фильтр / idle-гейт / идемпотентность — юнит-тест зелёный"
+  ok "task-poller.sh: обёртка видима надзору, без headless claude — юнит-тест зелёный"
 else
   bad "task-poller.sh: юнит-тест провален (agent-template/scripts/task-poller.test.sh)"
+fi
+# Логика опроса живёт в python-демоне: адресный фильтр, idle-гейт, идемпотентность,
+# кэш токена, одна живая MCP-сессия.
+if python3 agent-template/scripts/task_poller.test.py >/dev/null 2>&1; then
+  ok "task_poller.py: фильтр / idle-гейт / идемпотентность / MCP-сессия — юнит-тест зелёный"
+else
+  bad "task_poller.py: юнит-тест провален (agent-template/scripts/task_poller.test.py)"
+fi
+# Регрессия: забыть демона в списке копирования = у нового агента поллер молча
+# не стартует, а обёртка при этом выглядит установленной.
+if grep -q 'task_poller\.py' agent-template/install.sh; then
+  ok "install.sh копирует task_poller.py в воркспейс агента"
+else
+  bad "install.sh не копирует task_poller.py — у нового агента поллер не запустится"
 fi
 # Юнит-тест единого запуска/надзора (ensure_task_poller): noscript/running/launched
 # + точный подсчёт по /proc без self-match.
@@ -242,13 +256,16 @@ if grep -q 'lib/task-poller-launch.sh' orchestration/watchdog.sh \
 else
   bad "watchdog.sh не надзирает за поллером — тихо умерший поллер не поднимется до рестарта"
 fi
-# Регрессия: тело цикла поллера захардено — под set -e прерванный sleep/флап tmux
-# роняли поллер без лога. Требуем set +e на цикле и допуск промахов сессии.
-if grep -q '^set +e' agent-template/scripts/task-poller.sh \
-     && grep -q 'GONE_LIMIT' agent-template/scripts/task-poller.sh; then
-  ok "task-poller.sh: цикл захарден (set +e + допуск флапа сессии GONE_LIMIT)"
+# Регрессия: транзиентный сбой не должен ронять поллер молча. Обёртка обязана
+# жить без set -e (иначе ненулевой выход демона убьёт её же) и поднимать демона
+# заново; демон обязан терпеть флап сессии tmux (GONE_LIMIT), а не выходить с
+# первого промаха — при рестарте юнита сессия исчезает на секунду.
+if ! grep -qE '^set -[a-z]*e' agent-template/scripts/task-poller.sh \
+     && grep -q 'RESTART_DELAY' agent-template/scripts/task-poller.sh \
+     && grep -q 'GONE_LIMIT' agent-template/scripts/task_poller.py; then
+  ok "поллер захарден (обёртка переживает падение демона + допуск флапа сессии)"
 else
-  bad "task-poller.sh: цикл не захарден — транзиентный сбой уронит поллер без записи"
+  bad "поллер не захарден — транзиентный сбой уронит его без подъёма"
 fi
 # Регрессия: agent-template/install.sh обязан КОПИРОВАТЬ поллер в воркспейс нового
 # агента (список скриптов явный) — иначе новый агент не подключится к общению.
