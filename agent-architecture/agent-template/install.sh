@@ -255,7 +255,9 @@ fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_DIR}/CLAUDE
 # ============================================================
 
 log "Copying memory-management scripts..."
-for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep.sh archive-roll.sh brain-flush.sh task-poller.sh mcp-call.sh; do
+# task_poller.py -- тело поллера рядом с обёрткой task-poller.sh: обёртка ищет
+# его в своём каталоге и без него молча выходит, а доставка задач умирает.
+for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep.sh archive-roll.sh brain-flush.sh task-poller.sh task_poller.py mcp-call.sh; do
     if [ -f "${SCRIPTS_DIR}/${script}" ]; then
         if [ ! -f "${WORKSPACE}/scripts/${script}" ]; then
             cp "${SCRIPTS_DIR}/${script}" "${WORKSPACE}/scripts/${script}"
