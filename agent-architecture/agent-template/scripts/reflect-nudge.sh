@@ -14,7 +14,7 @@ set -euo pipefail
 # Usage:  reflect-nudge.sh --reason checkpoint|idle
 # Env:    AGENT_WORKSPACE, AGENT_ID, AGENT_BEARER,
 #         SECOND_BRAIN_AGENT_ROUTER_URL (default http://localhost:5000/mcp),
-#         MEMORY_NUDGE_COOLDOWN (s, default 120), MEMORY_NUDGE_DRYRUN (1 => print payload).
+#         MEMORY_NUDGE_COOLDOWN (s, default 3600), MEMORY_NUDGE_DRYRUN (1 => print payload).
 
 REASON="checkpoint"
 while [ $# -gt 0 ]; do
@@ -28,7 +28,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
 ROUTER_URL="${SECOND_BRAIN_AGENT_ROUTER_URL:-http://localhost:5000/mcp}"
-COOLDOWN="${MEMORY_NUDGE_COOLDOWN:-120}"
+# Час, а не две минуты: раньше побудка была подсказкой живой сессии и стоила
+# ноль, а с 2026-09-02 доставка дошла до webhook-listener и каждая побудка
+# порождает отдельный headless-запуск. Триггеров два -- каждые 20 ходов
+# (stop-hook) и 10 минут простоя (watchdog), -- при активной работе они дают
+# несколько срабатываний в час. Консолидация эпизодики -- уборка, ей хватает
+# раза в час; кулдаун остаётся переопределяемым для отладки.
+COOLDOWN="${MEMORY_NUDGE_COOLDOWN:-3600}"
 LOGDIR="$WS/logs"; mkdir -p "$LOGDIR"
 HOOK_LOG="$LOGDIR/hooks.log"
 STAMP="$WS/core/active/.last-nudge"

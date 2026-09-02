@@ -59,6 +59,17 @@ AGENT_WORKSPACE="$WS" AGENT_ID=nova AGENT_BEARER="" MEMORY_NUDGE_COOLDOWN=9999 \
 after=$(wc -l < "$WS/core/active/consolidate.request")
 [ "$before" = "$after" ] && ok 0 "cooldown suppressed 2nd marker" || ok 1 "cooldown suppressed 2nd marker"
 
+echo "== кулдаун по умолчанию -- час, а не две минуты =="
+# С 2026-09-02 каждая побудка порождает headless-запуск через webhook-listener,
+# так что дешёвый дефолт 120 с превратился бы в несколько запусков в час.
+grep -q 'MEMORY_NUDGE_COOLDOWN:-3600' "$NUDGE"; ok $? "дефолт 3600 с в коде"
+WS3="$TMP/default-cd/.claude"; mkdir -p "$WS3/core/active" "$WS3/logs"
+AGENT_WORKSPACE="$WS3" AGENT_ID=nova AGENT_BEARER="" bash "$NUDGE" --reason idle
+n1=$(wc -l < "$WS3/core/active/consolidate.request")
+AGENT_WORKSPACE="$WS3" AGENT_ID=nova AGENT_BEARER="" bash "$NUDGE" --reason idle
+n2=$(wc -l < "$WS3/core/active/consolidate.request")
+[ "$n1" = "$n2" ] && ok 0 "" || ok 1 "без переменной кулдаун не сработал"
+
 echo "== bearer читается из pretty-printed .mcp.json =="
 # Живой .mcp.json разложен по строкам: между именем сервера и Authorization
 # лежат "type", "url", "headers". Старый `grep -A3` их не переживал, токен
