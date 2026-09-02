@@ -199,6 +199,27 @@ serve_doctor_request() {
   return 0
 }
 
+# note_idle_cycle -- учёт спокойного простоя: агент на связи, ходов нет.
+#
+# Зовётся из ДВУХ мест: чистый промпт и НАРИСОВАННЫЙ призрак при пустом буфере.
+# Призрак -- это тоже простой: буфера за ним нет, агент ничего не делает. Пока
+# он простоем не считался, до ветки простоя управление не доходило вовсе, и
+# консолидация памяти не запускалась НИ РАЗУ: призрак висит часами, счётчик
+# простоя стоял на нуле. У carmella так накопилось 67 неисполненных заявок с
+# 19.07.2026 при пустом watermark, тогда как developer с чистым промптом
+# консолидировался штатно.
+note_idle_cycle() {
+  report_up
+  # Idle-triggered consolidation: once the agent has been idle long enough,
+  # nudge it to reflect (episodic → passive). Fire once per idle period.
+  IDLE_COUNT=$((IDLE_COUNT + 1))
+  if [ "$IDLE_COUNT" -ge "$IDLE_CYCLES" ] && [ "$IDLE_CONSOLIDATED" -eq 0 ] && [ -f "$REFLECT_NUDGE" ]; then
+    log "idle ${MEMORY_IDLE_CONSOLIDATE_MIN:-10}min → nudging memory consolidation"
+    ( AGENT_WORKSPACE="$AGENT_WS" AGENT_ID="$AGENT" bash "$REFLECT_NUDGE" --reason idle >/dev/null 2>&1 || true ) &
+    IDLE_CONSOLIDATED=1
+  fi
+}
+
 restart_session() {
   # Молча: одиночный рестарт — штатное самолечение, оператору сообщать не о чем.
   # Тревога поднимается только если рестарты пошли по кругу (см. note_restart).
@@ -363,15 +384,7 @@ while true; do
     # Чистый простой = агент на связи (сессия жива, промпт рисуется, ввод не
     # залип). Закрываем висящую тревогу — иначе она не закрылась бы никогда:
     # heartbeat у спокойно простаивающего агента протухает штатно.
-    report_up
-    # Idle-triggered consolidation: once the agent has been idle long enough,
-    # nudge it to reflect (episodic → passive). Fire once per idle period.
-    IDLE_COUNT=$((IDLE_COUNT + 1))
-    if [ "$IDLE_COUNT" -ge "$IDLE_CYCLES" ] && [ "$IDLE_CONSOLIDATED" -eq 0 ] && [ -f "$REFLECT_NUDGE" ]; then
-      log "idle ${MEMORY_IDLE_CONSOLIDATE_MIN:-10}min → nudging memory consolidation"
-      ( AGENT_WORKSPACE="$AGENT_WS" AGENT_ID="$AGENT" bash "$REFLECT_NUDGE" --reason idle >/dev/null 2>&1 || true ) &
-      IDLE_CONSOLIDATED=1
-    fi
+    note_idle_cycle
     continue
   fi
 
@@ -403,6 +416,10 @@ while true; do
            fi
            tmux send-keys -t "$SESSION" C-u 2>/dev/null || true
            NUDGE_STAGE=0
+           # Буфер пуст, текст доставкой не подтверждён -- агент простаивает,
+           # а не залип. Без этой строки призрак навсегда прятал ветку простоя
+           # и консолидация памяти не запускалась ни разу.
+           note_idle_cycle
          fi
        else
          # Молча: это первая ступень автоматики, а не событие для оператора.
