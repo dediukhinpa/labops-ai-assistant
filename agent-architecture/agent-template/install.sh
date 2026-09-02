@@ -237,6 +237,30 @@ fill_template() {
     log "Created: $dst"
 }
 
+# Управляющие документы РЯДОМ с CLAUDE.md, а не только в репозитории.
+# До этого их не копировал никто: SECONDBRAIN_WRITE_RULES.md (красная зона --
+# правила записи в общий мозг) и AGENT_ROUTER.md (как получать и закрывать
+# задачи с доски) существовали только в дереве репозитория. Агент их не видел,
+# хотя поллер в тексте доставки прямо пишет «См. AGENT_ROUTER.md», а SKILL.md
+# утверждал, что правила записи «уже подключены».
+copy_doc() {
+    local src="$1" dst="$2"
+    if [ ! -f "$src" ]; then
+        warn "Нет документа $src -- пропускаю"
+        return
+    fi
+    if [ -f "$dst" ]; then
+        warn "Skipping (exists): $dst"
+        return
+    fi
+    cp "$src" "$dst"
+    log "Created: $dst"
+}
+
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+copy_doc "${REPO_ROOT}/SECONDBRAIN_WRITE_RULES.md" "${WORKSPACE}/SECONDBRAIN_WRITE_RULES.md"
+copy_doc "${REPO_ROOT}/AGENT_ROUTER.md"            "${WORKSPACE}/AGENT_ROUTER.md"
+
 log "Filling templates..."
 
 fill_template "${TEMPLATES_DIR}/CLAUDE.md.template"    "${WORKSPACE}/CLAUDE.md"
