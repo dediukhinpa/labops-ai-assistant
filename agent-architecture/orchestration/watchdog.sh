@@ -220,6 +220,41 @@ note_idle_cycle() {
   fi
 }
 
+# attempt_stuck_input_recovery -- надёжное восстановление залипшего ввода:
+# чистим поле и ПЕРЕПЕЧАТЫВАЕМ текст обычными нажатиями + Enter.
+#
+# Зовётся из ДВУХ мест лестницы NUDGE_STAGE: со ступени 1 (обычное залипание,
+# до неё был безрезультатный Enter) и НАПРЯМУЮ со ступени 0, когда буфер пуст,
+# а текст подтверждён доставкой. Во втором случае ждать нечего: Enter коммитить
+# нечего по определению, и откладывание на следующий ~30с проход задерживало
+# реально потерянное сообщение оператора на пустом месте.
+attempt_stuck_input_recovery() {
+  log "stuck input persists — reliable resubmit (clear + retype)"
+  # КРИТИЧНО: захват кода возврата ТОЛЬКО через `|| rc=$?`. Файл идёт под
+  # `set -e`, где `cmd; rc=$?` убивает демон на любом ненулевом коде — а
+  # recover_stuck_input штатно возвращает 1 (поле не чистится) и 2 (уже не
+  # залипло). Итог до фикса (найдено 2026-08-09): watchdog умирал ровно на
+  # этой строке, systemd поднимал его заново, NUDGE_STAGE обнулялся, и
+  # лестница вечно начиналась заново с «пробую дослать (Enter)» — часы
+  # алертов оператору и ни одного реального восстановления.
+  local rc=0
+  recover_stuck_input "$SESSION" "$AGENT" || rc=$?
+  if [ "$rc" -ne 1 ]; then
+    log "stuck input recovered (clear + retype), rc=$rc, текст из: ${RECOVER_SOURCE:-pane}"
+    # Единственное исключение из «молчим о технике»: пропала ЧАСТЬ текста
+    # оператора. Это не отчёт о работе автоматики, а потеря его данных —
+    # без сообщения он будет ждать ответа на то, чего агент не видел.
+    # Формулировка без внутренней кухни: что потерялось и что сделать.
+    if [ "${RECOVER_TRUNCATED:-0}" -eq 1 ]; then
+      notify_op "$AGENT" "✂️ ваше сообщение дошло не полностью — уцелела только последняя строка. Пришлите его ещё раз."
+    fi
+    NUDGE_STAGE=0   # recovered — reset the ladder
+  else
+    log "reliable resubmit failed — box won't clear, escalating next cycle"
+    NUDGE_STAGE=2
+  fi
+}
+
 restart_session() {
   # Молча: одиночный рестарт — штатное самолечение, оператору сообщать не о чем.
   # Тревога поднимается только если рестарты пошли по кругу (см. note_restart).
@@ -403,8 +438,14 @@ while true; do
          # агенту придуманный текст, замыкая рой в цикл самоуказаний
          # (инцидент 2026-09-01, подробности в lib/pane.sh::inbound_matches).
          if inbound_matches "$AGENT" "$(pane_input_raw "$TAIL")"; then
+           # Не через NUDGE_STAGE=1: та ступень исполнится лишь следующим
+           # ~30с проходом, а ждать нечего — буфер пуст, Enter коммитить
+           # нечего. Откладывание задерживало доставку реально потерянного
+           # сообщения оператора на пустом месте (жалоба «агент не отвечает»
+           # 15.08.2026: ввод прямо в tmux мимо плагина, быстрого
+           # ensure-submit.ts для него нет).
            log "нарисованный, но не набранный ввод (буфер пуст) — сразу перепечатка"
-           NUDGE_STAGE=1
+           attempt_stuck_input_recovery
          else
            # Логируем ОДИН раз на призрак, а не каждый цикл: призрак висит
            # часами, и построчный лог (2880 строк в сутки на агента) прятал бы
@@ -431,29 +472,7 @@ while true; do
        # Escape, Ctrl-C, ESC[201~ all fail). Reliable path — clear the box and
        # RE-TYPE as literal keystrokes + Enter (task-poller proves literal typing
        # submits). recover_stuck_input returns 1 only if the box won't clear.
-       log "stuck input persists — reliable resubmit (clear + retype)"
-       # КРИТИЧНО: захват кода возврата ТОЛЬКО через `|| rc=$?`. Файл идёт под
-       # `set -e`, где `cmd; rc=$?` убивает демон на любом ненулевом коде — а
-       # recover_stuck_input штатно возвращает 1 (поле не чистится) и 2 (уже не
-       # залипло). Итог до фикса (найдено 2026-08-09): watchdog умирал ровно на
-       # этой строке, systemd поднимал его заново, NUDGE_STAGE обнулялся, и
-       # лестница вечно начиналась заново с «пробую дослать (Enter)» — часы
-       # алертов оператору и ни одного реального восстановления.
-       rc=0; recover_stuck_input "$SESSION" "$AGENT" || rc=$?
-       if [ "$rc" -ne 1 ]; then
-         log "stuck input recovered (clear + retype), rc=$rc, текст из: ${RECOVER_SOURCE:-pane}"
-         # Единственное исключение из «молчим о технике»: пропала ЧАСТЬ текста
-         # оператора. Это не отчёт о работе автоматики, а потеря его данных —
-         # без сообщения он будет ждать ответа на то, чего агент не видел.
-         # Формулировка без внутренней кухни: что потерялось и что сделать.
-         if [ "${RECOVER_TRUNCATED:-0}" -eq 1 ]; then
-           notify_op "$AGENT" "✂️ ваше сообщение дошло не полностью — уцелела только последняя строка. Пришлите его ещё раз."
-         fi
-         NUDGE_STAGE=0   # recovered — reset the ladder
-       else
-         log "reliable resubmit failed — box won't clear, escalating next cycle"
-         NUDGE_STAGE=2
-       fi ;;
+       attempt_stuck_input_recovery ;;
     2) # Recovery failed. DO NOT restart — keep the session and its work alive;
        # escalate to the operator to submit manually. (Upstream: Claude Code
        # research-preview channels bug — see mode (B) note.)
