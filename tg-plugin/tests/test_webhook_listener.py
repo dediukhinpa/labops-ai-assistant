@@ -111,6 +111,26 @@ class BuildPromptTest(unittest.TestCase):
             self.assertNotIn("task_list", prompt)
             self.assertNotIn("fluke retry", prompt)
 
+    def test_consolidate_prompt_warns_that_ack_answers_false(self) -> None:
+        """ack всегда вернёт acked=false, и агент не должен считать это сбоем.
+
+        Воркер доставки сам помечает строку acked, как только вебхук ответил
+        2xx, а mark_acked трогает только строки в pending/sent/ack_missing.
+        Первый же реальный прогон 2026-09-02 потратил внимание агента на
+        разбор этого «отказа» и вынес его в отчёт как проблему.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            module = _load_listener(Path(raw))
+            prompt = module._build_prompt({
+                "from_agent": "testagent",
+                "task_id": "tid-8",
+                "instruction_type": "memory_consolidate",
+                "reason": "idle",
+            })
+
+            self.assertIn("acked=false", prompt)
+            self.assertIn("expected", prompt)
+
     def test_ordinary_task_still_uses_the_board_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             module = _load_listener(Path(raw))
