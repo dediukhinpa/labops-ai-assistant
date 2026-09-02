@@ -38,12 +38,14 @@ Copy just the files you want into an existing `.claude/` directory:
 templates/mcp.json.template    -> .claude/.mcp.json
 templates/settings.json.template -> .claude/settings.json
 hooks/*.sh                     -> .claude/hooks/
-scripts/*.sh                   -> .claude/scripts/   (optional)
+scripts/*.sh, scripts/*.py     -> .claude/scripts/
+../SECONDBRAIN_WRITE_RULES.md  -> .claude/SECONDBRAIN_WRITE_RULES.md
+../AGENT_ROUTER.md             -> .claude/AGENT_ROUTER.md
 ```
 
 Render `${SECOND_BRAIN_MEMORY_URL}`, `${SECOND_BRAIN_MEMORY_ROUTER_URL}`,
-`${SECOND_BRAIN_AGENT_ROUTER_URL}`, `${AGENT_BEARER}`, `{{AGENT_ID}}`
-placeholders manually (or with `envsubst`). The hooks tolerate missing files
+`${SECOND_BRAIN_AGENT_ROUTER_URL}`, `${SECOND_BRAIN_TASKS_URL}`, `${AGENT_BEARER}`,
+`{{AGENT_ID}}` placeholders manually (or with `envsubst`). The hooks tolerate missing files
 and never block the harness on failure.
 
 ## Workspace layout (what install.sh creates)
@@ -67,8 +69,9 @@ and never block the harness on failure.
 |   |   `-- handoff.md
 |   `-- archived/               # episodic/ (size-rolled) + superseded/ (decayed insights)
 |-- tools/TOOLS.md
-|-- scripts/                   # memory engine: active-writer, working-set-build, reflect-nudge, decay-sweep, archive-roll
-|-- hooks/                     # session-start, user-prompt-submit, stop, precompact
+|-- scripts/                   # memory engine + board delivery: active-writer, working-set-build, reflect-nudge,
+|                              #   decay-sweep, archive-roll, brain-flush, mcp-call, task-poller.sh, task_poller.py
+|-- hooks/                     # session-start, user-prompt-submit, stop, precompact, heartbeat
 |-- logs/
 `-- skills/                    # symlink to ../skills/ shared bundle
 ```
@@ -90,19 +93,25 @@ agent-template/
 |   |-- episodic.md.template
 |   |-- MEMORY.md.template
 |   |-- LEARNINGS.md.template
-|   |-- mcp.json.template              .mcp.json with 3 second_brain servers
+|   |-- mcp.json.template              .mcp.json with 4 second_brain servers (incl. the task board)
 |   `-- settings.json.template         hooks wiring
 |-- scripts/
 |   |-- active-writer.sh              episodic writer (Stop hook), salience-tagged, no model
 |   |-- working-set-build.sh          rebuild working-set.md: second_brain recall + local passive/ (non-blocking)
 |   |-- reflect-nudge.sh              nudge the LIVE session to consolidate (agent_router.notify; no `claude -p`)
-|   |-- decay-sweep.sh                nightly bash housekeeping: reinforce + decay passive/ -> archived/superseded/
-|   `-- archive-roll.sh               nightly bash housekeeping: size-roll episodic.md -> archived/episodic/YYYY-MM.md
+|   |-- decay-sweep.sh                housekeeping (Stop hook, <=1/day): reinforce + decay passive/ -> archived/superseded/
+|   |-- archive-roll.sh               housekeeping (Stop hook, <=1/day): size-roll episodic.md -> archived/episodic/YYYY-MM.md
+|   |-- brain-flush.sh                safety-net dual-write before compaction / at session end
+|   |-- mcp-call.sh                   MCP handshake helper: initialize -> call -> DELETE (a bare POST gets 400)
+|   |-- task-poller.sh                thin supervisor for the board poller (restarts the daemon, no exec)
+|   `-- task_poller.py                long-lived daemon: one MCP session, polls the board every 5s
 |-- hooks/
 |   |-- session-start-hook.sh
 |   |-- user-prompt-submit-hook.sh
 |   |-- stop-hook.sh
 |   |-- precompact-hook.sh
+|   |-- heartbeat-hook.sh
+|   |-- sdk-guard.test.sh             all hooks must no-op inside an Agent SDK child
 |   `-- README.md
 `-- docs/
     |-- ARCHITECTURE.md

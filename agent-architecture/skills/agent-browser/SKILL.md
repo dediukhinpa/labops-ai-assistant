@@ -112,7 +112,7 @@ agent-browser state load ./auth.json
 agent-browser open https://app.example.com/dashboard
 ```
 
-See [references/authentication.md](references/authentication.md) for OAuth, 2FA, cookie-based auth, and token refresh patterns.
+See `references/authentication.md` upstream (not vendored here) for OAuth, 2FA, cookie-based auth, and token refresh patterns.
 
 ## Essential Commands
 
@@ -733,6 +733,9 @@ Priority (lowest to highest): `~/.agent-browser/config.json` < `./agent-browser.
 
 ## Deep-Dive Documentation
 
+> Примечание: каталоги `references/` и `templates/` этого скилла в репозиторий не
+> вендорились — ссылки ниже ведут в апстрим agent-browser, локально этих файлов нет.
+
 | Reference                                                            | When to Use                                               |
 | -------------------------------------------------------------------- | --------------------------------------------------------- |
 | [references/commands.md](references/commands.md)                     | Full command reference with all options                   |
@@ -814,6 +817,9 @@ export AI_GATEWAY_URL=https://ai-gateway.vercel.sh           # optional default
 The Chat tab is always visible in the dashboard. Set `AI_GATEWAY_API_KEY` to enable AI responses.
 
 ## Ready-to-Use Templates
+
+> Примечание: каталоги `references/` и `templates/` этого скилла в репозиторий не
+> вендорились — ссылки ниже ведут в апстрим agent-browser, локально этих файлов нет.
 
 | Template                                                                 | Description                         |
 | ------------------------------------------------------------------------ | ----------------------------------- |

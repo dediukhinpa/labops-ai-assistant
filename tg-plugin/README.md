@@ -33,7 +33,7 @@
 
 ## What it is
 
-A Claude Code plugin (Bun runtime, TypeScript) that turns an ordinary `claude` session into a **long-lived Telegram agent**: your agent lives as a persistent session on a server and talks to you in Telegram — text, voice, media, status reactions, and interactive buttons. It registers as an **MCP server inside the live Claude Code session**, so Telegram is just an I/O channel — the same context, memory, and tools you already have, not a new headless process per message. Part of the **labops** architecture (see also [`labops-second-brain`](#part-of-labops) and [`labops-agent-architecture`](#part-of-labops)).
+A Claude Code plugin (Bun runtime, TypeScript) that turns an ordinary `claude` session into a **long-lived Telegram agent**: your agent lives as a persistent session on a server and talks to you in Telegram — text, voice, media, status reactions, and interactive buttons. It registers as an **MCP server inside the live Claude Code session**, so Telegram is just an I/O channel — the same context, memory, and tools you already have, not a new headless process per message. Part of the **labops** architecture (see also [`labops-second-brain`](#part-of-labops) and [`agent-architecture`](#part-of-labops)).
 
 ---
 
@@ -42,7 +42,7 @@ A Claude Code plugin (Bun runtime, TypeScript) that turns an ordinary `claude` s
 **Prerequisites:** none — `install.sh` auto-installs `bun ≥ 1.3`, `tmux`,
 `claude ≥ v2.1.80` if any is missing.
 
-**Bundled in the `labops-ai-assistant` monorepo.** This plugin is a bundled component (`tg-plugin/`) alongside [`agent-architecture`](../agent-architecture). The **single root `install.sh`** (at the monorepo root) installs it for you as part of the full setup — you don't run this component's own `install.sh` by hand (the root one invokes it, and it stays available under `tg-plugin/` if you ever need it directly). BotFather, the bot token, and each agent's own `channel.env` are handled per-agent, interactively, by `agent-architecture`'s `skills/create-agent/new-agent.sh`, which then symlinks the bundled plugin into each new agent's workspace (`~/.claude-lab/<agent>/.claude/labops-tg-plugin`) automatically. Just run, from the monorepo root:
+**Bundled in the `labops-ai-assistant` monorepo.** This plugin is a bundled component (`tg-plugin/`) alongside [`agent-architecture`](../agent-architecture). The **single root `install.sh`** (at the monorepo root) installs it for you as part of the full setup — you don't run this component's own `install.sh` by hand (the root one invokes it, and it stays available under `tg-plugin/` if you ever need it directly). BotFather, the bot token, and each agent's own `channel.env` are handled per-agent, interactively, by `agent-architecture`'s `skills/create-agent/new-agent.sh`, which then provisions the bundled plugin into each new agent's workspace (`~/.claude-lab/<agent>/.claude/labops-tg-plugin`) automatically — as a **private copy**, not a symlink (only `node_modules` stays shared), so a monorepo edit does not reach a running agent until the plugin is re-provisioned. Just run, from the monorepo root:
 
 ```bash
 bash install.sh
@@ -196,7 +196,7 @@ This is noticeably more responsive than "eyes-on-read" on the actual read event.
 
 ## Voice and media
 
-- **Incoming voice/audio** is downloaded into the state dir's inbox and transcribed; the agent receives the text. The transcriber is plugged in separately (we recommend Groq `whisper-large-v3-turbo` — see [`labops-agent-architecture`](#part-of-labops), the voice skill).
+- **Incoming voice/audio** is downloaded into the state dir's inbox and transcribed; the agent receives the text. The transcriber is plugged in separately (we recommend Groq `whisper-large-v3-turbo` — see [`agent-architecture`](#part-of-labops), the voice skill).
 - **Photos/documents/albums** are buffered (`album-buffer.ts`) and passed as turn attachments.
 - Voice replies are optional (TTS is plugged in on the agent side).
 
@@ -234,7 +234,7 @@ Full example — [`examples/channel.env.example`](examples/channel.env.example).
 ### Commands
 
 - **Slash/OOB commands** are handled in `commands/oob.ts` (out-of-band channel control from chat).
-- The agent's application-level commands (its skills, roles) live in its workspace (`CLAUDE.md`, skills) — that's the [`labops-agent-architecture`](#part-of-labops) layer, not the channel.
+- The agent's application-level commands (its skills, roles) live in its workspace (`CLAUDE.md`, skills) — that's the [`agent-architecture`](#part-of-labops) layer, not the channel.
 
 ### Installation
 
@@ -321,7 +321,7 @@ labops is three layers — two bundled in the `labops-ai-assistant` monorepo, on
 | Component | Role | Dependency |
 |---|---|---|
 | **tg-plugin** (this · bundled component, this monorepo) | Telegram channel to a live Claude Code session | self-contained |
-| [**labops-second-brain**](https://github.com/dediukhinpa/labops-second-brain) (external repo) | shared memory: Postgres+pgvector, MCP memory/memory_router/agent_router, memory layers | connects to the agent over MCP |
+| [**labops-second-brain**](https://github.com/dediukhinpa/labops-second-brain) (external repo) | shared memory: Postgres+pgvector, MCP memory/memory_router/agent_router/tasks, memory layers + the task board | connects to the agent over MCP |
 | [**agent-architecture**](../agent-architecture) (bundled component, this monorepo) | agent workspaces, autostart/watchdog, the first agent **Developer** + an agent-creation skill, voice | uses this plugin and second-brain |
 
 This plugin is self-contained (you can install a single Telegram agent without shared memory). The full architecture — bundled together with this plugin in the monorepo — is in [`agent-architecture`](../agent-architecture).

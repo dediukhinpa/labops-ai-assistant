@@ -117,7 +117,9 @@ flowchart LR
     WD["watchdog.sh &lt;agent&gt;<br/>вечный супервизор"]
     SA["start-agent.sh<br/>инъекция env/секретов"]
     TM["tmux-сессия labops-&lt;agent&gt;"]
+    PL["task-poller.sh + task_poller.py<br/>поллер доски, одна MCP-сессия"]
     SD -->|ExecStart| WD --> SA --> TM
+    WD -->|надзирает| PL
   end
   subgraph live["Живой рантайм"]
     direction TB
@@ -126,7 +128,7 @@ flowchart LR
   end
   TM --> CC
   CC -->|дочерний процесс, stdio MCP| BUN
-  CC -->|HTTP + Bearer| SB["second_brain MCP<br/>memory / memory_router / agent_router"]
+  CC -->|HTTP + Bearer| SB["second_brain MCP<br/>memory / memory_router / agent_router / tasks"]
   BUN <-->|getUpdates / sendMessage| TG["Telegram (Оператор)"]
   classDef brand fill:#8B5CF6,stroke:#6D28D9,color:#ffffff,font-weight:bold
   classDef ext fill:#CCFBF1,stroke:#0D9488,color:#0F766E
@@ -134,7 +136,7 @@ flowchart LR
   classDef sys fill:#E2E8F0,stroke:#334155,color:#1E293B
   linkStyle default stroke:#8B5CF6,stroke-width:1.5px
   class CC brand
-  class SD,WD,SA,TM sys
+  class SD,WD,SA,TM,PL sys
   class BUN,SB,TG ext
 ```
 
@@ -142,6 +144,8 @@ flowchart LR
 
 > [!IMPORTANT]
 > Входящее сообщение Telegram **не** идёт через webhook-сервер. Поллер → MCP-нотификация → сессия. Webhook `:6000+` принимает только **lifecycle-хуки Claude Code**, а не трафик Telegram.
+
+**Межагентный поток:** вызывающий пишет `task_create(assignee=…)` на доску → поллер агента видит `status=new` за ~5 с и печатает строку в его живую панель → агент делает `task_claim` → `task_review` → `task_done`. Headless `claude -p` не участвует нигде, поэтому делегированная задача не тратит SDK-кредиты.
 
 ---
 
@@ -160,7 +164,7 @@ bash install.sh
 
 Корневой `install.sh` ставит `agent-architecture` (зависимости, Claude Code, первый агент), а затем встроенный `tg-plugin` прямо из этого дерева — канал не клонируется, он уже здесь. Флаги пробрасываются: `bash install.sh --no-agent` (только подготовка), `bash install.sh --test-only` (self-test).
 
-**Общая память** — `labops-second-brain` — это *отдельная* зависимость, не входит в этот репозиторий. `install.sh` клонирует её рядом (если не задан `SKIP_SECOND_BRAIN=1`); установите её через `sudo bash ~/labops-second-brain/scripts/install.sh` (или передайте агенту Claude Code по её `AGENT.md`). Она выдаёт агенту Bearer-токен и поднимает MCP `memory:5001` / `memory_router:5002` / `agent_router:5000`.
+**Общая память** — `labops-second-brain` — это *отдельная* зависимость, не входит в этот репозиторий. `install.sh` клонирует её рядом (если не задан `SKIP_SECOND_BRAIN=1`); установите её через `sudo bash ~/labops-second-brain/scripts/install.sh` (или передайте агенту Claude Code по её `AGENT.md`). Она выдаёт агенту Bearer-токен и поднимает MCP `memory:5001` / `memory_router:5002` / `agent_router:5000` / `tasks:5003` (доска задач).
 
 > [!TIP]
 > Для первого агента (Developer) модель по умолчанию — `opus` (Opus 4.8). Вы устанавливаете только **первого** агента — дальше рой растёт сам: Developer порождает остальных скиллом `create-agent`.

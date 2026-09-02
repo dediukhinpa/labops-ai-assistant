@@ -11,7 +11,7 @@
 > `recall-events.jsonl`; `reflect-nudge.sh` + `memory-consolidate` skill (in-session
 > reflection, no `claude -p`); `decay-sweep.sh` + `archive-roll.sh` (pure-bash
 > housekeeping, replacing the 4 model crons); watchdog idle trigger + Stop-hook
-> checkpoint counter + `user-prompt-submit-hook.sh`. Verified by 48 bash unit tests
+> checkpoint counter + `user-prompt-submit-hook.sh`. Verified by 50 bash unit tests
 > + the tg-plugin memory suite.
 
 Заменяет старую возрастную ротацию `hot → warm → cold` (4 модельных крона) на
