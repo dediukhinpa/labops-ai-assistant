@@ -228,6 +228,24 @@ if python3 agent-template/scripts/task_poller.test.py >/dev/null 2>&1; then
 else
   bad "task_poller.py: юнит-тест провален (agent-template/scripts/task_poller.test.py)"
 fi
+# Регрессия: доска задач должна попасть новому агенту. Забыли сервер в шаблоне
+# или URL в install/new-agent -- у агента не будет инструментов task_*, и он
+# молча вернётся к заметкам, ёмкость которых конечна (см. AGENT_ROUTER.md).
+if grep -q 'second_brain-tasks' agent-template/templates/mcp.json.template \
+     && grep -q 'SECOND_BRAIN_TASKS_URL' agent-template/install.sh \
+     && grep -q 'SECOND_BRAIN_TASKS_URL' skills/create-agent/new-agent.sh \
+     && grep -q 'SECOND_BRAIN_TASKS_URL' orchestration/start-agent.sh; then
+  ok "доска задач подключается новому агенту (шаблон + install + new-agent + start-agent)"
+else
+  bad "доска задач не доедет до нового агента — проверь SECOND_BRAIN_TASKS_URL"
+fi
+# Регрессия: task_done разрешён только из review. Инструкция, ведущая из
+# progress прямо в done, вешает задачу на invalid transition.
+if grep -q 'task_review' agent-template/scripts/task_poller.py; then
+  ok "инструкция закрытия задачи ведёт через review (машина состояний доски)"
+else
+  bad "поллер велит закрывать задачу мимо review — упрётся в invalid transition"
+fi
 # Регрессия: забыть демона в списке копирования = у нового агента поллер молча
 # не стартует, а обёртка при этом выглядит установленной.
 if grep -q 'task_poller\.py' agent-template/install.sh; then

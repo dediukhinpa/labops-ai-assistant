@@ -14,6 +14,11 @@
       "type": "http",
       "url": "${SECOND_BRAIN_AGENT_ROUTER_URL}",
       "headers": { "Authorization": "Bearer ${AGENT_BEARER}" }
+    },
+    "second_brain-tasks": {
+      "type": "http",
+      "url": "${SECOND_BRAIN_TASKS_URL}",
+      "headers": { "Authorization": "Bearer ${AGENT_BEARER}" }
     }
   }
 }

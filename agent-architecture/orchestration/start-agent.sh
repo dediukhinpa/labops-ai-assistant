@@ -118,12 +118,14 @@ if [ -n "${AGENT_BEARER:-}" ] && [ "${AGENT_BEARER:-}" != "CHANGE_ME" ]; then
            -e "SECOND_BRAIN_MEMORY_URL=${SECOND_BRAIN_MEMORY_URL:-}" \
            -e "SECOND_BRAIN_MEMORY_ROUTER_URL=${SECOND_BRAIN_MEMORY_ROUTER_URL:-}" \
            -e "SECOND_BRAIN_AGENT_ROUTER_URL=${SECOND_BRAIN_AGENT_ROUTER_URL:-}" \
+           -e "SECOND_BRAIN_TASKS_URL=${SECOND_BRAIN_TASKS_URL:-}" \
            -e "AGENT_SCOPES=${AGENT_SCOPES:-}" -e "SUMMARY_LANGUAGE=${SUMMARY_LANGUAGE:-}" )
 else
   echo "[start-agent] $AGENT: second_brain recall off (AGENT_BEARER placeholder/unset — бэкенд не подключён)" >&2
 fi
 unset AGENT_BEARER MCP_HOST SECOND_BRAIN_MEMORY_URL SECOND_BRAIN_MEMORY_ROUTER_URL \
-      SECOND_BRAIN_AGENT_ROUTER_URL AGENT_SCOPES SUMMARY_LANGUAGE 2>/dev/null || true
+      SECOND_BRAIN_AGENT_ROUTER_URL SECOND_BRAIN_TASKS_URL AGENT_SCOPES \
+      SUMMARY_LANGUAGE 2>/dev/null || true
 
 # Pre-trust the folders claude will open, so it does NOT block on the interactive
 # "Is this a project you trust?" dialog at startup — which --dangerously-skip-

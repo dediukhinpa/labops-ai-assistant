@@ -128,9 +128,11 @@ prompt AGENT_SCOPES          "Agent scopes [decisions,external,knowledge,inbox]"
 : "${MCP_MEMORY_PORT:=5001}"
 : "${MCP_MEMORY_ROUTER_PORT:=5002}"
 : "${MCP_AGENT_ROUTER_PORT:=5000}"
+: "${MCP_TASKS_PORT:=5003}"
 : "${SECOND_BRAIN_MEMORY_URL:=http://${MCP_HOST}:${MCP_MEMORY_PORT}/mcp}"
 : "${SECOND_BRAIN_MEMORY_ROUTER_URL:=http://${MCP_HOST}:${MCP_MEMORY_ROUTER_PORT}/mcp}"
 : "${SECOND_BRAIN_AGENT_ROUTER_URL:=http://${MCP_HOST}:${MCP_AGENT_ROUTER_PORT}/mcp}"
+: "${SECOND_BRAIN_TASKS_URL:=http://${MCP_HOST}:${MCP_TASKS_PORT}/mcp}"
 
 # ============================================================
 # Step 3: Confirm
@@ -150,6 +152,7 @@ echo "  Workspace:   ${LAB_DIR}/${AGENT_ID}/.claude/"
 echo "  second_brain memory:        ${SECOND_BRAIN_MEMORY_URL}"
 echo "  second_brain memory_router: ${SECOND_BRAIN_MEMORY_ROUTER_URL}"
 echo "  second_brain agent_router:  ${SECOND_BRAIN_AGENT_ROUTER_URL}"
+echo "  second_brain tasks:         ${SECOND_BRAIN_TASKS_URL}"
 echo "  Scopes:      ${AGENT_SCOPES}"
 echo ""
 if [ "${NONINTERACTIVE:-0}" != "1" ]; then
@@ -225,6 +228,7 @@ fill_template() {
     sed_i "s|\${SECOND_BRAIN_MEMORY_URL}|${SECOND_BRAIN_MEMORY_URL}|g" "$dst"
     sed_i "s|\${SECOND_BRAIN_MEMORY_ROUTER_URL}|${SECOND_BRAIN_MEMORY_ROUTER_URL}|g" "$dst"
     sed_i "s|\${SECOND_BRAIN_AGENT_ROUTER_URL}|${SECOND_BRAIN_AGENT_ROUTER_URL}|g" "$dst"
+    sed_i "s|\${SECOND_BRAIN_TASKS_URL}|${SECOND_BRAIN_TASKS_URL}|g" "$dst"
     sed_i "s|\${AGENT_BEARER}|${AGENT_BEARER}|g" "$dst"
 
     # Sweep any unsubstituted {{TODO}} placeholders
@@ -301,6 +305,7 @@ export MCP_HOST="${MCP_HOST}"
 export SECOND_BRAIN_MEMORY_URL="${SECOND_BRAIN_MEMORY_URL}"
 export SECOND_BRAIN_MEMORY_ROUTER_URL="${SECOND_BRAIN_MEMORY_ROUTER_URL}"
 export SECOND_BRAIN_AGENT_ROUTER_URL="${SECOND_BRAIN_AGENT_ROUTER_URL}"
+export SECOND_BRAIN_TASKS_URL="${SECOND_BRAIN_TASKS_URL}"
 export AGENT_BEARER="${AGENT_BEARER}"
 export AGENT_SCOPES="${AGENT_SCOPES}"
 export SUMMARY_LANGUAGE="${LANGUAGE}"

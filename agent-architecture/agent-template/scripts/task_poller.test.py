@@ -95,6 +95,22 @@ class _FakeClient:
         self.closed += 1
 
 
+class _FakeBoard:
+    """Доска, отдающая заданный список задач или падающая заданной ошибкой."""
+
+    def __init__(self, reply: Any) -> None:
+        self._reply = reply
+        self.invalidated = 0
+
+    def board_tasks(self, _agent: str) -> list[dict[str, Any]]:
+        if isinstance(self._reply, Exception):
+            raise self._reply
+        return self._reply
+
+    def invalidate(self) -> None:
+        self.invalidated += 1
+
+
 class PollerTest(unittest.TestCase):
     """Отбор задач, доставка, дедупликация и поведение при сбоях."""
 
@@ -111,13 +127,97 @@ class PollerTest(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _poller(self, agent: str = "carmella") -> TaskPoller:
+    def _poller(self, agent: str = "carmella", board: Any = None) -> TaskPoller:
         # sleep-заглушка: без неё тест сетевого сбоя честно спал бы
         # BACKOFF_SEC и растягивал прогон на секунды.
         return TaskPoller(
             agent, self.pane, self.client, self.seen, self.logs.append,
-            sleep=self.slept.append,
+            sleep=self.slept.append, board=board,
         )
+
+    def test_board_task_is_delivered_by_id(self) -> None:
+        """Задача с доски доставляется по номеру, а не по пути заметки."""
+        board = _FakeBoard([{"id": 7, "title": "почини парсер"}])
+        poller = self._poller("nova", board=board)
+        poller.poll_once()
+        self.assertIn("#7", self.pane.sent[-1])
+        self.assertIn("task_claim", self.pane.sent[-1])
+        # Машина состояний запрещает progress -> done: инструкция обязана
+        # вести через review, иначе агент упрётся в invalid transition.
+        self.assertIn("task_review", self.pane.sent[-1])
+        self.assertIn("task:7", self.seen.read_text())
+
+    def test_board_task_is_not_delivered_twice(self) -> None:
+        """Между доставкой и task_claim задача ещё «new» — второй вброс не нужен."""
+        board = _FakeBoard([{"id": 7, "title": "почини парсер"}])
+        poller = self._poller("nova", board=board)
+        poller.poll_once()
+        poller.poll_once()
+        self.assertEqual(len([s for s in self.pane.sent if "#7" in s]), 1)
+
+    def test_board_failure_does_not_break_the_note_path(self) -> None:
+        """Доска легла — задачи из заметок обязаны доставляться дальше.
+
+        Два канала живут вместе весь переходный период, и падение нового не
+        должно уносить с собой работающий старый.
+        """
+        board = _FakeBoard(OSError("connection refused"))
+        poller = self._poller("carmella", board=board)
+        poller.poll_once()
+        self.assertTrue(any("task-carmella-alpha" in s for s in self.pane.sent))
+        self.assertTrue(any("опрос доски не удался" in m for m in self.logs))
+
+    def test_board_task_without_id_is_skipped(self) -> None:
+        """Кривая запись с доски не должна ронять долгоживущий процесс."""
+        board = _FakeBoard([{"title": "без номера"}, {"id": 9, "title": "ок"}])
+        poller = self._poller("nova", board=board)
+        poller.poll_once()
+        self.assertEqual(len([s for s in self.pane.sent if s.startswith("📥")]), 1)
+        self.assertIn("#9", self.pane.sent[-1])
+
+    def test_superseded_task_is_not_delivered(self) -> None:
+        """Закрытая задача не должна доставляться повторно.
+
+        Закрытие пишет НОВУЮ заметку, а оригинал навсегда остаётся
+        `STATUS: open`. Раньше от повторной доставки спасал только локальный
+        `.task-seen`: потеря воркспейса = все закрытые задачи прилетают заново.
+        """
+        items = [
+            {"path": "decisions/task-a.md", "snippet": "TASK-FOR: nova\nSTATUS: open"},
+            {
+                "path": "decisions/task-a-closed.md",
+                "snippet": (
+                    "# task-a принято (закрыто)\n\n"
+                    "Supersedes [[decisions/task-a.md]]\n\n"
+                    "TASK-FOR: nova\nSTATUS: done"
+                ),
+            },
+            {"path": "decisions/task-b.md", "snippet": "TASK-FOR: nova\nSTATUS: open"},
+        ]
+        poller = self._poller("nova")
+        self.assertEqual(poller.open_tasks(items), ["decisions/task-b.md"])
+
+    def test_supersede_link_is_matched_case_insensitively(self) -> None:
+        """Заметки пишут агенты: регистр слова и пробелы у ссылки не гарантированы."""
+        items = [
+            {"path": "decisions/task-a.md", "snippet": "TASK-FOR: nova\nSTATUS: open"},
+            {
+                "path": "decisions/x.md",
+                "snippet": "TASK-FOR: nova\nSTATUS: done\nSUPERSEDES  [[decisions/task-a.md]]",
+            },
+        ]
+        self.assertEqual(self._poller("nova").open_tasks(items), [])
+
+    def test_unrelated_supersede_does_not_hide_a_task(self) -> None:
+        """Закрытие ЧУЖОЙ задачи не должно прятать мою."""
+        items = [
+            {"path": "decisions/task-a.md", "snippet": "TASK-FOR: nova\nSTATUS: open"},
+            {
+                "path": "decisions/y.md",
+                "snippet": "TASK-FOR: nova\nSTATUS: done\nSupersedes [[decisions/other.md]]",
+            },
+        ]
+        self.assertEqual(self._poller("nova").open_tasks(items), ["decisions/task-a.md"])
 
     def test_keeps_only_open_tasks_for_this_agent(self) -> None:
         """Чужая задача, обычная заметка и уже закрытая — не наши."""

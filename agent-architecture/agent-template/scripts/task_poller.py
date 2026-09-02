@@ -26,6 +26,7 @@ tmux. Ожидаемая стоимость -- десятые доли проц�
     AGENT_ID          имя агента (обязательна)
     TASK_POLL_INTERVAL       секунды между опросами (по умолчанию 5)
     SECOND_BRAIN_MEMORY_ROUTER_URL  адрес memory_router
+    SECOND_BRAIN_TASKS_URL          адрес доски задач (task_mcp)
     AGENT_BEARER      токен; иначе берётся из .mcp.json воркспейса
     TASK_POLLER_GONE_LIMIT   сколько промахов подряд по сессии tmux до выхода
     PANE_INPUT_COL0   колонка курсора на пустом поле ввода
@@ -58,14 +59,34 @@ RECENT_LIMIT = 30
 # Игла обрывается на двоеточии намеренно: имя агента и STATUS доматчивает
 # регулярка ниже, она терпима к пробелам, а ILIKE на стороне БД -- нет.
 TASK_NEEDLE = "TASK-FOR:"
+# Закрытие задачи -- это НОВАЯ заметка со ссылкой на старую (vault append-only),
+# оригинал навсегда остаётся STATUS: open. Без разбора этой ссылки «закрыто»
+# для поллера не существует, и от повторной доставки спасает только локальный
+# .task-seen -- потеряй воркспейс, и все закрытые задачи прилетят заново.
+SUPERSEDE_RE = re.compile(r"supersedes\s*\[\[([^\]]+)\]\]", re.IGNORECASE)
 HTTP_TIMEOUT_SEC = 10.0
 # Пауза после сбоя сети: не долбить сервер, который перезапускается.
 BACKOFF_SEC = 2.0
+
+# Доска задач (task_mcp :5003) -- канал с НАСТОЯЩИМ состоянием: закрытие меняет
+# статус задачи, а не пишет ещё одну неизменяемую заметку. Поэтому очередь
+# ограничена числом одновременно открытых задач, а не всех задач за историю роя.
+DEFAULT_TASKS_URL = "http://127.0.0.1:5003/mcp"
+BOARD_STATUS_NEW = "new"
+BOARD_LIMIT = 50
+BOARD_SEEN_PREFIX = "task:"
 
 DELIVERY_TEMPLATE = (
     "📥 Новая межагентная задача: {path}. Забери её (memory_router.get), "
     "выполни ФОНОВЫМ субагентом, по завершении supersede_decision → "
     "STATUS: done, затем продолжай текущую работу. См. AGENT_ROUTER.md."
+)
+
+BOARD_DELIVERY_TEMPLATE = (
+    "📥 Новая задача с доски #{task_id}: {title}. Возьми её "
+    "(task_claim task_id={task_id}), выполни ФОНОВЫМ субагентом, закрой через "
+    "task_review → task_done (напрямую в done нельзя), затем продолжай "
+    "текущую работу. См. AGENT_ROUTER.md."
 )
 
 
@@ -339,6 +360,37 @@ class RouterClient:
             self._headers(),
         )
 
+    def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Вызвать инструмент MCP на этом сервере, подняв сессию при нужде."""
+        self.ensure_session()
+        return self._rpc(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            }
+        )
+
+    def board_tasks(self, agent: str) -> list[dict[str, Any]]:
+        """Незанятые задачи доски, адресованные этому агенту.
+
+        Фильтрация по assignee и статусу идёт в SQL, так что окна, которое
+        можно переполнить посторонними записями, здесь нет в принципе.
+        """
+        resp = self.call_tool(
+            "task_list",
+            {"assignee": agent, "status": BOARD_STATUS_NEW, "limit": BOARD_LIMIT},
+        )
+        result = resp.get("result")
+        if not isinstance(result, dict):
+            return []
+        # FastMCP отдаёт список и в structuredContent, и текстом в content.
+        structured = result.get("structuredContent")
+        if isinstance(structured, dict) and isinstance(structured.get("result"), list):
+            return [t for t in structured["result"] if isinstance(t, dict)]
+        return [t for t in self._extract_items(resp) if isinstance(t, dict)]
+
     def recent_items(self) -> list[dict[str, Any]]:
         """Вернуть заметки задач из scope `decisions`.
 
@@ -420,6 +472,7 @@ class TaskPoller:
         interval: float = DEFAULT_INTERVAL_SEC,
         gone_limit: int = DEFAULT_GONE_LIMIT,
         sleep: Callable[[float], None] = time.sleep,
+        board: RouterClient | None = None,
     ) -> None:
         """Args:
             agent: Имя агента-получателя.
@@ -430,8 +483,10 @@ class TaskPoller:
             interval: Секунды между опросами.
             gone_limit: Сколько промахов подряд по сессии tmux до выхода.
             sleep: Функция паузы; вынесена ради быстрых тестов.
+            board: Клиент доски задач; None -- работаем только по заметкам.
         """
         self._agent = agent
+        self._board = board
         self._pane = pane
         self._client = client
         self._seen_path = seen_path
@@ -474,15 +529,70 @@ class TaskPoller:
         Адресация живёт в ТЕЛЕ заметки: `recent()` отдаёт тело как `snippet`,
         но не отдаёт ни frontmatter-теги, ни заголовок.
         """
+        closed = self.superseded_paths(items)
         found: list[str] = []
         for item in items:
-            blob = str(item.get("snippet", "")).lower()
-            if not self._task_re.search(blob) or not self._open_re.search(blob):
+            blob = str(item.get("snippet", ""))
+            low = blob.lower()
+            if not self._task_re.search(low) or not self._open_re.search(low):
                 continue
             path = item.get("path")
-            if path:
+            if path and str(path) not in closed:
                 found.append(str(path))
         return found
+
+    @staticmethod
+    def superseded_paths(items: list[dict[str, Any]]) -> set[str]:
+        """Пути задач, которые уже закрыты заметкой-преемником.
+
+        Закрывающая заметка сама содержит `TASK-FOR:`, поэтому лежит в том же
+        отфильтрованном окне -- отдельный запрос не нужен.
+        """
+        closed: set[str] = set()
+        for item in items:
+            for match in SUPERSEDE_RE.finditer(str(item.get("snippet", ""))):
+                closed.add(match.group(1).strip())
+        return closed
+
+    def _deliver(self, key: str, line: str, seen: set[str]) -> None:
+        """Вбросить одну задачу в сессию и отметить доставленной."""
+        if key in seen:
+            return
+        if not self._pane.clean_idle():
+            # Сессия занялась, пока мы ходили в сеть -- оставляем на потом.
+            return
+        if self._pane.send_line(line):
+            self._mark_seen(key)
+            seen.add(key)
+            self._log(f"delivered task {key} → session (background subagent)")
+        else:
+            self._log(f"deliver failed for {key} (tmux) — will retry")
+
+    def poll_board(self, seen: set[str]) -> None:
+        """Забрать задачи с доски. Сбой доски не должен ломать путь заметок."""
+        if self._board is None:
+            return
+        try:
+            tasks = self._board.board_tasks(self._agent)
+        except SessionLost as exc:
+            self._log(f"сессия доски потеряна ({exc}) — рукопожатие заново")
+            self._board.invalidate()
+            return
+        except (OSError, ValueError) as exc:
+            self._log(f"опрос доски не удался: {exc}")
+            self._board.invalidate()
+            return
+        for task in tasks:
+            task_id = task.get("id")
+            if task_id is None:
+                continue
+            self._deliver(
+                f"{BOARD_SEEN_PREFIX}{task_id}",
+                BOARD_DELIVERY_TEMPLATE.format(
+                    task_id=task_id, title=task.get("title") or "(без названия)"
+                ),
+                seen,
+            )
 
     def poll_once(self) -> None:
         """Один проход опроса. Никогда не бросает исключений наружу."""
@@ -490,6 +600,8 @@ class TaskPoller:
         # нельзя, а опрос дороже проверки на порядок.
         if not self._pane.clean_idle():
             return
+        seen = self._seen()
+        self.poll_board(seen)
         try:
             items = self._client.recent_items()
         except SessionLost as exc:
@@ -502,19 +614,8 @@ class TaskPoller:
             self._sleep(BACKOFF_SEC)
             return
 
-        seen = self._seen()
         for path in self.open_tasks(items):
-            if path in seen:
-                continue
-            if not self._pane.clean_idle():
-                # Сессия занялась, пока мы ходили в сеть -- оставляем на потом.
-                continue
-            if self._pane.send_line(DELIVERY_TEMPLATE.format(path=path)):
-                self._mark_seen(path)
-                seen.add(path)
-                self._log(f"delivered task {path} → session (background subagent)")
-            else:
-                self._log(f"deliver failed for {path} (tmux) — will retry")
+            self._deliver(path, DELIVERY_TEMPLATE.format(path=path), seen)
 
     def run(self) -> int:
         """Крутить цикл, пока жива сессия агента.
@@ -546,6 +647,8 @@ class TaskPoller:
                 self._sleep(self._interval)
         finally:
             self._client.close()
+            if self._board is not None:
+                self._board.close()
         return 0
 
 
@@ -575,8 +678,15 @@ def build_poller() -> TaskPoller:
 
     bearer = BearerCache(workspace / ".mcp.json", os.environ.get("AGENT_BEARER", ""))
     client = RouterClient(url, bearer.get)
+    # Доска -- отдельный сервер, поэтому отдельное соединение и отдельная
+    # MCP-сессия. Обе живут столько же, сколько процесс.
+    board = RouterClient(
+        os.environ.get("SECOND_BRAIN_TASKS_URL") or DEFAULT_TASKS_URL, bearer.get
+    )
     pane = TmuxPane(f"labops-{agent}", input_col0)
-    return TaskPoller(agent, pane, client, seen_path, log, interval, gone_limit)
+    return TaskPoller(
+        agent, pane, client, seen_path, log, interval, gone_limit, board=board
+    )
 
 
 def main() -> int:
