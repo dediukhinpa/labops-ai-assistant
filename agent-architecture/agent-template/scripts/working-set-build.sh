@@ -32,16 +32,35 @@ TIMEOUT_MS="${RECALL_TIMEOUT_MS:-1000}"
 TIMEOUT_S=$(( (TIMEOUT_MS + 999) / 1000 )); [ "$TIMEOUT_S" -lt 1 ] && TIMEOUT_S=1
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [working-set] $1" >> "$LOG"; }
+
+# shellcheck source=mcp-call.sh
+. "$SCRIPT_DIR/mcp-call.sh"
 ISO() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # --- 1) build query: explicit override (e.g. the just-submitted prompt), else
 #        last handoff, else episodic tail ------------------------------------
+# Содержимое без заголовков и пустых строк. Проверка `-s` на это не годится:
+# свежий handoff.md состоит из одного заголовка, файл непустой -- и запросом
+# становилась строка "# Active context -- last 10 entries", а откат на
+# episodic не срабатывал. Ровно это и наблюдалось на живом хосте 45 дней:
+# все записи в recall-events.jsonl -- один и тот же пустой результат.
+meaningful_tail() {
+    local file="$1" lines="$2"
+    [ -f "$file" ] || return 0
+    # grep без совпадений возвращает 1; под set -e это убивало бы сборку
+    # рабочего набора вместо отката на следующий источник.
+    # Заглушки active-writer'а -- не материал для запроса: пока дневник был
+    # ими забит, recall искал по строке "(turn ended; no text)".
+    grep -vE '^[[:space:]]*$|^[[:space:]]*#|^\(turn ended' "$file" 2>/dev/null \
+        | tail -n "$lines" | tr '\n' ' ' || true
+}
+
 QUERY="${WORKING_SET_QUERY:-}"
-if [ -z "$QUERY" ] && [ -f "$HANDOFF" ] && [ -s "$HANDOFF" ]; then
-    QUERY=$(grep -vE '^[[:space:]]*$' "$HANDOFF" | tail -n 3 | tr '\n' ' ' | head -c 300)
+if [ -z "$QUERY" ]; then
+    QUERY=$(meaningful_tail "$HANDOFF" 3 | head -c 300)
 fi
-if [ -z "$QUERY" ] && [ -f "$EPISODIC" ] && [ -s "$EPISODIC" ]; then
-    QUERY=$(grep -vE '^[[:space:]]*$|^###' "$EPISODIC" | tail -n 5 | tr '\n' ' ' | head -c 300)
+if [ -z "${QUERY// }" ]; then
+    QUERY=$(meaningful_tail "$EPISODIC" 5 | head -c 300)
 fi
 QUERY=$(printf '%s' "$QUERY" | tr -d '\r' | sed 's/[`"\\]/ /g' | tr -s ' ' | head -c 250)
 if [ -z "$QUERY" ]; then
@@ -61,12 +80,19 @@ print(json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call",
         "query":os.environ["QUERY_E"],"limit":int(os.environ["LIMIT_E"])}}}))
 PY
 )
-    RESP=$(curl -sS -m "$TIMEOUT_S" -X POST "$SECOND_BRAIN_MEMORY_ROUTER_URL" \
-        -H "Authorization: Bearer ${AGENT_BEARER}" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json, text/event-stream" \
-        --data "$PAYLOAD" 2>>"$LOG") || { log "shared recall timed out/failed (skip)"; RESP=""; }
-    if [ -n "$RESP" ] && ! printf '%s' "$RESP" | grep -qE '"error"[[:space:]]*:[[:space:]]*\{'; then
+    # Через рукопожатие: одиночный tools/call FastMCP отвергает
+    # ("Bad Request: Missing session ID"), из-за чего общий слой молча не
+    # попадал в рабочий набор ни разу -- ошибка гасилась веткой ниже и в лог
+    # не писалась. Та же правка уже сделана в brain-flush и reflect-nudge.
+    MCP_TIMEOUT_S="$TIMEOUT_S"
+    RESP=$(mcp_tools_call "$SECOND_BRAIN_MEMORY_ROUTER_URL" "$AGENT_BEARER" "$PAYLOAD" 2>>"$LOG") \
+        || { log "shared recall timed out/failed (skip)"; RESP=""; }
+    if [ -n "$RESP" ] && printf '%s' "$RESP" | grep -qE '"error"[[:space:]]*:[[:space:]]*\{'; then
+        # Молчание тут и было главной бедой: отказ выглядел как «нет попаданий».
+        log "shared recall rejected: $(printf '%s' "$RESP" | head -c 200)"
+        RESP=""
+    fi
+    if [ -n "$RESP" ]; then
         SHARED_HITS=$(RESPONSE_E="$RESP" python3 - <<'PY'
 import json, os, re
 raw = os.environ["RESPONSE_E"]

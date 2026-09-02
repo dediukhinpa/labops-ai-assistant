@@ -65,10 +65,39 @@ maxlen = int(os.environ["MAXLEN"])
 text = ""
 try:
     obj = json.loads(raw)
-    for key in ("assistant_response", "summary", "last_message", "transcript", "text"):
+    # last_assistant_message -- то, что Claude Code реально кладёт в payload
+    # Stop-хука. Прежний список ключей не содержал ни одного существующего,
+    # поэтому в дневник 45 дней писалось "(turn ended; no text)": 81 заглушка
+    # из ~90 строк. Остальные ключи оставлены для совместимости с иными
+    # источниками (--source может быть не только stop-hook).
+    for key in ("last_assistant_message", "assistant_response", "summary",
+                "last_message", "transcript", "text"):
         v = obj.get(key)
         if isinstance(v, str) and v.strip():
             text = v.strip(); break
+    if not text and isinstance(obj.get("transcript_path"), str):
+        # Запасной путь: harness может отдать только ссылку на стенограмму.
+        try:
+            with open(obj["transcript_path"], encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    msg = entry.get("message") or {}
+                    if msg.get("role") != "assistant":
+                        continue
+                    content = msg.get("content")
+                    if isinstance(content, str) and content.strip():
+                        text = content.strip()
+                    elif isinstance(content, list):
+                        parts = [c.get("text", "") for c in content
+                                 if isinstance(c, dict) and c.get("type") == "text"]
+                        joined = " ".join(p for p in parts if p).strip()
+                        if joined:
+                            text = joined
+        except OSError:
+            pass
     if not text and isinstance(obj.get("messages"), list):
         for m in reversed(obj["messages"]):
             if isinstance(m, dict) and isinstance(m.get("content"), str):
