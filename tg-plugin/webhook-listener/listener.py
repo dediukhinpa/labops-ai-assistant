@@ -138,7 +138,11 @@ def _build_prompt(payload: dict) -> str:
             f"write, and stay inside your can_write_scopes.\n"
             f"4) Update the watermark in core/passive/.consolidated-at.\n"
             f"5) Do not report to the owner: this is routine housekeeping.\n"
-            f"6) Call mcp__second_brain-agent_router__ack(task_id=\"{task_id}\").\n"
+            f"6) Call mcp__second_brain-agent_router__ack(task_id=\"{task_id}\"). "
+            f"It will answer acked=false — that is expected, not a failure: the "
+            f"delivery worker already marks the row acked when this webhook "
+            f"returns 2xx, and mark_acked only touches rows still pending. Do "
+            f"not retry it and do not report it as a problem.\n"
         )
 
     return (
