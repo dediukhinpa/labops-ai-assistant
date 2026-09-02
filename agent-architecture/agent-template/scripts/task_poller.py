@@ -229,12 +229,17 @@ class RouterClient:
         # тогда переходим на выборку без фильтра и больше не пробуем.
         self._server_filters = True
 
-    def _connect(self) -> HTTPConnection | HTTPSConnection:
-        """Вернуть живое соединение, подняв его при необходимости."""
+    def _connect(self) -> tuple[HTTPConnection | HTTPSConnection, bool]:
+        """Вернуть соединение и признак того, что оно только что поднято.
+
+        Returns:
+            Кортеж (соединение, поднято ли оно этим вызовом).
+        """
         if self._conn is None:
             factory = HTTPSConnection if self._secure else HTTPConnection
             self._conn = factory(self._host, self._port, timeout=self._timeout)
-        return self._conn
+            return self._conn, True
+        return self._conn, False
 
     def _drop_connection(self) -> None:
         """Закрыть соединение: следующий вызов поднимет новое."""
@@ -246,21 +251,30 @@ class RouterClient:
         self._conn = None
 
     def _request(self, method: str, body: bytes | None, headers: dict[str, str]) -> tuple[int, str, str | None]:
-        """Один HTTP-запрос по живому соединению.
+        """Один HTTP-запрос; при обрыве переиспользованного соединения -- одна пересдача.
+
+        Сервер закрывает keep-alive по своему таймауту (uvicorn -- 5 секунд), и
+        это ровно шаг опроса: почти каждый раз мы берём из кармана соединение,
+        которое сервер уже закрыл, и получаем Broken pipe ДО отправки запроса.
+        Обрыв переиспользованного соединения -- не сбой, а норма, поэтому он
+        стоит одной пересдачи на свежем. Пересдаём только то, что не ушло по
+        старому соединению; если упало и свежее -- это настоящая ошибка.
 
         Returns:
             Кортеж (статус, тело, значение заголовка mcp-session-id).
         """
-        conn = self._connect()
-        try:
-            conn.request(method, self._path, body=body, headers=headers)
-            resp = conn.getresponse()
-            payload = resp.read().decode("utf-8", "replace")
-            return resp.status, payload, resp.headers.get("mcp-session-id")
-        except (OSError, ValueError):
-            # Соединение могло быть закрыто сервером -- следующий раз с нуля.
-            self._drop_connection()
-            raise
+        for attempt in range(2):
+            conn, fresh = self._connect()
+            try:
+                conn.request(method, self._path, body=body, headers=headers)
+                resp = conn.getresponse()
+                payload = resp.read().decode("utf-8", "replace")
+                return resp.status, payload, resp.headers.get("mcp-session-id")
+            except (OSError, ValueError):
+                self._drop_connection()
+                if fresh or attempt == 1:
+                    raise
+        raise SessionLost("недостижимо: цикл пересдачи не вернул ответ")
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         """Заголовки MCP-запроса с актуальным токеном."""

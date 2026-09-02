@@ -331,6 +331,66 @@ class RouterClientTest(unittest.TestCase):
         """Игла с именем агента молча теряла бы заметки без пробела."""
         self.assertEqual(TASK_NEEDLE, "TASK-FOR:")
 
+    def _client_with_conns(self, fails: list[bool]) -> tuple[RouterClient, list[str]]:
+        """Клиент, чьи соединения падают по заданному списку (одно на попытку)."""
+        events: list[str] = []
+        client = RouterClient("http://127.0.0.1:5002/mcp", lambda: "t")
+
+        class _Conn:
+            def __init__(self, fail: bool) -> None:
+                self._fail = fail
+
+            def request(self, *_a: Any, **_kw: Any) -> None:
+                if self._fail:
+                    events.append("broken")
+                    raise BrokenPipeError(32, "Broken pipe")
+                events.append("sent")
+
+            def getresponse(self) -> Any:
+                class _Resp:
+                    status = 200
+                    headers = {"mcp-session-id": "sid"}
+
+                    def read(self) -> bytes:
+                        return b'{"jsonrpc":"2.0","id":1,"result":{}}'
+
+                return _Resp()
+
+            def close(self) -> None:
+                events.append("closed")
+
+        queue = list(fails)
+
+        def _connect() -> tuple[Any, bool]:
+            if client._conn is None:
+                events.append("connect")
+                client._conn = _Conn(queue.pop(0) if queue else False)
+                return client._conn, True
+            return client._conn, False
+
+        client._connect = _connect  # type: ignore[method-assign]
+        return client, events
+
+    def test_reused_connection_break_is_retried_once(self) -> None:
+        """Сервер рвёт keep-alive за 5 с — ровно шаг опроса.
+
+        Регрессия 2026-09-02: после выкатки поллер писал «Broken pipe» на КАЖДОМ
+        цикле и не доставил ни одной задачи. Дымовой прогон это пропустил, потому
+        что бил вызовы подряд и пятисекундный порог не переходил.
+        """
+        client, events = self._client_with_conns([False])
+        client._request("POST", b"{}", {})           # поднимаем соединение
+        client._conn._fail = True                    # сервер закрыл его за кадром
+        status, _, _ = client._request("POST", b"{}", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(events[-4:], ["broken", "closed", "connect", "sent"])
+
+    def test_break_on_a_fresh_connection_propagates(self) -> None:
+        """Свежее соединение упало — это настоящая ошибка, а не протухший карман."""
+        client, _ = self._client_with_conns([True])
+        with self.assertRaises(OSError):
+            client._request("POST", b"{}", {})
+
 
 
 class TmuxPaneTest(unittest.TestCase):
