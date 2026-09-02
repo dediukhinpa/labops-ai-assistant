@@ -375,6 +375,39 @@ else
   bad "восстановление ввода снова разъехалось по ступеням — подтверждённое сообщение будет ждать лишний цикл"
 fi
 
+echo "── 12b. Новый агент получает всё, что ему уже велено делать ──"
+# Дыра, найденная 02.09.2026: доска задач стала основным каналом межагентной
+# работы, а scope на неё не выдавался при создании агента ни в одном пути
+# установки — доливали вручную. То же с error-patterns: CLAUDE.md.template прямо
+# велит агенту писать «decisions/error-patterns to memory», а права не было.
+if grep -q 'AGENT_SCOPES:=.*task-board' skills/create-agent/new-agent.sh \
+     && grep -q 'AGENT_SCOPES:=.*error-patterns' skills/create-agent/new-agent.sh; then
+  ok "новому агенту выдаются scope task-board и error-patterns"
+else
+  bad "в AGENT_SCOPES нет task-board/error-patterns — агент не сможет работать с доской и писать разбор ошибок"
+fi
+
+# Поллер в тексте доставки ссылается на AGENT_ROUTER.md, правила записи —
+# красная зона. Оба документа жили только в репозитории и до агента не доезжали.
+if grep -q 'AGENT_ROUTER.md' agent-template/install.sh \
+     && grep -q 'SECONDBRAIN_WRITE_RULES.md' agent-template/install.sh \
+     && grep -q '^@AGENT_ROUTER.md' agent-template/templates/CLAUDE.md.template \
+     && grep -q '^@SECONDBRAIN_WRITE_RULES.md' agent-template/templates/CLAUDE.md.template; then
+  ok "управляющие документы копируются в воркспейс и подключены к CLAUDE.md"
+else
+  bad "AGENT_ROUTER.md / SECONDBRAIN_WRITE_RULES.md не доезжают до агента — поллер ссылается на несуществующий файл"
+fi
+
+# FastMCP отвечает 400 "Missing session ID" на одиночный POST, а tools/list
+# отдаётся вообще без проверки токена. Обе smoke-пробы обязаны идти через
+# рукопожатие (mcp-call.sh) и быть настоящими вызовами инструментов.
+if grep -q 'mcp-call.sh' skills/create-agent/new-agent.sh \
+     && ! grep -qE "curl [^|]*-X POST \"\$SECOND_BRAIN_(MEMORY_ROUTER|TASKS)_URL\"" skills/create-agent/new-agent.sh; then
+  ok "smoke ходит в мозг через рукопожатие MCP, а не голым POST"
+else
+  bad "smoke бьёт в MCP голым POST — получит 400 и объявит здоровую установку сломанной"
+fi
+
 echo "── 13. Оператору сообщают только то, по чему он может действовать ──"
 # Обратная связь оператора 2026-08-09: «всё, что мне нужно знать — просрочена ли
 # подписка и недоступен ли агент; технические детали и копания в сессии

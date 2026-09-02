@@ -331,14 +331,24 @@ else
   SB=""
 fi
 
-TG="${TG_PLUGIN_DIR:-$HOME/labops-tg-plugin}"
+# Сосед по монорепо -- источник истины. install.sh лежит в
+# labops-ai-assistant/agent-architecture/, значит tg-plugin ему брат: ../tg-plugin.
+# Раньше сюда смотрели, только если оператор ЯВНО задал TG_PLUGIN_DIR, иначе шёл
+# клон отдельного репозитория labops-tg-plugin -- он ещё жив, поэтому установка
+# не падала, а тихо ставила устаревший плагин мимо монорепо.
+TG_SIBLING="$(cd "$REPO_DIR/.." 2>/dev/null && pwd || true)/tg-plugin"
 if [ "${SKIP_TG_PLUGIN:-0}" = "1" ]; then
-  warn "labops-tg-plugin пропущен (SKIP_TG_PLUGIN=1) — Telegram-канал будет пропущен"
+  warn "tg-plugin пропущен (SKIP_TG_PLUGIN=1) — Telegram-канал будет пропущен"
   TG=""
 elif [ -n "${TG_PLUGIN_DIR:-}" ] && [ -d "$TG_PLUGIN_DIR" ]; then
-  # Монорепо: tg-plugin уже лежит рядом в дереве — не клонируем.
-  ok "labops-tg-plugin взят из монорепо: $TG"
+  TG="$TG_PLUGIN_DIR"
+  ok "tg-plugin взят по TG_PLUGIN_DIR: $TG"
+elif [ -d "$TG_SIBLING" ]; then
+  TG="$TG_SIBLING"
+  ok "tg-plugin взят из монорепо: $TG"
 else
+  TG="${TG_PLUGIN_DIR:-$HOME/labops-tg-plugin}"
+  warn "tg-plugin не найден рядом в монорепо — клонирую отдельный репозиторий (устаревший источник)"
   clone_repo "labops-tg-plugin" "https://github.com/dediukhinpa/labops-tg-plugin.git" "$TG"
 fi
 

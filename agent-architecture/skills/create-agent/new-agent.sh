@@ -161,7 +161,12 @@ MCP_HOST="${MCP_HOST%/}"
 : "${SECOND_BRAIN_MEMORY_ROUTER_URL:=http://${MCP_HOST}:${MCP_MEMORY_ROUTER_PORT}/mcp}"
 : "${SECOND_BRAIN_AGENT_ROUTER_URL:=http://${MCP_HOST}:${MCP_AGENT_ROUTER_PORT}/mcp}"
 : "${SECOND_BRAIN_TASKS_URL:=http://${MCP_HOST}:${MCP_TASKS_PORT}/mcp}"
-: "${AGENT_SCOPES:=decisions,external,knowledge,inbox}"
+# task-board -- доска задач (services/task_mcp/server.py::TASKS_WRITE_SCOPE);
+# без него агент видит задачу, но не может её взять и закрыть.
+# error-patterns -- CLAUDE.md.template прямо велит агенту писать
+# «decisions/error-patterns to memory», а права на это не выдавалось никому:
+# оба скоупа приходилось доливать вручную после установки.
+: "${AGENT_SCOPES:=decisions,external,knowledge,inbox,error-patterns,task-board}"
 
 # ── 2. Токен второго мозга ──────────────────────────────────────
 say "2. Токен во втором мозге"
@@ -417,6 +422,23 @@ fi
 
 # ── 7. Smoke-тест ───────────────────────────────────────────────
 say "7. Smoke-тест"
+# ЗАЧЕМ ХЕЛПЕР: FastMCP не принимает одиночный POST -- без initialize и
+# mcp-session-id любой вызов возвращает 400 "Missing session ID". Проверка 7a
+# била голым POST и потому писала «мозг недоступен» на полностью ЗДОРОВОЙ
+# установке (проверено на живом хосте 02.09.2026: memory_router отвечает 400 на
+# такой запрос). Тот же баг чинили 01.09.2026 в хуках агента -- там завели
+# mcp-call.sh, но smoke на него не перевели. Заодно хелпер закрывает сессию
+# через DELETE: брошенная течёт ~56 КБ.
+# shellcheck source=/dev/null
+. "$AGENT_TEMPLATE/scripts/mcp-call.sh"
+
+# tools/list отдаётся БЕЗ проверки токена (это метаданные), поэтому им нельзя
+# отличить рабочий Bearer от битого -- проверено на живом хосте: с мусорным
+# токеном список приходит как ни в чём не бывало. Бьём настоящим вызовом:
+# recent() требует и токен, и право читать scope. Берём первый из выданных,
+# чтобы проба не разъехалась, если оператор переопределил AGENT_SCOPES.
+SECOND_BRAIN_PROBE_SCOPE="${SECOND_BRAIN_PROBE_SCOPE:-${AGENT_SCOPES%%,*}}"
+
 FAIL=0
 # 7a. второй мозг отвечает — только если у нас есть настоящий токен. Без него
 # (AGENT_BEARER=CHANGE_ME) запрос гарантированно провалится: либо second_brain
@@ -425,10 +447,9 @@ FAIL=0
 # пропускаем, без повторного предупреждения.
 if [ "$AGENT_BEARER" = "CHANGE_ME" ]; then
   :
-elif curl -fsS -H "Authorization: Bearer $AGENT_BEARER" \
-        -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" \
-        -X POST "$SECOND_BRAIN_MEMORY_ROUTER_URL" \
-        --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' >/dev/null 2>&1; then
+elif mcp_tools_call "$SECOND_BRAIN_MEMORY_ROUTER_URL" "$AGENT_BEARER" \
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"recent\",\"arguments\":{\"scope\":\"${SECOND_BRAIN_PROBE_SCOPE}\",\"limit\":1}}}" \
+        2>/dev/null | grep -q '"isError":false'; then
   ok "second_brain memory_router отвечает"
 else
   warn "second_brain memory_router недоступен на $SECOND_BRAIN_MEMORY_ROUTER_URL (проверьте токен/хост)"; FAIL=1
@@ -472,6 +493,38 @@ if [ -n "${TELEGRAM_WEBHOOK_PORT:-}" ]; then
     ok "плагин слушает /hooks/agent на :${TELEGRAM_WEBHOOK_PORT} (agent-to-agent доставка готова)"
   else
     warn "плагин не ответил на :${TELEGRAM_WEBHOOK_PORT}/health за ~20с — agent-to-agent webhook пока недоступен. Часто это медленный старт: проверьте позже (curl :${TELEGRAM_WEBHOOK_PORT}/health) или логи tmux-сессии labops-${AGENT_ID}"; FAIL=1
+  fi
+fi
+# 7f. доска отвечает И выданный scope на ней ДЕЙСТВУЕТ.
+# Берём task_claim на заведомо несуществующей задаче: проверка write-scope в
+# task_mcp стоит ПЕРВОЙ строкой обработчика, до всякого обращения к БД, поэтому
+# без scope придёт "lacks write scope", а со scope -- пустой результат и
+# isError:false. Ничего не создаётся и не меняется. task_list для этого не
+# годится: это чтение, гейт scope его не касается.
+if [ "$AGENT_BEARER" = "CHANGE_ME" ]; then
+  :
+elif mcp_tools_call "$SECOND_BRAIN_TASKS_URL" "$AGENT_BEARER" \
+        '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"task_claim","arguments":{"task_id":999999999}}}' \
+        2>/dev/null | grep -q '"isError":false'; then
+  ok "доска задач отвечает и scope task-board действует"
+else
+  warn "доска недоступна на $SECOND_BRAIN_TASKS_URL или у агента нет scope task-board — задачи от других агентов не дойдут (выдать: --scopes '\''$AGENT_SCOPES'\'')"; FAIL=1
+fi
+# 7g. поллер доски поднялся. Он живёт отдельным процессом (обёртка + демон) и
+# именно он доставляет задачи в сессию: без него доска работает, а агент о
+# задачах не узнаёт.
+if [ "${AUTOSTART:-1}" = "1" ]; then
+  POLLER_OK=0
+  for _i in $(seq 1 20); do
+    if pgrep -f "$LAB_DIR/$AGENT_ID/.claude/scripts/task_poller.py" >/dev/null 2>&1; then
+      POLLER_OK=1; break
+    fi
+    sleep 1
+  done
+  if [ "$POLLER_OK" = "1" ]; then
+    ok "поллер доски работает — задачи будут доставляться в сессию"
+  else
+    warn "поллер доски не поднялся за ~20с — агент не увидит задачи с доски (логи: $LAB_DIR/$AGENT_ID/.claude/logs/task-poller.log)"; FAIL=1
   fi
 fi
 
