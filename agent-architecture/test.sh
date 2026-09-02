@@ -100,6 +100,13 @@ else
   bad "heartbeat-hook.sh: юнит-тест провален (agent-template/hooks/heartbeat-hook.test.sh)"
 fi
 
+echo "── 7a. sdk-guard во всех хуках (защита от рекурсии) ──"
+if bash agent-template/hooks/sdk-guard.test.sh >/dev/null 2>&1; then
+  ok "sdk-guard: stop/session-start/precompact выходят без побочных эффектов — юнит-тест зелёный"
+else
+  bad "sdk-guard: юнит-тест провален (agent-template/hooks/sdk-guard.test.sh)"
+fi
+
 echo "── 7b. start-agent: проброс agent.env с placeholder-guard ──"
 # Регрессия сессии 2026-07-19: agent.env существовал, но start-agent.sh не
 # пробрасывал его в tmux-сессию → хуки не видели MCP_HOST/AGENT_BEARER даже при
