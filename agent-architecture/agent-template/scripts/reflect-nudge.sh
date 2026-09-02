@@ -55,11 +55,18 @@ provenance + decay frontmatter, dual-write important ones to second_brain \
 (recall-before-write), then update the watermark."
 
 # Build a valid agent_router.notify payload.
+# Полноценный JSON-RPC: без "jsonrpc"/"id" и с методом "agent_router.notify"
+# сервер отвечал "-32602 Validation error: 9 validation errors for JSONRPC", и
+# побудка на консолидацию памяти не срабатывала ни разу за 45 дней -- 235
+# попыток на двух агентах, ноль успехов. Имя инструмента идёт в params.name,
+# как это делает brain-flush.sh.
 PAYLOAD=$(BODY_E="$BODY" AGENT_E="$AGENT_ID" REASON_E="$REASON" python3 - <<'PY'
 import json, os
 print(json.dumps({
-    "method": "agent_router.notify",
-    "params": {"arguments": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {"name": "notify", "arguments": {
         "to_agent": os.environ["AGENT_E"],
         "payload": {
             "title": "Memory consolidation",

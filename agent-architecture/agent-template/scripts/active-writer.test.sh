@@ -46,6 +46,30 @@ grep -q '\[channel\] {fact}' "$EP";     check 0 $? "text-arg path + fact class"
 printf '{"assistant_response":"the build broke on CI"}' | bash "$SCRIPT_DIR/active-writer.sh" --source stop-hook >/dev/null
 grep -q '{error}' "$EP";                check 0 $? "json payload extraction + error class"
 
+echo "== реальный payload Stop-хука попадает в дневник =="
+# Claude Code кладёт текст ответа в last_assistant_message. Прежний список
+# ключей его не содержал, и дневник 45 дней набивался заглушками.
+RWS="$TMP/real"; mkdir -p "$RWS/core/active"
+printf '%s' '{"hook_event_name":"Stop","last_assistant_message":"Починил ранжирование recall в memory_router."}' \
+    | AGENT_WORKSPACE="$RWS" bash "$SCRIPT_DIR/active-writer.sh" --source stop-hook >/dev/null
+grep -q 'ранжирование recall' "$RWS/core/active/episodic.md"; check 0 $? "текст ответа записан"
+# Отрицательная проверка через if: `grep -q; check $?` под set -e убил бы тест.
+if grep -q 'turn ended; no text' "$RWS/core/active/episodic.md"; then
+    check 0 1 "заглушка не записана"
+else
+    check 0 0 "заглушка не записана"
+fi
+
+echo "== стенограмма как запасной источник =="
+TWS="$TMP/transcript"; mkdir -p "$TWS/core/active"
+TRANSCRIPT="$TMP/transcript.jsonl"
+printf '%s\n' '{"message":{"role":"user","content":"вопрос"}}' \
+    '{"message":{"role":"assistant","content":[{"type":"text","text":"Ответ из стенограммы"}]}}' \
+    > "$TRANSCRIPT"
+printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TRANSCRIPT" \
+    | AGENT_WORKSPACE="$TWS" bash "$SCRIPT_DIR/active-writer.sh" --source stop-hook >/dev/null
+grep -q 'Ответ из стенограммы' "$TWS/core/active/episodic.md"; check 0 $? "текст взят из стенограммы"
+
 echo ""
 echo "active-writer.test.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
