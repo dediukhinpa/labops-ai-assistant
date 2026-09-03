@@ -18,7 +18,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 SCRIPTS_DIR="${SCRIPT_DIR}/scripts"
 HOOKS_DIR="${SCRIPT_DIR}/hooks"
-LAB_DIR="${HOME}/.claude-lab"
+# CLAUDE_LAB держим общим с new-agent.sh: там путь уже брался из этой
+# переменной, а здесь был прошит жёстко. Из-за расхождения скаффолд с
+# заданной CLAUDE_LAB уезжал в ЖИВУЮ лабораторию, после чего вызывающая
+# сторона падала с «воркспейс не создан» уже по другому пути.
+LAB_DIR="${CLAUDE_LAB:-${HOME}/.claude-lab}"
 GLOBAL_DIR="${HOME}/.claude"
 DISTRO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SHARED_SKILLS_SRC="${DISTRO_ROOT}/skills"

@@ -460,6 +460,94 @@ if [ -f "$OOB_TS" ]; then
   fi
 fi
 
+echo "── 14. Жизненный цикл юнита и установка агента ──"
+# Все проверки ниже -- регрессии, найденные живым прогоном create-agent 03.09.2026.
+
+# 14a. Юнит обязан снимать СВОЕГО агента сам. Сессия claude лежит в общем
+# tmux-сервере, попадающем в cgroup первого стартовавшего агента, поэтому без
+# ExecStop рестарт не-владельца не пересоздавал сессию, а стоп владельца ронял
+# сессии всего роя.
+UNIT_TMPL="systemd/claude-agent.service.template"
+if grep -q '^ExecStop=.*stop-agent\.sh' "$UNIT_TMPL" && grep -q '^KillMode=process' "$UNIT_TMPL"; then
+  ok "юнит снимает своего агента через ExecStop и не бьёт по чужой cgroup"
+else
+  bad "в юните нет ExecStop=stop-agent.sh или KillMode=process — рестарт не перезапустит сессию"
+fi
+
+# 14b. Остановка адресная: kill-session, а не kill-server (сервер общий на рой).
+if [ -x orchestration/stop-agent.sh ]; then
+  # Комментарии отбрасываем: в них kill-server упомянут как раз с объяснением,
+  # почему он здесь запрещён.
+  STOP_CODE="$(grep -v '^[[:space:]]*#' orchestration/stop-agent.sh)"
+  if printf '%s' "$STOP_CODE" | grep -q 'kill-session' \
+     && ! printf '%s' "$STOP_CODE" | grep -q 'kill-server'; then
+    ok "stop-agent снимает только свою сессию, общий tmux-сервер не трогает"
+  else
+    bad "stop-agent трогает tmux-сервер целиком — уронит сессии всех агентов"
+  fi
+  if grep -q 'task-poller' orchestration/stop-agent.sh && grep -q 'plugin/src/server.ts' orchestration/stop-agent.sh; then
+    ok "stop-agent прибирает поллер и осиротевший канал"
+  else
+    bad "stop-agent не убирает поллер или bun-канал — останутся сироты с занятым портом"
+  fi
+  # Поведение: на несуществующем агенте отрабатывает чисто и не падает.
+  if out="$(bash orchestration/stop-agent.sh __nonexistent__ 2>&1)" \
+     && printf '%s' "$out" | grep -q 'сессии labops-__nonexistent__ не было'; then
+    ok "stop-agent идемпотентен: несуществующий агент не ошибка"
+  else
+    bad "stop-agent падает на несуществующем агенте"
+  fi
+else
+  bad "нет исполняемого orchestration/stop-agent.sh — у юнита не будет ExecStop"
+fi
+
+# 14c. Один и тот же CLAUDE_LAB в обоих скриптах. Расхождение уводило скаффолд
+# в ЖИВУЮ лабораторию при заданной CLAUDE_LAB.
+if grep -q 'LAB_DIR="\${CLAUDE_LAB:-\${HOME}/.claude-lab}"' agent-template/install.sh; then
+  ok "install.sh учитывает CLAUDE_LAB так же, как new-agent.sh"
+else
+  bad "install.sh прошивает ~/.claude-lab — скаффолд уедет мимо заданной CLAUDE_LAB"
+fi
+
+NA="skills/create-agent/new-agent.sh"
+# 14d. Токен выдаётся от имени владельца .env (0600 second_brain:second_brain),
+# иначе канонический самобутстрап падает с PermissionError.
+if grep -q 'sudo -n -u second_brain' "$NA"; then
+  ok "выдача токена идёт через sudo -u second_brain, как в docs/setup.md"
+else
+  bad "new-agent.sh зовёт issue-agent-token напрямую — PermissionError на .env"
+fi
+
+# 14e. Причина отказа выдачи должна доходить до оператора.
+if grep -q 'issue-agent-token.py' "$NA" && ! grep -qE 'issue-agent-token\.py.*2>/dev/null' "$NA"; then
+  ok "ошибка выдачи токена не глушится"
+else
+  bad "ошибка выдачи токена уходит в /dev/null — оператор не увидит причину"
+fi
+
+# 14f. Должен существовать неинтерактивный способ отдать готовый токен:
+# AGENT_BEARER стирается общим unset (он прилетает чужим из родительской сессии).
+if grep -q 'NEW_AGENT_BEARER' "$NA"; then
+  ok "готовый токен передаётся через NEW_AGENT_BEARER"
+else
+  bad "нет способа отдать токен заранее — AGENT_BEARER стирается unset-ом"
+fi
+
+# 14g. read под set -e не должен убивать установку посередине.
+if grep -q 'read -r __i || __i=""' "$NA" && grep -q 'NONINTERACTIVE' "$NA"; then
+  ok "ask переживает закрытый stdin и умеет неинтерактивный режим"
+else
+  bad "ask падает на EOF — установка оборвётся между воркспейсом и юнитом"
+fi
+
+# 14h. Smoke обязан проверять РАБОТАЮЩЕГО агента, а не токен из памяти.
+if grep -q 'сессия стартовала РАНЬШЕ последней правки' "$NA" \
+   && grep -q 'Перечитывание конфига живой сессией' "$NA"; then
+  ok "smoke ловит сессию со старым конфигом, установка её пересоздаёт"
+else
+  bad "smoke зелёный поверх сессии со старым .mcp.json"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

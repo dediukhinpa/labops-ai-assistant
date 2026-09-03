@@ -17,6 +17,8 @@
 #   MCP_HOST (default: 127.0.0.1, colocated) AGENT_SCOPES
 #   SECOND_BRAIN_MEMORY_URL/_MEMORY_ROUTER_URL/_AGENT_ROUTER_URL (override for remote/reverse-proxy)
 #   TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USER_IDS
+#   NEW_AGENT_BEARER (готовый Bearer нового агента; иначе выдаётся сам)
+#   NONINTERACTIVE=1 (не задавать вопросов -- только значения по умолчанию)
 #   ENABLE_VOICE(=1) AUTOSTART(=1)
 #   SECOND_BRAIN_DIR (для авто-выдачи токена)  TG_PLUGIN_DIR  CLAUDE_LAB
 
@@ -34,6 +36,13 @@ set -euo pipefail
 # the operator set for THIS run) — never inherited from the parent session.
 # Operator-supplied inputs (AGENT_NAME/AGENT_ROLE/TELEGRAM_BOT_TOKEN/
 # TELEGRAM_ALLOWED_USER_IDS/PRIMARY_MODEL/...) are intentionally NOT in this list.
+#
+# AGENT_BEARER остаётся в списке: из родительской сессии он прилетает ЧУЖОЙ, и
+# унаследовать его нельзя. Но и задать токен заранее было невозможно -- unset
+# срабатывал раньше шага 2, из-за чего ветка «токен уже есть» была недостижима,
+# а вместе со сломанной автовыдачей это не оставляло НИ ОДНОГО неинтерактивного
+# способа отдать токен. Для явного ввода оператора заведено отдельное имя:
+# NEW_AGENT_BEARER -- его из родителя прилететь не может.
 unset AGENT_ID AGENT_WORKSPACE AGENT_BEARER \
       TELEGRAM_WEBHOOK_PORT TELEGRAM_EXPECTED_BOT_ID TELEGRAM_WEBHOOK_TOKEN \
       TELEGRAM_STATE_DIR TELEGRAM_WORKSPACE_ROOT \
@@ -71,8 +80,18 @@ say()  { printf "\n${C}▶ %s${N}\n" "$*"; }
 ok()   { printf "${G}✓ %s${N}\n" "$*"; }
 warn() { printf "${Y}⚠ %s${N}\n" "$*"; }
 die()  { printf "${R}✗ %s${N}\n" "$*" >&2; exit 1; }
-ask()  { local __v="$1" __l="$2" __d="${3:-}" __i; if [ -n "${!__v:-}" ]; then return; fi
-         printf "${C}[?]${N} %s%s: " "$__l" "${__d:+ [$__d]}"; read -r __i; printf -v "$__v" '%s' "${__i:-$__d}"; }
+# NONINTERACTIVE=1 -- ни одного вопроса, только значения по умолчанию.
+# И даже в обычном режиме EOF на stdin больше не фатален: `read` под set -e
+# возвращал 1 на закрытом вводе и убивал установку ПОСЕРЕДИНЕ -- воркспейс уже
+# создан, канала и юнита ещё нет. Теперь EOF просто означает «бери default».
+ask()  { local __v="$1" __l="$2" __d="${3:-}" __i=""; if [ -n "${!__v:-}" ]; then return; fi
+         if [ "${NONINTERACTIVE:-0}" = "1" ]; then
+           printf -v "$__v" '%s' "$__d"
+           printf "${C}[=]${N} %s: %s\n" "$__l" "${__d:-<пусто>}"
+           return
+         fi
+         printf "${C}[?]${N} %s%s: " "$__l" "${__d:+ [$__d]}"; read -r __i || __i=""
+         printf -v "$__v" '%s' "${__i:-$__d}"; }
 
 echo "════════════════════════════════════════════"
 echo "  labops · создание нового агента (end-to-end)"
@@ -183,11 +202,40 @@ for cand in "${SECOND_BRAIN_DIR:-}" /opt/second_brain "$HOME/labops-second-brain
   fi
 done
 SECOND_BRAIN_DIR="$_SB_FOUND"
+# Явно переданный оператором токен имеет приоритет над автовыдачей.
+AGENT_BEARER="${NEW_AGENT_BEARER:-${AGENT_BEARER:-}}"
+
+# issue-agent-token.py читает $SECOND_BRAIN_DIR/.env с доступом к БД, а он
+# 0600 second_brain:second_brain. Агенты ходят под своим пользователем, поэтому
+# ПРЯМОЙ вызов venv-питона падал с PermissionError -- канонический сценарий
+# «Developer раскатывает остальных» упирался в это на втором шаге. Порядок
+# теперь как в labops-second-brain/docs/setup.md: сперва sudo -u second_brain,
+# и лишь потом прямой вызов (он сработает, если установку ведёт root/владелец).
+issue_token() {
+  local err_file="$1"
+  if sudo -n -u second_brain "$SECOND_BRAIN_DIR/.venv/bin/python" \
+       "$SECOND_BRAIN_DIR/scripts/issue-agent-token.py" \
+       --agent "$AGENT_ID" --scopes "$AGENT_SCOPES" 2>>"$err_file" | tail -1; then
+    return 0
+  fi
+  "$SECOND_BRAIN_DIR/.venv/bin/python" "$SECOND_BRAIN_DIR/scripts/issue-agent-token.py" \
+    --agent "$AGENT_ID" --scopes "$AGENT_SCOPES" 2>>"$err_file" | tail -1
+}
+
 if [ -z "${AGENT_BEARER:-}" ] && [ -n "$SECOND_BRAIN_DIR" ]; then
   ok "Выдаю токен через $SECOND_BRAIN_DIR/scripts/issue-agent-token.py"
-  AGENT_BEARER="$("$SECOND_BRAIN_DIR/.venv/bin/python" "$SECOND_BRAIN_DIR/scripts/issue-agent-token.py" \
-                  --agent "$AGENT_ID" --scopes "$AGENT_SCOPES" 2>/dev/null | tail -1)" \
-    || warn "не удалось выдать токен автоматически"
+  _tok_err="$(mktemp)"
+  AGENT_BEARER="$(issue_token "$_tok_err" || true)"
+  if [ -z "${AGENT_BEARER:-}" ]; then
+    # Настоящую причину раньше съедал 2>/dev/null, и оператор видел голое
+    # «не удалось» без единой подсказки, куда смотреть.
+    warn "не удалось выдать токен автоматически. Причина:"
+    sed -e 's/^/      /' "$_tok_err" | tail -5
+    warn "выдайте вручную: sudo -u second_brain $SECOND_BRAIN_DIR/.venv/bin/python \\"
+    echo "        $SECOND_BRAIN_DIR/scripts/issue-agent-token.py --agent $AGENT_ID --scopes '$AGENT_SCOPES'"
+    echo "      и передайте его сюда через NEW_AGENT_BEARER=<токен>"
+  fi
+  rm -f "$_tok_err"
 fi
 if [ -z "${AGENT_BEARER:-}" ]; then
   if [ -n "$SECOND_BRAIN_DIR" ]; then
@@ -420,6 +468,43 @@ else
   warn "автостарт пропущен (AUTOSTART=0)"
 fi
 
+# ── 6.5. Живая сессия должна перечитать конфиг ──────────────────
+# ЗАЧЕМ: claude читает .mcp.json/settings.json ОДИН раз, при старте сессии.
+# При донастройке существующего агента (REUSE_EXISTING=1, довыдача токена)
+# файлы обновлялись, сессия оставалась старой -- и smoke печатал «полностью
+# рабочий», проверяя токен ИЗ ПАМЯТИ, а не тот, с которым реально работает
+# агент. Проверено на живом хосте 03.09.2026: агент молча ходил в мозг с
+# CHANGE_ME. `systemctl restart` тут не помощник -- сессия лежит в общем
+# tmux-сервере вне cgroup юнита; снимаем сессию, watchdog поднимет заново.
+SESSION="labops-$AGENT_ID"
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  _pane_pid="$(tmux list-panes -t "$SESSION" -F '#{pane_pid}' 2>/dev/null | head -1)"
+  _sess_age="$(ps -o etimes= -p "${_pane_pid:-0}" 2>/dev/null | tr -d ' ')"
+  _stale=0
+  for f in "$WORKSPACE/.mcp.json" "$WORKSPACE/settings.json" "$WORKSPACE/CLAUDE.md"; do
+    [ -f "$f" ] || continue
+    _file_age=$(( $(date +%s) - $(stat -c %Y "$f") ))
+    # Файл моложе сессии => сессия его не видела.
+    if [ -n "${_sess_age:-}" ] && [ "$_file_age" -lt "$_sess_age" ]; then _stale=1; fi
+  done
+  if [ "$_stale" = "1" ]; then
+    say "6.5. Перечитывание конфига живой сессией"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    _w=0
+    while [ "$_w" -lt 90 ]; do
+      sleep 5; _w=$((_w + 5))
+      tmux has-session -t "$SESSION" 2>/dev/null && break
+    done
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      ok "сессия пересоздана за ${_w}с -- конфиг перечитан"
+      sleep 15
+    else
+      warn "сессия не вернулась за ${_w}с"
+      DEGRADED+=("сессия агента не поднялась после обновления конфига -- проверьте systemctl status claude-agent-$AGENT_ID")
+    fi
+  fi
+fi
+
 # ── 7. Smoke-тест ───────────────────────────────────────────────
 say "7. Smoke-тест"
 # ЗАЧЕМ ХЕЛПЕР: FastMCP не принимает одиночный POST -- без initialize и
@@ -465,6 +550,19 @@ fi
 # 7c. сессия поднимается
 if [ "${AUTOSTART:-1}" = "1" ] && command -v systemctl >/dev/null; then
   systemctl is-active --quiet "claude-agent-$AGENT_ID.service" && ok "сервис активен" || { warn "сервис не active"; FAIL=1; }
+fi
+# 7c-bis. Сессия не должна быть СТАРШЕ своего .mcp.json. Разница между «токен
+# верный» и «агент верный»: остальные пробы бьют токеном из памяти скрипта, а
+# живая сессия могла стартовать до того, как этот токен лёг в файл.
+if tmux has-session -t "labops-$AGENT_ID" 2>/dev/null && [ -f "$WORKSPACE/.mcp.json" ]; then
+  _pp="$(tmux list-panes -t "labops-$AGENT_ID" -F '#{pane_pid}' 2>/dev/null | head -1)"
+  _sa="$(ps -o etimes= -p "${_pp:-0}" 2>/dev/null | tr -d ' ')"
+  _fa=$(( $(date +%s) - $(stat -c %Y "$WORKSPACE/.mcp.json") ))
+  if [ -n "${_sa:-}" ] && [ "$_fa" -lt "$_sa" ]; then
+    warn "сессия стартовала РАНЬШЕ последней правки .mcp.json — агент работает со старым конфигом"; FAIL=1
+  else
+    ok "сессия не старше конфига — .mcp.json прочитан текущей сессией"
+  fi
 fi
 # 7d. полноценная сессия (то, что реально запускает start-agent.sh) авторизована.
 # Никакого claude -p здесь: headless-вызовы бьют по отдельному SDK-credit
