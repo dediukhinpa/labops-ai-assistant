@@ -12,6 +12,14 @@ User=__USER__
 # watchdog.sh keeps the tmux session `labops-__AGENT__` alive and restarts a
 # wedged turn. It launches start-agent.sh on first boot.
 ExecStart=__ORCH__/watchdog.sh __AGENT__
+# Снятие агента -- явное и адресное. Сессия claude живёт в ОБЩЕМ tmux-сервере,
+# а он попадает в cgroup того агента, который поднял его первым, поэтому
+# дефолтный KillMode=control-group бил мимо: у не-владельца сессия переживала
+# рестарт (правки конфига молча не доезжали), а у владельца стоп уносил сессии
+# всего роя разом. KillMode=process оставляет чужие процессы в покое, ExecStop
+# снимает ровно своего агента -- сессию, поллер доски и осиротевший bun-канал.
+ExecStop=__ORCH__/stop-agent.sh __AGENT__
+KillMode=process
 Restart=on-failure
 RestartSec=15
 StandardOutput=append:__LAB__/__AGENT__/logs/watchdog.log

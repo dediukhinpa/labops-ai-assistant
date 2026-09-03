@@ -196,6 +196,15 @@ Mode (B) fires **only** on a non-empty input field — otherwise a clean idle pr
 
 </details>
 
+> **Why the unit needs an explicit `ExecStop`.** The tmux server is shared by the
+> whole swarm, and it lands in the cgroup of whichever agent started it first — so
+> systemd's default `KillMode=control-group` misses the session it means to kill.
+> Before this was fixed, `systemctl restart claude-agent-<non-owner>` left the old
+> session running (a config edit silently never reached the agent), while stopping
+> the *owner* took down every agent's session at once. The unit now runs with
+> `KillMode=process` plus `ExecStop=stop-agent.sh <agent>`: each unit tears down
+> its own agent and leaves the shared server and its neighbours alone.
+
 > [!NOTE]
 > **Operator alerts.** On each of these events the watchdog also pings the Operator in Telegram (via the agent's own bot, `tg-send.sh` → `lib/notify.sh`): a session restart **with its cause**, a lost/unrendered prompt, an unsubmitted ("stuck") prompt, and a reaped orphaned channel server. Alerts are best-effort (a failed send never disrupts the watchdog) and throttled per-message, so flapping doesn't spam. Toggle with `WATCHDOG_TG_ALERTS` (default `1`), tune `WATCHDOG_ALERT_COOLDOWN` (seconds, default `300`), or route to a dedicated chat with `WATCHDOG_ALERT_CHAT_ID`. The same `lib/notify.sh` also powers **`second_brain-monitor.sh`** — a systemd timer that watches the MCP servers and workers (`systemctl is-active` + an HTTP `/mcp` probe that catches *wedged-but-alive*, + restart-loop detection) and alerts on the same channel; point `MONITOR_AGENT` at the agent whose bot relays ops alerts.
 
@@ -361,6 +370,7 @@ Most scripts in [`orchestration/`](orchestration/) are trigger-driven "one-shots
 | `reflect-error-pattern.sh` | Stop | nudge to record an error-pattern on a correction from the Operator |
 | `update-rules.sh`, `tg-send.sh`, `second_brain-heartbeat.py` | helpers | rules updates, sending to TG, heartbeat client |
 | `lib/task-poller-launch.sh` | sourced by `watchdog.sh` / `start-agent.sh` | starts and supervises the per-agent board poller (the one long-running exception) |
+| `stop-agent.sh <agent>` | the unit's `ExecStop` | tears down exactly one agent — its tmux session, its board poller, its orphaned bun channel |
 
 </details>
 
