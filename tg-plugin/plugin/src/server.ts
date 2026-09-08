@@ -1107,7 +1107,23 @@ try {
 // the logical wait.
 // ─────────────────────────────────────────────────────────────────────
 const confirmPolicyPath = process.env.CONFIRM_POLICY_PATH ?? ''
-const confirmRegistry = createConfirmRegistry(config.ask_user_question.timeout_ms)
+// The registry MUST time out before the hook does, or the operator is lied to.
+// The chain is: registry wait < hook HTTP timeout (310s) <= the CLI's own hook
+// timeout (310s, settings.json). ask_user_question.timeout_ms is operator
+// tunable via TELEGRAM_ASK_USER_QUESTION_TIMEOUT_MS; raised past the ceiling
+// it would leave a live card in Telegram after the hook had already denied and
+// the call had been dropped — a tap would answer "Подтверждено" for something
+// that never ran. Clamp instead.
+const CONFIRM_MAX_WAIT_MS = 300_000
+const confirmRegistry = createConfirmRegistry(
+  Math.min(config.ask_user_question.timeout_ms, CONFIRM_MAX_WAIT_MS),
+)
+if (config.ask_user_question.timeout_ms > CONFIRM_MAX_WAIT_MS) {
+  log.warn('confirm wait clamped below the hook timeout', {
+    configured_ms: config.ask_user_question.timeout_ms,
+    used_ms: CONFIRM_MAX_WAIT_MS,
+  })
+}
 
 // Boot-time check. A typo'd or unmounted policy path is fail-closed, which is
 // correct but silent: the operator would learn about it from the first denied

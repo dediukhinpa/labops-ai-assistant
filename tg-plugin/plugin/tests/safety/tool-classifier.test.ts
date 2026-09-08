@@ -60,7 +60,8 @@ describe('classifyByVerb', () => {
 // ─────────────────────────────────────────────────────────────────────
 
 import {
-  decideGate, httpMethodFromBash, extractUrls, urlActionPart,
+  decideGate, httpMethodFromBash, httpMethodFromClient, extractUrls, urlActionPart,
+  classifyUrl,
 } from '../../src/safety/tool-classifier.js'
 import type { ConfirmPolicy } from '../../src/safety/confirm-policy.js'
 
@@ -419,5 +420,82 @@ describe('decideGate — protected-file match is by path segment', () => {
     expect(decideGate('Write', {
       file_path: '/home/u/src/settings.jsonc',
     }, POLICY).action).toBe('allow')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// Edge-case sweep (2026-09-08). Each block below is a class of call that
+// was probed against the shipped policy and behaved wrongly.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('curl is not the only HTTP client', () => {
+  // The spec's own target class — 1C, HH.ru, Yandex Disk over raw REST — is
+  // reached from python as often as from curl. Every command here deleted or
+  // wrote a record with no confirmation before httpMethodFromClient existed.
+  const GATED = [
+    'wget --method=DELETE https://api.example.com/v1/leads/42',
+    'http DELETE https://api.example.com/v1/leads/42',
+    'https POST https://api.example.com/v1/leads',
+    `python3 -c "import requests; requests.delete('https://api.example.com/v1/leads/42')"`,
+    `python3 -c "import httpx; httpx.post('https://api.example.com/v1/leads', json={})"`,
+    `node -e "fetch('https://api.example.com/v1/leads/42',{method:'DELETE'})"`,
+  ]
+  for (const command of GATED) {
+    test(`${command.slice(0, 46)} prompts`, () => {
+      expect(decideGate('Bash', { command }, POLICY).action).toBe('confirm')
+    })
+  }
+
+  test('the non-curl patterns need a url, so ordinary code talk is silent', () => {
+    expect(decideGate('Bash', { command: 'git commit -m "fix .post() handler"' }, POLICY).action)
+      .toBe('allow')
+    expect(httpMethodFromClient('git commit -m "fix .post() handler"')).toBe('POST')
+  })
+
+  test('a read method from another client does not prompt', () => {
+    expect(decideGate('Bash', {
+      command: 'http GET https://api.example.com/v1/leads',
+    }, POLICY).action).toBe('allow')
+  })
+})
+
+describe('classifyUrl — the verb is read only where an operation can be', () => {
+  test('an RPC verb at the end of the path counts', () => {
+    expect(classifyUrl('https://p.bitrix24.ru/rest/1/tok/crm.deal.delete?ID=1').cls)
+      .toBe('destroy')
+    expect(classifyUrl('https://api.example.com/v1/leads/42/delete').cls).toBe('destroy')
+    expect(classifyUrl('https://api.example.com/v1/deleteLead?id=42').cls).toBe('destroy')
+  })
+
+  test('an operation-shaped query key counts — 1C puts the verb there', () => {
+    expect(classifyUrl('https://1c.example.ru/hs/api?action=delete&id=7').cls).toBe('destroy')
+    expect(classifyUrl('https://1c.example.ru/hs/api?cmd=update&id=7').cls).toBe('mutate')
+  })
+
+  test('a search term is data, not an operation', () => {
+    expect(classifyUrl('https://api.example.com/search?q=delete').cls).toBe('unknown')
+    expect(classifyUrl('https://api.github.com/search/issues?q=repo:x+update').cls)
+      .toBe('unknown')
+  })
+
+  test('a verb buried mid-phrase is prose, not an operation', () => {
+    expect(classifyUrl('https://docs.example.com/guide/how-to-remove-a-user').cls)
+      .toBe('unknown')
+  })
+
+  test('a query-only url still yields its action part', () => {
+    expect(urlActionPart('https://1c.example.ru?action=delete')).toBe('?action=delete')
+  })
+})
+
+describe('decideGate — the scope boundary does not hinge on letter case', () => {
+  test('an upper-case MCP prefix is still an MCP call', () => {
+    expect(decideGate('MCP__amocrm__delete_lead', {}, POLICY).action).toBe('confirm')
+  })
+
+  test('a lower-case bash is still Bash', () => {
+    expect(decideGate('bash', {
+      command: 'curl -XDELETE https://api.example.com/users/42',
+    }, POLICY).action).toBe('confirm')
   })
 })

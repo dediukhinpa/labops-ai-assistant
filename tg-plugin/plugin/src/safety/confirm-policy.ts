@@ -53,6 +53,15 @@ export function loadConfirmPolicy(path: string): PolicyLoadResult {
   const overrides = (d.overrides ?? {}) as Record<string, unknown>
   const bash = (d.bash ?? {}) as Record<string, unknown>
 
+  // An empty confirm pattern is a substring of every command, so it would
+  // put a confirmation on `ls`. That is a typo, not a policy — reject it
+  // loudly rather than drown the client in cards until someone disables the
+  // gate. The startup probe surfaces this before the first tool call.
+  const patterns = asStringArray(bash.confirm_patterns)
+  if (patterns.some(pattern => pattern.trim() === '')) {
+    return { ok: false, reason: 'bash.confirm_patterns contains an empty pattern' }
+  }
+
   return {
     ok: true,
     policy: {
@@ -61,7 +70,7 @@ export function loadConfirmPolicy(path: string): PolicyLoadResult {
         allow: asStringArray(overrides.allow),
         deny: asStringArray(overrides.deny),
       },
-      bash: { confirmPatterns: asStringArray(bash.confirm_patterns) },
+      bash: { confirmPatterns: patterns },
     },
   }
 }

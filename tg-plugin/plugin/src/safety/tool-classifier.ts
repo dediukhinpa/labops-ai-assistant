@@ -141,6 +141,102 @@ export function httpMethodFromBash(command: string): string | null {
   return null
 }
 
+const ANY_METHOD = 'GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE'
+
+/**
+ * The same question for everything that is not curl.
+ *
+ * curl is not the only way an agent reaches a REST API, and the spec's own
+ * target class — 1C, HH.ru, Yandex Disk over raw REST — is reached just as
+ * often from a python one-liner. Before this existed, every one of these
+ * deleted a record with no confirmation:
+ *
+ *   wget --method=DELETE https://api/v1/leads/42
+ *   http DELETE https://api/v1/leads/42
+ *   python3 -c "import requests; requests.delete('https://api/v1/leads/42')"
+ *   node -e "fetch('https://api/v1/leads/42',{method:'DELETE'})"
+ *
+ * Every pattern here demands a shape that only an HTTP call produces, and
+ * the caller applies them only to commands that contain a URL, so ordinary
+ * shell work cannot trip them.
+ */
+export function httpMethodFromClient(command: string): string | null {
+  // wget, and anything else spelling the flag out.
+  const flag = new RegExp(`--method[=\\s]+(${ANY_METHOD})`, 'i').exec(command)
+  if (flag && flag[1]) return flag[1].toUpperCase()
+  // An inline options object or kwarg: {method: 'DELETE'}, method="POST".
+  const inline = new RegExp(`\\bmethod\\s*[:=]\\s*['"\`](${ANY_METHOD})['"\`]`, 'i')
+    .exec(command)
+  if (inline && inline[1]) return inline[1].toUpperCase()
+  // httpie: `http DELETE <url>`, `https POST <url>`.
+  const httpie = new RegExp(`(?:^|[\\s;|&(])https?\\s+(?:-[^\\s]+\\s+)*(${ANY_METHOD})\\s`, '')
+    .exec(command)
+  if (httpie && httpie[1]) return httpie[1].toUpperCase()
+  // Client-library call: requests.delete(...), httpx.post(...), axios.put(...).
+  const sdk = /\.(delete|post|put|patch)\s*\(/i.exec(command)
+  if (sdk && sdk[1]) return sdk[1].toUpperCase()
+  return null
+}
+
+// Query keys that name an operation. Legacy business APIs — 1C HTTP services
+// above all — put the verb in the query rather than the path:
+// `?action=delete&id=7`. Every other key's value is data, and data routinely
+// contains these words: `?q=delete` is a search, not a deletion.
+const OPERATION_QUERY_KEYS = new Set([
+  'action', 'method', 'cmd', 'command', 'op', 'operation', 'do', 'mode',
+])
+
+/**
+ * Classify a URL by the verb in it, looking only where an operation can be.
+ *
+ * Two narrowings, both paid for by observed false positives:
+ *
+ *  * Only the LAST path segment is read, and only its first or last token.
+ *    RPC URLs put the verb at the end (`crm.deal.delete`, `/leads/42/delete`,
+ *    `/deleteLead`); prose paths bury it mid-phrase, and
+ *    `/guide/how-to-remove-a-user` is a documentation page, not a deletion.
+ *  * In the query, only operation-shaped keys are read, so `?action=delete`
+ *    counts and `?q=delete` does not.
+ */
+export function classifyUrl(url: string): VerbVerdict {
+  const action = urlActionPart(url)
+  const none: VerbVerdict = {
+    cls: 'unknown', reason: 'no verb in url', code: 'verb-unknown', detail: '',
+  }
+  if (action === '') return none
+
+  const [pathPart = '', queryPart = ''] = action.split(/[?#]/, 2)
+  const candidates: string[] = []
+
+  const lastSegment = pathPart.split('/').filter(seg => seg !== '').pop() ?? ''
+  if (lastSegment !== '') {
+    const tokens = tokenizeToolName(lastSegment)
+    const first = tokens[0]
+    const last = tokens[tokens.length - 1]
+    if (first !== undefined) candidates.push(first)
+    if (last !== undefined) candidates.push(last)
+  }
+
+  for (const pair of queryPart.split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq <= 0) continue
+    if (!OPERATION_QUERY_KEYS.has(pair.slice(0, eq).toLowerCase())) continue
+    candidates.push(...tokenizeToolName(pair.slice(eq + 1)))
+  }
+
+  for (const token of candidates) {
+    if (DESTROY_VERBS.has(token)) {
+      return { cls: 'destroy', reason: `destructive verb "${token}"`, code: 'url-verb', detail: token }
+    }
+  }
+  for (const token of candidates) {
+    if (MUTATE_VERBS.has(token)) {
+      return { cls: 'mutate', reason: `mutating verb "${token}"`, code: 'url-verb', detail: token }
+    }
+  }
+  return none
+}
+
 // Pull out anything shaped like a URL so the verb table can be applied to it
 // alone. Trailing quotes and shell punctuation are stripped.
 export function extractUrls(command: string): string[] {
@@ -172,9 +268,9 @@ const ASSET_EXTENSIONS = new Set([
  */
 export function urlActionPart(url: string): string {
   const afterScheme = url.slice(url.indexOf('://') + 3)
-  const slash = afterScheme.indexOf('/')
-  if (slash === -1) return ''
-  const rest = afterScheme.slice(slash)
+  const cut = afterScheme.search(/[/?#]/)
+  if (cut === -1) return ''
+  const rest = afterScheme.slice(cut)
   const path = rest.split(/[?#]/)[0] ?? ''
   const lastSegment = path.split('/').filter(seg => seg !== '').pop() ?? ''
   const dot = lastSegment.lastIndexOf('.')
@@ -233,7 +329,8 @@ export function decideGate(
   // while Glob/Grep/Task carry no known verb at all and would fall into the
   // "unknown → ask" branch. Without this scope rule the gate would interrupt
   // every session, get switched off within a day, and protect nothing.
-  if (!toolName.startsWith('mcp__') && toolName !== 'Bash') {
+  const lowerName = toolName.toLowerCase()
+  if (!lowerName.startsWith('mcp__') && lowerName !== 'bash') {
     // One exception: a write aimed at the gate's own configuration. Bash is
     // covered by confirm_patterns further down; the file-editing tools would
     // otherwise walk straight past and disable the gate in one call.
@@ -283,17 +380,16 @@ export function decideGate(
     }
   }
   // 5. Bash — only HTTP-shaped or explicitly listed commands are gated.
-  if (toolName === 'Bash') {
+  if (lowerName === 'bash') {
     const command = typeof toolInput.command === 'string' ? toolInput.command : ''
     // 5a. Verb in the URL. Business APIs ignore REST semantics: Bitrix24
     // serves crm.deal.delete over GET, 1C HTTP services invent their own
     // conventions. Method alone would wave those through. Tokenize ONLY the
     // urls — running the verb table over the whole command would flag
     // `git add` on the verb "add" and bury the operator in prompts.
-    for (const url of extractUrls(command)) {
-      const action = urlActionPart(url)
-      if (action === '') continue
-      const v = classifyByVerb(action)
+    const urls = extractUrls(command)
+    for (const url of urls) {
+      const v = classifyUrl(url)
       if (v.cls === 'destroy' || v.cls === 'mutate') {
         return {
           action: 'confirm', reason: `url ${v.reason}`, cls: v.cls,
@@ -301,7 +397,11 @@ export function decideGate(
         }
       }
     }
+    // 5b. The method, from curl flags or from any other client. The non-curl
+    // patterns are consulted only when the command actually contains a URL —
+    // that is what keeps `.post(` from firing on unrelated code.
     const method = httpMethodFromBash(command)
+      ?? (urls.length > 0 ? httpMethodFromClient(command) : null)
     if (method !== null && WRITE_METHODS.has(method)) {
       const cls: ToolClass = method === 'DELETE' ? 'destroy' : 'mutate'
       return {

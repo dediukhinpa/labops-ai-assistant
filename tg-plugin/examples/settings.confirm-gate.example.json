@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "CONFIRM_WEBHOOK_URL='http://127.0.0.1:<port>/hooks/confirm/request' bun '<repo>/tg-plugin/plugin/scripts/confirm-hook.ts'",
+            "command": "CONFIRM_WEBHOOK_URL='http://127.0.0.1:<port>/hooks/confirm/request' bash '<repo>/tg-plugin/plugin/scripts/confirm-hook.sh'",
             "timeout": 310
           }
         ]

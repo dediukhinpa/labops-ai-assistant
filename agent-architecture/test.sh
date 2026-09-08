@@ -744,10 +744,10 @@ TG_PLUGIN_ROOT="$(cd .. 2>/dev/null && pwd)/tg-plugin"
 if [ ! -d "$TG_PLUGIN_ROOT" ]; then
   printf "${Y}—${N} %s\n" "tg-plugin рядом не найден — проверка confirm-gate пропущена"
 else
-  if [ -f "$TG_PLUGIN_ROOT/plugin/scripts/confirm-hook.ts" ]; then
-    ok "confirm-hook.ts на месте"
+  if [ -f "$TG_PLUGIN_ROOT/plugin/scripts/confirm-hook.sh" ]; then
+    ok "confirm-hook.sh на месте"
   else
-    bad "confirm-hook.ts отсутствует — гейт не установлен, изменяющие вызовы проходят молча"
+    bad "confirm-hook.sh отсутствует — гейт не установлен, изменяющие вызовы проходят молча"
   fi
 
   # Политика обязана парситься: при ошибке загрузки гейт fail-closed

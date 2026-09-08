@@ -81,3 +81,29 @@ describe('matchesGlob', () => {
     expect(matchesGlob('axb', 'a.b')).toBe(false)
   })
 })
+
+describe('loadConfirmPolicy — patterns that would drown the operator', () => {
+  test('an empty confirm pattern is rejected, not silently applied', async () => {
+    const file = `${Bun.env.TMPDIR ?? '/tmp'}/confirm-policy-empty-${Date.now()}.yaml`
+    await Bun.write(file, 'mode: enforce\nbash:\n  confirm_patterns:\n    - ""\n')
+    const r = loadConfirmPolicy(file)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toContain('empty pattern')
+  })
+
+  test('a whitespace-only pattern is the same mistake', async () => {
+    const file = `${Bun.env.TMPDIR ?? '/tmp'}/confirm-policy-blank-${Date.now()}.yaml`
+    await Bun.write(file, 'mode: enforce\nbash:\n  confirm_patterns:\n    - "   "\n')
+    expect(loadConfirmPolicy(file).ok).toBe(false)
+  })
+
+  test('mode: off survives YAML, which used to read bare off as false', () => {
+    // js-yaml 4 keeps it a string; pinned because a regression here would
+    // reject the documented kill switch and deny every call.
+    const file = `${Bun.env.TMPDIR ?? '/tmp'}/confirm-policy-off-${Date.now()}.yaml`
+    Bun.write(file, 'mode: off\n')
+    const r = loadConfirmPolicy(file)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.policy.mode).toBe('off')
+  })
+})

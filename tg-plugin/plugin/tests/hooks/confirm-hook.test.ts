@@ -237,3 +237,55 @@ describe('confirm-hook end to end with the plugin down', () => {
     expect(r.reason).toContain('плагин недоступен')
   }, 15000)
 })
+
+describe('confirm-hook.sh launcher', () => {
+  // The gate is registered as a bash launcher, not as `bun confirm-hook.ts`,
+  // because bun lives in ~/.bun/bin and that is not in systemd's default
+  // PATH. A hook that cannot start writes nothing, and empty stdout means
+  // "no opinion" — the call proceeds. A gate that silently never runs is
+  // worse than no gate, because it is believed.
+  const SHIM = new URL('../../scripts/confirm-hook.sh', import.meta.url).pathname
+
+  async function runShim(env: Record<string, string>): Promise<string> {
+    const proc = Bun.spawn(['bash', SHIM], {
+      stdin: new TextEncoder().encode(JSON.stringify({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Read',
+        tool_input: { file_path: '/tmp/x.ts' },
+      })),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env,
+    })
+    const out = await new Response(proc.stdout).text()
+    await proc.exited
+    return out
+  }
+
+  test('with bun on PATH it runs the hook and allows a read', async () => {
+    const out = await runShim({
+      ...process.env as Record<string, string>,
+      CONFIRM_POLICY_PATH: POLICY_PATH,
+      TELEGRAM_WEBHOOK_PORT: '59999',
+    })
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('allow')
+  }, 15000)
+
+  test('without bun, but with a channel configured, it denies loudly', async () => {
+    const out = await runShim({
+      HOME: '/nonexistent',
+      PATH: '/usr/bin:/bin',
+      TELEGRAM_WEBHOOK_PORT: '59999',
+    })
+    const parsed = JSON.parse(out).hookSpecificOutput
+    expect(parsed.permissionDecision).toBe('deny')
+    expect(parsed.permissionDecisionReason).toContain('bun')
+  }, 15000)
+
+  test('without bun and without a channel it stays out of the way', async () => {
+    // A workspace that never had the gate must not be bricked by a stray
+    // hook entry. Same provisioning rule the hook itself follows.
+    const out = await runShim({ HOME: '/nonexistent', PATH: '/usr/bin:/bin' })
+    expect(out).toBe('')
+  }, 15000)
+})
