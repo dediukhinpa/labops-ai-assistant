@@ -8,7 +8,13 @@ import { describe, expect, test } from 'bun:test'
 import { createConfirmRegistry } from '../../src/webhook/confirm-route.js'
 import type { GateDecision } from '../../src/safety/tool-classifier.js'
 
-const D: GateDecision = { action: 'confirm', reason: 'destructive verb "delete"', cls: 'destroy' }
+const D: GateDecision = {
+  action: 'confirm',
+  reason: 'destructive verb "delete"',
+  cls: 'destroy',
+  code: 'verb-destroy',
+  detail: 'delete',
+}
 
 describe('createConfirmRegistry', () => {
   test('settle(allow) resolves the waiter', async () => {

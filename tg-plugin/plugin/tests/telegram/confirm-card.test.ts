@@ -5,13 +5,18 @@
 // tap on one relay can never be consumed by the other.
 
 import { describe, expect, test } from 'bun:test'
-import { renderConfirmCard, parseConfirmCallback } from '../../src/telegram/confirm-card.js'
+import {
+  renderConfirmCard, renderConfirmDetails, parseConfirmCallback, reasonInRussian,
+} from '../../src/telegram/confirm-card.js'
+import { redactSecrets } from '../../src/safety/redact.js'
 import type { GateDecision } from '../../src/safety/tool-classifier.js'
 
 const DESTROY: GateDecision = {
   action: 'confirm',
   reason: 'destructive verb "delete"',
   cls: 'destroy',
+  code: 'verb-destroy',
+  detail: 'delete',
 }
 
 describe('renderConfirmCard', () => {
@@ -79,5 +84,76 @@ describe('renderConfirmDetails', () => {
     const d = renderConfirmDetails('mcp__crm__delete_deal', DESTROY, '{}', 'abcde')
     const data = d.replyMarkup.inline_keyboard.flat().map(b => b.callback_data)
     expect(data.some(x => x?.startsWith('confirm:more:'))).toBe(false)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// The card is client-facing. Two invariants that a rendered demo caught
+// only after the code was already written:
+//   1. the reason line must be Russian, not the English audit string;
+//   2. the "Подробнее" view prints tool_input verbatim, so whatever sends
+//      it must redact first — that view routinely carries a REST URL with
+//      a webhook token in the path.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('reasonInRussian', () => {
+  test('destructive verb reads as Russian prose, not the audit string', () => {
+    const line = reasonInRussian(DESTROY)
+    expect(line).toBe('в имени инструмента разрушающий глагол «delete»')
+    expect(line).not.toContain('destructive verb')
+  })
+
+  test('a verb found in the URL says so, and keeps the destroy wording', () => {
+    expect(reasonInRussian({
+      action: 'confirm', reason: 'url destructive verb "delete"', cls: 'destroy',
+      code: 'url-verb', detail: 'delete',
+    })).toBe('в адресе запроса разрушающий глагол «delete»')
+  })
+
+  test('an unknown verb explains why it is asking at all', () => {
+    expect(reasonInRussian({
+      action: 'confirm', reason: 'no known verb in tool name', cls: 'unknown',
+      code: 'verb-unknown', detail: '',
+    })).toBe('глагол не распознан — по умолчанию спрашиваем')
+  })
+
+  test('every reason code that can reach a card renders without Latin leftovers', () => {
+    const cases: GateDecision[] = [
+      { action: 'confirm', reason: '', cls: 'mutate', code: 'verb-mutate', detail: 'update' },
+      { action: 'confirm', reason: '', cls: 'mutate', code: 'http-method', detail: 'PATCH' },
+      { action: 'confirm', reason: '', cls: 'destroy', code: 'bash-http-method', detail: 'DELETE' },
+      { action: 'confirm', reason: '', cls: 'mutate', code: 'bash-pattern', detail: 'confirm-policy.yaml' },
+      { action: 'confirm', reason: '', cls: 'mutate', code: 'protected-file', detail: 'settings.json' },
+      { action: 'deny', reason: '', cls: 'destroy', code: 'override-deny', detail: 'mcp__x__drop_*' },
+    ]
+    for (const c of cases) {
+      const line = reasonInRussian(c)
+      // Strip the detail (a tool name / method / filename is legitimately
+      // Latin); what remains must be Russian.
+      const prose = line.replaceAll(c.detail, '')
+      expect(prose).toMatch(/[а-яА-ЯёЁ]/)
+      expect(prose).not.toMatch(/[a-z]{4,}/)
+    }
+  })
+})
+
+describe('details view redaction wiring', () => {
+  test('server.ts redacts the details text before editMessageText', async () => {
+    // A source-level guard, deliberately. The renderer is pure and cannot
+    // know about secrets; the only place the invariant lives is the call
+    // site. If someone drops the redactSecrets call, this fails loudly
+    // rather than shipping a webhook token to Telegram.
+    const src = await Bun.file(new URL('../../src/server.ts', import.meta.url)).text()
+    const branch = src.slice(src.indexOf('const confirmTap = parseConfirmCallback'))
+    const upToEdit = branch.slice(0, branch.indexOf('await ctx.editMessageText'))
+    expect(upToEdit).toContain('redactSecrets(details.text, apiSecrets)')
+  })
+
+  test('redaction survives the details rendering shape', () => {
+    const cmd = JSON.stringify({
+      command: "curl 'https://portal.example.ru/rest/1/s3cr3tw3bh00kc0d3v4lu3xyz/crm.deal.delete?ID=1'",
+    })
+    const rendered = renderConfirmDetails('Bash', DESTROY, cmd, 'abcde')
+    expect(redactSecrets(rendered.text)).not.toContain('s3cr3tw3bh00kc0d3v4lu3xyz')
   })
 })

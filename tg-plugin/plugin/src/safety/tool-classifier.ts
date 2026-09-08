@@ -39,18 +39,38 @@ export function tokenizeToolName(toolName: string): string[] {
     .map(t => t.toLowerCase())
 }
 
-export function classifyByVerb(toolName: string): { cls: ToolClass; reason: string } {
+export type VerbVerdict = {
+  cls: ToolClass
+  /** Audit string. English and stable — it lands in logs/permissions.jsonl. */
+  reason: string
+  code: ReasonCode
+  /** The matched token, method, or pattern. Empty when nothing matched. */
+  detail: string
+}
+
+export function classifyByVerb(toolName: string): VerbVerdict {
   const tokens = tokenizeToolName(toolName)
   for (const t of tokens) {
-    if (DESTROY_VERBS.has(t)) return { cls: 'destroy', reason: `destructive verb "${t}"` }
+    if (DESTROY_VERBS.has(t)) {
+      return { cls: 'destroy', reason: `destructive verb "${t}"`, code: 'verb-destroy', detail: t }
+    }
   }
   for (const t of tokens) {
-    if (MUTATE_VERBS.has(t)) return { cls: 'mutate', reason: `mutating verb "${t}"` }
+    if (MUTATE_VERBS.has(t)) {
+      return { cls: 'mutate', reason: `mutating verb "${t}"`, code: 'verb-mutate', detail: t }
+    }
   }
   for (const t of tokens) {
-    if (READ_VERBS.has(t)) return { cls: 'read', reason: `read-only verb "${t}"` }
+    if (READ_VERBS.has(t)) {
+      return { cls: 'read', reason: `read-only verb "${t}"`, code: 'verb-read', detail: t }
+    }
   }
-  return { cls: 'unknown', reason: 'no known verb in tool name' }
+  return {
+    cls: 'unknown',
+    reason: 'no known verb in tool name',
+    code: 'verb-unknown',
+    detail: '',
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -61,10 +81,34 @@ export function classifyByVerb(toolName: string): { cls: ToolClass; reason: stri
 import type { ConfirmPolicy } from './confirm-policy.js'
 import { matchesGlob } from './confirm-policy.js'
 
+// Why both `reason` and `code`/`detail`: the two consumers want different
+// things. The audit line in logs/permissions.jsonl wants a stable English
+// string it can be grepped by across releases; the Telegram card wants
+// Russian, because a client reads it. Rendering Russian by re-parsing the
+// English string would couple the two forever, so the card renders from
+// `code` + `detail` instead (see telegram/confirm-card.ts).
+export type ReasonCode =
+  | 'mode-off'
+  | 'override-deny'
+  | 'override-allow'
+  | 'protected-file'
+  | 'local-tool'
+  | 'http-method'
+  | 'url-verb'
+  | 'bash-http-method'
+  | 'bash-pattern'
+  | 'plain-bash'
+  | 'verb-destroy'
+  | 'verb-mutate'
+  | 'verb-read'
+  | 'verb-unknown'
+
 export type GateDecision = {
   action: 'allow' | 'confirm' | 'deny'
   reason: string
   cls: ToolClass
+  code: ReasonCode
+  detail: string
 }
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
@@ -99,18 +143,27 @@ export function decideGate(
 ): GateDecision {
   // 1. kill switch
   if (policy.mode === 'off') {
-    return { action: 'allow', reason: 'gate disabled (mode: off)', cls: 'unknown' }
+    return {
+      action: 'allow', reason: 'gate disabled (mode: off)', cls: 'unknown',
+      code: 'mode-off', detail: '',
+    }
   }
   // 2. hard deny
   for (const p of policy.overrides.deny) {
     if (matchesGlob(toolName, p)) {
-      return { action: 'deny', reason: `overrides.deny: ${p}`, cls: 'destroy' }
+      return {
+        action: 'deny', reason: `overrides.deny: ${p}`, cls: 'destroy',
+        code: 'override-deny', detail: p,
+      }
     }
   }
   // 3. explicit allow
   for (const p of policy.overrides.allow) {
     if (matchesGlob(toolName, p)) {
-      return { action: 'allow', reason: `overrides.allow: ${p}`, cls: 'read' }
+      return {
+        action: 'allow', reason: `overrides.allow: ${p}`, cls: 'read',
+        code: 'override-allow', detail: p,
+      }
     }
   }
   // 3a. SCOPE. The gate exists for EXTERNAL integrations: MCP servers and
@@ -134,22 +187,34 @@ export function decideGate(
       const lowerTarget = target.toLowerCase()
       for (const p of policy.bash.confirmPatterns) {
         if (lowerTarget.includes(p.toLowerCase())) {
-          return { action: 'confirm', reason: `правка защищённого файла: ${p}`, cls: 'mutate' }
+          return {
+            action: 'confirm', reason: `write to protected file: ${p}`, cls: 'mutate',
+            code: 'protected-file', detail: p,
+          }
         }
       }
     }
-    return { action: 'allow', reason: 'local tool, not an external integration', cls: 'read' }
+    return {
+      action: 'allow', reason: 'local tool, not an external integration', cls: 'read',
+      code: 'local-tool', detail: '',
+    }
   }
 
   // 4. declared HTTP method on a generic request tool
   const declared = typeof toolInput.method === 'string' ? toolInput.method.toUpperCase() : null
   if (declared !== null) {
     if (READ_METHODS.has(declared)) {
-      return { action: 'allow', reason: `http method ${declared}`, cls: 'read' }
+      return {
+        action: 'allow', reason: `http method ${declared}`, cls: 'read',
+        code: 'http-method', detail: declared,
+      }
     }
     if (WRITE_METHODS.has(declared)) {
       const cls: ToolClass = declared === 'DELETE' ? 'destroy' : 'mutate'
-      return { action: 'confirm', reason: `http method ${declared}`, cls }
+      return {
+        action: 'confirm', reason: `http method ${declared}`, cls,
+        code: 'http-method', detail: declared,
+      }
     }
   }
   // 5. Bash — only HTTP-shaped or explicitly listed commands are gated.
@@ -163,26 +228,44 @@ export function decideGate(
     for (const url of extractUrls(command)) {
       const v = classifyByVerb(url)
       if (v.cls === 'destroy' || v.cls === 'mutate') {
-        return { action: 'confirm', reason: `url ${v.reason}`, cls: v.cls }
+        return {
+          action: 'confirm', reason: `url ${v.reason}`, cls: v.cls,
+          code: 'url-verb', detail: v.detail,
+        }
       }
     }
     const method = httpMethodFromBash(command)
     if (method !== null && WRITE_METHODS.has(method)) {
       const cls: ToolClass = method === 'DELETE' ? 'destroy' : 'mutate'
-      return { action: 'confirm', reason: `bash http method ${method}`, cls }
+      return {
+        action: 'confirm', reason: `bash http method ${method}`, cls,
+        code: 'bash-http-method', detail: method,
+      }
     }
     const lower = command.toLowerCase()
     for (const p of policy.bash.confirmPatterns) {
       if (lower.includes(p.toLowerCase())) {
-        return { action: 'confirm', reason: `bash pattern "${p}"`, cls: 'mutate' }
+        return {
+          action: 'confirm', reason: `bash pattern "${p}"`, cls: 'mutate',
+          code: 'bash-pattern', detail: p,
+        }
       }
     }
-    return { action: 'allow', reason: 'plain bash command', cls: 'read' }
+    return {
+      action: 'allow', reason: 'plain bash command', cls: 'read',
+      code: 'plain-bash', detail: '',
+    }
   }
   // 6/7. verb table; unknown verb confirms rather than passes.
   const verdict = classifyByVerb(toolName)
   if (verdict.cls === 'read') {
-    return { action: 'allow', reason: verdict.reason, cls: 'read' }
+    return {
+      action: 'allow', reason: verdict.reason, cls: 'read',
+      code: verdict.code, detail: verdict.detail,
+    }
   }
-  return { action: 'confirm', reason: verdict.reason, cls: verdict.cls }
+  return {
+    action: 'confirm', reason: verdict.reason, cls: verdict.cls,
+    code: verdict.code, detail: verdict.detail,
+  }
 }

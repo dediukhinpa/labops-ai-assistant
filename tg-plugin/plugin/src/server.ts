@@ -734,10 +734,17 @@ bot.on('callback_query:data', async ctx => {
         const details = renderConfirmDetails(
           entry.toolName, entry.decision, entry.inputPreview, confirmTap.requestId,
         )
+        // The details view prints tool_input verbatim, and that input routinely
+        // carries credentials — a Bitrix24 REST URL embeds the webhook token in
+        // its path, an API call carries an Authorization header. sendMessage
+        // goes through the safe wrapper, but ctx.editMessageText is raw grammY,
+        // so the same redaction has to be applied by hand here. Same reason the
+        // permission relay does it at server.ts:809.
+        const safeDetails = redactSecrets(details.text, apiSecrets)
         // grammY's InlineKeyboardMarkup requires callback_data; our structural
         // type has it optional. Every button we build sets it, so drop the
         // ones that somehow lack it rather than widening grammY's type.
-        await ctx.editMessageText(details.text, {
+        await ctx.editMessageText(safeDetails, {
           parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: details.replyMarkup.inline_keyboard.map(row =>

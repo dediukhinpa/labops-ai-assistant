@@ -20,6 +20,48 @@ function escapeHtml(s: string): string {
   return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 }
 
+// The card is read by the client, not by an engineer, so the reason has to
+// be Russian prose. GateDecision.reason stays English on purpose (it is the
+// audit key in logs/permissions.jsonl); the Russian sentence is rendered here
+// from the structured `code` + `detail` pair instead of by re-parsing it.
+export function reasonInRussian(decision: GateDecision): string {
+  const d = decision.detail
+  switch (decision.code) {
+    case 'verb-destroy':
+      return `в имени инструмента разрушающий глагол «${d}»`
+    case 'verb-mutate':
+      return `в имени инструмента изменяющий глагол «${d}»`
+    case 'verb-read':
+      return `читающий глагол «${d}»`
+    case 'verb-unknown':
+      return 'глагол не распознан — по умолчанию спрашиваем'
+    case 'url-verb':
+      return decision.cls === 'destroy'
+        ? `в адресе запроса разрушающий глагол «${d}»`
+        : `в адресе запроса изменяющий глагол «${d}»`
+    case 'http-method':
+      return `HTTP-метод ${d}`
+    case 'bash-http-method':
+      return `в команде HTTP-метод ${d}`
+    case 'bash-pattern':
+      return `команда совпала с защищённым шаблоном «${d}»`
+    case 'protected-file':
+      return `правка защищённого файла: ${d}`
+    case 'override-deny':
+      return `запрещено политикой: ${d}`
+    case 'override-allow':
+      return `разрешено политикой: ${d}`
+    case 'mode-off':
+      return 'гейт выключен'
+    case 'local-tool':
+      return 'локальный инструмент, не внешняя интеграция'
+    case 'plain-bash':
+      return 'обычная команда'
+    default:
+      return decision.reason
+  }
+}
+
 // 5 lowercase letters a-z minus 'l' — same alphabet as the permission relay,
 // so ids stay unambiguous when read aloud or retyped on a phone.
 export function newConfirmId(): string {
@@ -41,7 +83,7 @@ export function renderConfirmCard(
   const text =
     `<b>${mark} — подтверди операцию</b>\n\n`
     + `инструмент: <code>${escapeHtml(toolName)}</code>\n`
-    + `причина: ${escapeHtml(decision.reason)}\n`
+    + `причина: ${escapeHtml(reasonInRussian(decision))}\n`
     + `id: <code>${requestId}</code>`
   const replyMarkup: InlineKeyboardLike = {
     inline_keyboard: [[
@@ -74,7 +116,7 @@ export function renderConfirmDetails(
   const text =
     `<b>${decision.cls === 'destroy' ? 'УДАЛЕНИЕ' : 'ИЗМЕНЕНИЕ'} — подтверди операцию</b>\n\n`
     + `инструмент: <code>${escapeHtml(toolName)}</code>\n`
-    + `причина: ${escapeHtml(decision.reason)}\n`
+    + `причина: ${escapeHtml(reasonInRussian(decision))}\n`
     + `id: <code>${requestId}</code>\n\n`
     + `аргументы:\n<pre>${escapeHtml(clipped)}</pre>`
   const replyMarkup: InlineKeyboardLike = {
