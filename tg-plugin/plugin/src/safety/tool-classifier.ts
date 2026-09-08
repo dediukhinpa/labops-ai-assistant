@@ -196,6 +196,15 @@ export function decideGate(
       code: 'mode-off', detail: '',
     }
   }
+  // 1a. An envelope with no tool name is an anomaly, not a local tool. Left
+  // to fall through, it would sail past the scope check below and be allowed.
+  // Ask instead — loudly wrong beats silently open.
+  if (toolName === '') {
+    return {
+      action: 'confirm', reason: 'empty tool name in hook envelope', cls: 'unknown',
+      code: 'verb-unknown', detail: '',
+    }
+  }
   // 2. hard deny
   for (const p of policy.overrides.deny) {
     if (matchesGlob(toolName, p)) {
