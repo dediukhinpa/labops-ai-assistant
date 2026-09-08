@@ -164,7 +164,12 @@ AGENT_ID=$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 if [ -d "$LAB_DIR/$AGENT_ID/.claude" ] && [ "${REUSE_EXISTING:-0}" != "1" ]; then
   die "агент '$AGENT_ID' уже существует ($LAB_DIR/$AGENT_ID/.claude). Выберите другое имя, либо REUSE_EXISTING=1 чтобы донастроить поверх (существующие файлы не перезапишутся)."
 fi
-ask PRIMARY_MODEL    "Модель Anthropic — opus / sonnet / haiku (Developer рекоменд.: opus = Opus 4.8)" "opus"
+# Спрашиваем АЛИАС, а не версию. Алиас резолвит сам Claude Code при старте
+# сессии и всегда даёт последнюю модель своего уровня, поэтому подсказку не
+# нужно править с каждым релизом. Раньше здесь стояло «opus = Opus 4.8» —
+# и устарело молча. Полное имя тоже принимается: им закрепляют конкретную
+# версию, когда обновление модели нежелательно.
+ask PRIMARY_MODEL    "Модель — алиас последней (fable / opus / sonnet / haiku) либо полное имя для закрепления версии" "opus"
 ask LANGUAGE         "Язык ответов" "Russian"
 ask OPERATOR_ADDRESS "Как обращаться к вам" "Boss"
 # Второй мозг всегда колоцирован на этом же VPS, без reverse proxy — прямые
