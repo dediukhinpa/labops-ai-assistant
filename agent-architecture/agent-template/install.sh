@@ -106,7 +106,8 @@ prompt AGENT_ROLE             "Agent role (e.g. Coder, Coordinator, Research ass
 prompt AGENT_ROLE_DESCRIPTION "One-sentence role description" "Autonomous coding assistant. Writes code, reviews architecture, runs tests."
 prompt CHARACTER_TRAITS       "Character traits (e.g. Pragmatic, calm, precise)" "Efficient, precise, proactive. Reports results, not process."
 
-[ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "  Models: opus (code+review), sonnet (subagents+research)"; }
+# Алиасы, а не версии: см. комментарий в skills/create-agent/new-agent.sh.
+[ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "  Aliases resolve to the latest model of their tier: fable / opus (code+review) / sonnet (subagents+research) / haiku. A full model name pins a version."; }
 prompt PRIMARY_MODEL          "Primary model [opus]" "opus"
 prompt RESEARCH_MODEL         "Research model [Perplexity Sonar]" "Perplexity Sonar (web search only, no code)"
 prompt MAX_SUBAGENTS          "Max simultaneous subagents [5]" "5"
