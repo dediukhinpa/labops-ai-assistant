@@ -30,6 +30,14 @@ never committed. A leaked
 through this repository. This repo also runs `gitleaks` in CI and ships its own
 secret-scan guards to catch accidental commits.
 
+Restrictive file permissions are necessary but not sufficient: a secret passed on a
+**command line** is world-readable in `ps` regardless of the permissions on the file
+it came from. Agent sessions therefore receive their environment from
+`orchestration/lib/agent-env.sh`, assembled inside the tmux pane by
+`orchestration/session-exec.sh`; only the agent id appears in the process arguments.
+Keep it that way when adding new configuration — pass it through `channel.env` or
+`.claude/secrets/`, never as a flag.
+
 ## Supported versions
 
 Security fixes target the latest commit on the default branch (`main`). There are

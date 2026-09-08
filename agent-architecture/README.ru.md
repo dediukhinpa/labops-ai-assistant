@@ -135,7 +135,7 @@ flowchart LR
     direction TB
     SD["systemd: claude-agent-&lt;agent&gt;.service<br/>Restart=on-failure, RestartSec=15"]
     WD["watchdog.sh &lt;agent&gt;<br/>вечный надзиратель (демон)"]
-    SA["start-agent.sh &lt;agent&gt;<br/>подставляет env/секреты, создаёт сессию"]
+    SA["start-agent.sh &lt;agent&gt;<br/>создаёт сессию; окружение собирает session-exec.sh в панели"]
     TM["tmux-сессия labops-&lt;agent&gt;"]
     SD -->|ExecStart| WD
     WD -->|если сессии нет / зависла| SA
@@ -165,7 +165,7 @@ flowchart LR
 
 1. **systemd** поднимает службу `claude-agent-<agent>.service` (одна на агента). Главный процесс службы — не `claude`, а `watchdog.sh`.
 2. **`watchdog.sh <agent>`** — долгоживущий демон. Если tmux-сессии нет или панель зависла, зовёт `start-agent.sh`. Заодно «реапит» осиротевший канал-сервер (bun).
-3. **`start-agent.sh <agent>`** читает секреты из `.claude/secrets/` (chmod 600, никогда не хардкодятся), source'ит `agent.env` (second_brain-переменные пробрасываются в сессию только при реальном `AGENT_BEARER` — плейсхолдер `CHANGE_ME` оставляет recall выключенным), создаёт tmux-сессию `labops-<agent>` и запускает в ней `claude --settings <workspace>/settings.json … server:labops-channel` (явный `--settings` обязателен: cwd-симлинк воркспейса Claude Code канонизирует, и хуки иначе не грузятся). Готовность проверяется по фактам, а не тексту TUI: слушается webhook-порт канала и/или продвинулся heartbeat-файл (текущие сборки claude строку `Listening for channel` не печатают).
+3. **`start-agent.sh <agent>`** создаёт tmux-сессию `labops-<agent>`, а командой панели ставит **`session-exec.sh <agent>`**. Тот через `lib/agent-env.sh::resolve_agent_env` собирает окружение уже **внутри панели** — читает секреты из `channel.env` и `.claude/secrets/` (chmod 600, никогда не хардкодятся), source'ит `agent.env` (second_brain-переменные попадают в сессию только при реальном `AGENT_BEARER` — плейсхолдер `CHANGE_ME` вычищается и оставляет recall выключенным) — и делает `exec` в `claude --settings <workspace>/settings.json … server:labops-channel` (явный `--settings` обязателен: cwd-симлинк воркспейса Claude Code канонизирует, и хуки иначе не грузятся). Готовность проверяется по фактам, а не тексту TUI: слушается webhook-порт канала и/или продвинулся heartbeat-файл (текущие сборки claude строку `Listening for channel` не печатают).
 4. **`claude`** (движок) грузит канал-плагин, спавнит дочерний bun-процесс канала по stdio и подключает MCP second_brain по HTTP+Bearer.
 
 ### Модель живости (self-healing) в `watchdog.sh`
@@ -374,6 +374,8 @@ flowchart LR
 | `update-rules.sh`, `tg-send.sh`, `second_brain-heartbeat.py` | вспомогательные | обновление правил, отправка в TG, heartbeat-клиент |
 | `lib/task-poller-launch.sh` | сорсится из `watchdog.sh` / `start-agent.sh` | поднимает и надзирает за поллером доски (единственный постоянный процесс) |
 | `stop-agent.sh <агент>` | `ExecStop` юнита | снимает ровно одного агента — его сессию tmux, поллер доски и осиротевший bun-канал |
+| `session-exec.sh` | команда панели tmux | собирает окружение внутри панели и делает `exec` в `claude` — секретов в командной строке нет |
+| `lib/agent-env.sh` | сорсится из `start-agent.sh` / `session-exec.sh` | единственное место сборки окружения сессии: `channel.env` → `secrets/` → `agent.env` |
 | `lib/cli-version.sh` | сорсится из `watchdog.sh` | замечает сессию, которая после самообновления CLI продолжает исполнять старый бинарь |
 
 </details>
@@ -476,10 +478,10 @@ bash install.sh --test-only
 | `GROQ_API_KEY` | `.claude/secrets/groq-api-key` | транскрипция голоса (Groq Whisper) |
 | `TELEGRAM_BOT_TOKEN` | `.claude/secrets/telegram-bot-token`, `channel.env` | токен бота агента (`@BotFather`) |
 | `TELEGRAM_WEBHOOK_TOKEN` | `.claude/secrets/telegram-webhook-token` | Bearer для входящих POST на `/hooks/*` |
-| `TELEGRAM_WEBHOOK_PORT` | `start-agent.sh` (config, не секрет) | порт webhook агента (`:6000+`, по агенту) |
-| `TELEGRAM_ALLOWED_USER_IDS` | `start-agent.sh` | allowlist собеседников — только Оператор; чужие отбрасываются на гейте |
-| `TELEGRAM_STATE_DIR` | `start-agent.sh` | `~/.claude/channels/labops-<agent>` — состояние канала |
-| `TELEGRAM_WORKSPACE_ROOT` | `start-agent.sh` | корень для вложений (защита от path-traversal) |
+| `TELEGRAM_WEBHOOK_PORT` | `lib/agent-env.sh` (config, не секрет) | порт webhook агента (`:6000+`, по агенту) |
+| `TELEGRAM_ALLOWED_USER_IDS` | `lib/agent-env.sh` | allowlist собеседников — только Оператор; чужие отбрасываются на гейте |
+| `TELEGRAM_STATE_DIR` | `lib/agent-env.sh` | `~/.claude/channels/labops-<agent>` — состояние канала |
+| `TELEGRAM_WORKSPACE_ROOT` | `lib/agent-env.sh` | корень для вложений (защита от path-traversal) |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `settings.json` | окно авто-компакции (400000) |
 | `KEEP_SNAPSHOTS` | `precompact-hook.sh` | сколько pre-compact снапшотов держать (10) |
 | `CLAUDE_SDK_CHILD` | окружение | `=1` → хуки выходят сразу (anti-recursion для Agent SDK) |
@@ -490,7 +492,9 @@ bash install.sh --test-only
 | `MONITOR_COMPONENTS` | env `second_brain-monitor.sh` | список `key\|unit\|port` через пробел (по умолчанию 5 юнитов, что включает install; добавь `task\|second_brain-task-mcp\|5003`, если включён) |
 
 > [!WARNING]
-> Секреты лежат в `~/.claude-lab/<agent>/.claude/secrets/` с `chmod 600` и **никогда не хардкодятся** в скриптах; `start-agent.sh` падает быстро, если секрет отсутствует/нечитаем.
+> Секреты лежат в `~/.claude-lab/<agent>/.claude/secrets/` с `chmod 600` и **никогда не хардкодятся** в скриптах; запуск падает быстро, если секрет отсутствует/нечитаем.
+>
+> В **командную строку** секреты не попадают вообще. До 08.09.2026 они уезжали в сессию флагами `tmux new-session -e VAR=value`, то есть лежали в `ps` открытым текстом для любого пользователя машины — и не мельком, а до перезапуска всего роя, потому что tmux-сервер живёт с cmdline поднявшей его команды. Права `0600` на `channel.env` такую выдачу не закрывают. Теперь в `ps` виден только `session-exec.sh <agent>`, а окружение собирается внутри панели.
 
 </details>
 
@@ -507,7 +511,7 @@ bash install.sh --test-only
 |---|---|
 | Бот молчит в Telegram | `tmux ls` → есть ли `labops-<agent>`? `tmux attach -t labops-<agent>` — видно ошибку. Проверьте, что ваш `user_id` в `TELEGRAM_ALLOWED_USER_IDS` (`channel.env`). |
 | Сервис не `active` | `systemctl status claude-agent-<agent>` + `journalctl -u claude-agent-<agent> -n50`. Частая причина — `claude` не авторизован (запустите `claude` и `/login`) или нет `channel.env`. |
-| `no TELEGRAM_BOT_TOKEN` в логе | `channel.env` не там, где ищет `start-agent.sh` — он берёт из `lib/agents.sh` (`/etc/labops-plugin/<agent>/` или `$CLAUDE_LAB/shared/state/<agent>/telegram/`). Пересоздайте через `new-agent.sh`. |
+| `no TELEGRAM_BOT_TOKEN` в логе | `channel.env` не там, где ищет `lib/agent-env.sh` — он берёт из `lib/agents.sh` (`/etc/labops-plugin/<agent>/` или `$CLAUDE_LAB/shared/state/<agent>/telegram/`). Пересоздайте через `new-agent.sh`. |
 | «Модель не ответила» | запустите `claude` под пользователем агента, войдите через `/login`, затем `systemctl restart claude-agent-<agent>`. |
 | `second_brain недоступен` | Проверьте `SECOND_BRAIN_MEMORY_URL` / `SECOND_BRAIN_MEMORY_ROUTER_URL` / `SECOND_BRAIN_AGENT_ROUTER_URL` в `agent.env` (по умолчанию `http://127.0.0.1:5001/mcp` и т.д.) и что мозг поднят. `MCP_HOST` — только хост/IP; `SECOND_BRAIN_*_URL` — полные URL эндпоинтов. |
 | Повторный запуск/коллизия имени | `new-agent.sh` не затирает существующего агента; для донастройки поверх — `REUSE_EXISTING=1`. |
