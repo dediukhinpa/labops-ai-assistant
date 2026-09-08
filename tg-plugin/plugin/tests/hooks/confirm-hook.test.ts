@@ -279,8 +279,44 @@ describe('confirm-hook.sh launcher', () => {
     })
     const parsed = JSON.parse(out).hookSpecificOutput
     expect(parsed.permissionDecision).toBe('deny')
-    expect(parsed.permissionDecisionReason).toContain('bun')
+    expect(parsed.permissionDecisionReason).toContain('не найден bun')
   }, 15000)
+
+  test('a bun that fails to start still produces a decision, and exit 0', async () => {
+    // The launcher runs bun instead of exec-ing it precisely for this: a
+    // broken module after a partial install would otherwise make bun's exit
+    // code the hook's, leaving the gate unable to answer at all.
+    const broken = `${Bun.env.TMPDIR ?? '/tmp'}/confirm-hook-broken-${Date.now()}`
+    await Bun.write(`${broken}/confirm-hook.ts`, 'syntax error here (((\n')
+    await Bun.write(`${broken}/confirm-hook.sh`, await Bun.file(SHIM).text())
+    const proc = Bun.spawn(['bash', `${broken}/confirm-hook.sh`], {
+      stdin: new TextEncoder().encode('{"tool_name":"Read","tool_input":{}}'),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env as Record<string, string>, TELEGRAM_WEBHOOK_PORT: '59999' },
+    })
+    const out = await new Response(proc.stdout).text()
+    const code = await proc.exited
+    expect(code).toBe(0)
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny')
+  }, 20000)
+
+  test('a missing confirm-hook.ts names itself, not bun', async () => {
+    // Saying "bun not found" when bun was found sends the operator to debug
+    // their PATH while the real cause is a partial install.
+    const empty = `${Bun.env.TMPDIR ?? '/tmp'}/confirm-hook-missing-${Date.now()}`
+    await Bun.write(`${empty}/confirm-hook.sh`, await Bun.file(SHIM).text())
+    const proc = Bun.spawn(['bash', `${empty}/confirm-hook.sh`], {
+      stdin: new TextEncoder().encode('{"tool_name":"Read","tool_input":{}}'),
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env as Record<string, string>, TELEGRAM_WEBHOOK_PORT: '59999' },
+    })
+    const out = await new Response(proc.stdout).text()
+    await proc.exited
+    expect(JSON.parse(out).hookSpecificOutput.permissionDecisionReason)
+      .toContain('confirm-hook.ts')
+  }, 20000)
 
   test('without bun and without a channel it stays out of the way', async () => {
     // A workspace that never had the gate must not be bricked by a stray

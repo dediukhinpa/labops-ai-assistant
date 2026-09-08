@@ -129,15 +129,25 @@ export function httpMethodFromBash(command: string): string | null {
     if (READ_METHODS.has(m) || WRITE_METHODS.has(m)) return m
   }
   if (!/\bcurl\b/.test(command)) return null
-  // `@` is a separator too: `curl -d@/tmp/body.json` reads the body from a
-  // file and is a POST like any other.
-  if (/(?:^|\s)(?:-d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii)(?:[=\s@])/
+  // A short curl flag takes its value glued as readily as separated:
+  // `-d'{"id":42}'`, `-d@/tmp/body.json`, `-dfoo` and `-d '{}'` are all the
+  // same POST. Requiring a separator missed the glued forms entirely, and a
+  // record was created with no confirmation whenever the URL path carried no
+  // verb of its own. Long flags keep the strict form — `--data=x`, `--data x`.
+  //
+  // Everything here sits behind the `curl` test above, so `date -d yesterday`
+  // and `sort -d` cannot reach it. Case matters: `-d` is data but `-D` is
+  // dump-header, `-F` is form but `-f` is fail.
+  if (/(?:^|\s)-d(?:[=\s@]|\S)/.test(command)) return 'POST'
+  if (/(?:^|\s)--(?:data|data-raw|data-binary|data-urlencode|data-ascii)(?:[=\s@])/
       .test(command)) {
     return 'POST'
   }
   // Multipart form upload is a POST; --upload-file is a PUT.
-  if (/(?:^|\s)(?:-F|--form)(?:[=\s@])/.test(command)) return 'POST'
-  if (/(?:^|\s)(?:-T|--upload-file)(?:[=\s@])/.test(command)) return 'PUT'
+  if (/(?:^|\s)-F(?:[=\s@]|\S)/.test(command)) return 'POST'
+  if (/(?:^|\s)--form(?:[=\s@])/.test(command)) return 'POST'
+  if (/(?:^|\s)-T(?:[=\s@]|\S)/.test(command)) return 'PUT'
+  if (/(?:^|\s)--upload-file(?:[=\s@])/.test(command)) return 'PUT'
   return null
 }
 
@@ -241,7 +251,13 @@ export function classifyUrl(url: string): VerbVerdict {
 // alone. Trailing quotes and shell punctuation are stripped.
 export function extractUrls(command: string): string[] {
   const matches = command.match(/[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s'"`;|&)]+/g)
-  return matches === null ? [] : matches
+  if (matches === null) return []
+  // Trailing punctuation a URL cannot end with. A URL embedded in a
+  // one-liner picks up the escape or the sentence around it —
+  // `fetch(\"https://api/v1/leads/delete\")` yields a trailing backslash —
+  // and that debris lands in the last path segment, which is exactly the
+  // segment the verb rule reads.
+  return matches.map(url => url.replace(/[\\,.>\]}]+$/, '')).filter(url => url !== '')
 }
 
 // Static-asset suffixes. A URL ending in one of these is a download, not an

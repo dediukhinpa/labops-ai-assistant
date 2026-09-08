@@ -13,12 +13,25 @@
 # settings.json, and never run once. A gate that silently does not run is
 # worse than no gate, because it is believed.
 #
-# So: resolve bun the same way start-agent.sh does, and if it genuinely
-# cannot be found, say so instead of disappearing.
-set -euo pipefail
+# NOT `set -e`, deliberately: every path in this script must reach `exit 0`
+# after writing a decision. errexit would abandon the script mid-way on any
+# non-zero command and leave stdout empty — the exact silent pass this file
+# exists to prevent.
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_TS="$SCRIPT_DIR/confirm-hook.ts"
+
+deny_or_passthrough() {
+  # Mirrors the hook's own provisioning rule: if a channel is configured,
+  # every failure denies; if there is no channel in this environment, the
+  # gate was never provisioned here and must not block anything.
+  if [ -n "${CONFIRM_WEBHOOK_URL:-}" ] || [ -n "${TELEGRAM_WEBHOOK_PORT:-}" ]; then
+    echo "confirm-gate: $1" >&2
+    printf '%s' "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"гейт подтверждений не запустился ($1) — вызов заблокирован\"}}"
+  fi
+  exit 0
+}
 
 BUN=""
 if command -v bun >/dev/null 2>&1; then
@@ -27,16 +40,26 @@ elif [ -x "${BUN_INSTALL:-$HOME/.bun}/bin/bun" ]; then
   BUN="${BUN_INSTALL:-$HOME/.bun}/bin/bun"
 fi
 
-if [ -n "$BUN" ] && [ -f "$HOOK_TS" ]; then
-  exec "$BUN" "$HOOK_TS"
+# Each failure names its own cause. Saying "bun not found" when bun was found
+# and the script was missing sends the operator to debug the wrong thing.
+if [ -z "$BUN" ]; then
+  deny_or_passthrough "не найден bun (искали в PATH и в ${BUN_INSTALL:-$HOME/.bun}/bin)"
+fi
+if [ ! -f "$HOOK_TS" ]; then
+  deny_or_passthrough "не найден confirm-hook.ts по пути $HOOK_TS"
 fi
 
-# Cannot run the gate at all. The branch below mirrors the hook's own
-# provisioning rule: if a channel is configured, every failure denies; if
-# there is no channel in this environment, the gate was never provisioned
-# here and must not block anything.
-if [ -n "${CONFIRM_WEBHOOK_URL:-}" ] || [ -n "${TELEGRAM_WEBHOOK_PORT:-}" ]; then
-  echo "confirm-gate: bun not found (looked in PATH and ${BUN_INSTALL:-$HOME/.bun}/bin)" >&2
-  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"гейт подтверждений не запустился: не найден bun. Проверь PATH сессии агента (~/.bun/bin) — до устранения все вызовы блокируются"}}'
+# Run, don't exec. `exec` hands the shell's PID to bun, so bun's exit code
+# becomes the hook's exit code and its startup failures — a missing
+# dependency after a partial install, a broken module — would leave this
+# script unable to answer at all. Capturing lets a failed run still produce
+# a decision.
+OUT="$("$BUN" "$HOOK_TS")"
+RC=$?
+if [ "$RC" -eq 0 ]; then
+  # Empty stdout with rc=0 is the hook's own passthrough. Forward it verbatim.
+  printf '%s' "$OUT"
+  exit 0
 fi
-exit 0
+
+deny_or_passthrough "bun завершился с кодом $RC"

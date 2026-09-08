@@ -499,3 +499,49 @@ describe('decideGate — the scope boundary does not hinge on letter case', () =
     }, POLICY).action).toBe('confirm')
   })
 })
+
+describe('curl flags glued to their value', () => {
+  // A short curl flag takes its value glued as readily as separated. The
+  // separator-only patterns missed every glued form, and with a URL that
+  // carries no verb of its own the call was created with no confirmation.
+  const GATED = [
+    `curl -d'{"id":42}' https://api.example.com/v1/deals`,
+    `curl -dfoo=bar https://api.example.com/v1/deals`,
+    `curl -F'payload={"id":42}' https://api.example.com/v1/submit`,
+    `curl -T'/tmp/x.bin' https://api.example.com/v1/deals`,
+    `curl --data-urlencode 'a=b' https://api.example.com/v1/deals`,
+  ]
+  for (const command of GATED) {
+    test(`${command.slice(0, 44)} prompts`, () => {
+      expect(decideGate('Bash', { command }, POLICY).action).toBe('confirm')
+    })
+  }
+
+  // Case matters and the curl guard matters: -D is dump-header, -f is fail,
+  // and `date -d` is not curl at all.
+  const SILENT = [
+    'date -d yesterday',
+    'sort -d file.txt',
+    'ls -d */',
+    'curl -f https://api.example.com/v1/deals',
+    'curl -D /tmp/headers.txt https://api.example.com/v1/deals',
+    'curl https://api.example.com/v1/deals',
+  ]
+  for (const command of SILENT) {
+    test(`${command} passes`, () => {
+      expect(decideGate('Bash', { command }, POLICY).action).toBe('allow')
+    })
+  }
+})
+
+describe('extractUrls — debris from the surrounding one-liner', () => {
+  test('a trailing escape is not part of the url', () => {
+    expect(extractUrls('node -e "fetch(\\"https://api.example.com/v1/leads/delete\\")"'))
+      .toEqual(['https://api.example.com/v1/leads/delete'])
+  })
+
+  test('a url at the end of a sentence keeps its path intact', () => {
+    expect(extractUrls('see https://api.example.com/v1/leads/delete.'))
+      .toEqual(['https://api.example.com/v1/leads/delete'])
+  })
+})
