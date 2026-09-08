@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""second_brain-doctor — agent-facing diagnostic CLI for an labops agent's second_brain setup.
+"""second_brain-doctor — agent-facing diagnostic CLI for this agent's second_brain setup.
 
 Runs grouped read-only checks (MCP connectivity/identity, agent_router, memory_router,
 memory, hooks parity, webhooks, topology/security, GitHub repo, skill install)
@@ -506,7 +506,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="second_brain-doctor",
         description=(
-            "Agent-facing diagnostic for an labops agent's second_brain MCP "
+            "Agent-facing diagnostic for this agent's second_brain MCP "
             "setup: connectivity, identity, memory_router, agent_router, hooks parity, "
             "webhooks, topology, GitHub repo, and skill install."
         ),

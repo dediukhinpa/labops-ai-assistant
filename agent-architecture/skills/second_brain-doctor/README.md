@@ -179,7 +179,7 @@ applying this to a live agent requires the boss's/operator's approval. Target te
 
 ```markdown
 **Shared second_brain memory:**
-- second_brain is the shared long-term memory for labops agents.
+- second_brain is the shared long-term memory for the agents on this host.
 - Use it when continuity matters across sessions, agents, or machines.
 - Before non-trivial work, consider recall for prior decisions, knowledge notes, failures, and handoffs.
 - When you discover durable facts, decisions, fixes, or reusable procedures, consider saving a concise note.

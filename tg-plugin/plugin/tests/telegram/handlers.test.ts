@@ -666,7 +666,7 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
   // принятое сообщение оператор получает «принял в работу» — по требованию, что
   // подтверждение приёма должно приходить сразу, а ответ по существу отдельным
   // сообщением. Автоответ «занят» при этом по-прежнему не срабатывает.
-  test('plain text + NOT busy → watcher no-ops, ack sent, channel notify still runs', async () => {
+  test('plain text + NOT busy → watcher no-ops, подтверждение приёма молчит, channel notify still runs', async () => {
     const sendCalls: Array<{ chatId: string; text: string }> = []
     const tg = makeTelegramApi()
     const api: TelegramApi = {
@@ -698,12 +698,59 @@ describe('handleInboundText — InboundWatcher (PR-A3)', () => {
     await handleInboundText(ctx, deps)
     await new Promise((r) => setTimeout(r, 0))
 
-    expect(sendCalls.length).toBe(1)
-    expect(sendCalls[0]!.text).toContain('Принял в работу')
-    // Автоответ «занят» — это НЕ он: агент свободен, дублировать нечего.
-    expect(sendCalls[0]!.text).not.toContain('занят')
+    // С 08.09.2026 подтверждение приёма выключено по умолчанию — оператору
+    // не нужно лишнее сообщение на каждое входящее. В чат не уходит ничего:
+    // автоответ «занят» тут тоже не срабатывает, агент свободен.
+    expect(sendCalls.length).toBe(0)
     // Channel notification still fired.
     expect(serverSpy.calls.length).toBe(1)
+    rmSync(statePaths.root, { recursive: true, force: true })
+  })
+
+  // Проводка ackTaken из обработчика всё ещё должна работать — иначе включение
+  // TELEGRAM_ACK_TAKEN=1 у оператора тихо ничего не даст. Отдельный юнит
+  // (tests/telegram/ack-taken.test.ts) проверяет саму функцию, здесь — вызов.
+  test('plain text + TELEGRAM_ACK_TAKEN=1 → подтверждение приёма уходит', async () => {
+    const sendCalls: Array<{ chatId: string; text: string }> = []
+    const tg = makeTelegramApi()
+    const api: TelegramApi = {
+      ...tg.api,
+      sendMessage: async (chatId, text) => {
+        sendCalls.push({ chatId, text })
+        return { message_id: 200 }
+      },
+    }
+    const watcher = new InboundWatcher({
+      telegramApi: api,
+      config: makeConfig(),
+      log: silentLog,
+      progressReporter: makeFakeProgress(false),
+    })
+    const serverSpy = makeServerSpy()
+    const { deps, statePaths } = makeDeps({
+      server: serverSpy.server,
+      telegramApi: api,
+      watcher,
+    })
+    const ctx = makeCtx({
+      text: 'hello',
+      chatId: 100000001,
+      chatType: 'private',
+      fromId: 100000001,
+    })
+
+    const prev = process.env.TELEGRAM_ACK_TAKEN
+    process.env.TELEGRAM_ACK_TAKEN = '1'
+    try {
+      await handleInboundText(ctx, deps)
+      await new Promise((r) => setTimeout(r, 0))
+    } finally {
+      if (prev === undefined) delete process.env.TELEGRAM_ACK_TAKEN
+      else process.env.TELEGRAM_ACK_TAKEN = prev
+    }
+
+    expect(sendCalls.length).toBe(1)
+    expect(sendCalls[0]!.text).toContain('Принял в работу')
     rmSync(statePaths.root, { recursive: true, force: true })
   })
 })

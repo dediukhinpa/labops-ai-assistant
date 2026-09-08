@@ -1,11 +1,11 @@
 ---
 name: second_brain-doctor
-description: "Proactively diagnose an labops agent's second_brain MCP setup end-to-end: connectivity, identity, memory_router, agent_router, hooks parity, webhooks, GitHub repo, MCP URL security, and skill install. Triggers: «second_brain-doctor», «second_brain health», «check second_brain», «second_brain MCP», «проверь second_brain», «диагностика second_brain», «не работает second_brain»."
+description: "Proactively diagnose this agent's second_brain MCP setup end-to-end: connectivity, identity, memory_router, agent_router, hooks parity, webhooks, GitHub repo, MCP URL security, and skill install. Triggers: «second_brain-doctor», «second_brain health», «check second_brain», «second_brain MCP», «проверь second_brain», «диагностика second_brain», «не работает second_brain»."
 ---
 
 # second_brain Doctor
 
-Agent-facing safe diagnostic for an labops agent's second_brain MCP setup. Запускается с
+Agent-facing safe diagnostic for this agent's second_brain MCP setup. Запускается с
 машины самого агента, читает `.mcp.json`, бьёт по second_brain MCP endpoints через streamable-http
 JSON-RPC и проверяет локальные hooks/webhooks/repo/skill install. Output редактируется и
 безопасен для вставки в чат.

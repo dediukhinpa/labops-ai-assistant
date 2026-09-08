@@ -1,6 +1,6 @@
 ---
 name: create-agent
-description: Use when the operator wants to create/add a NEW labops agent (a new Telegram agent with its own role). Walks the operator through identity, role, key config (CLAUDE.md/rules.md), registers a Telegram bot, wires voice, sets up autostart, and verifies with a smoke test — end to end to a working agent.
+description: Use when the operator wants to create/add a NEW agent (a new Telegram agent with its own role). Walks the operator through identity, role, key config (CLAUDE.md/rules.md), registers a Telegram bot, wires voice, sets up autostart, and verifies with a smoke test — end to end to a working agent.
 ---
 
 # Создание нового агента (create-agent)
