@@ -64,13 +64,35 @@ export function reasonInRussian(decision: GateDecision): string {
 
 // 5 lowercase letters a-z minus 'l' — same alphabet as the permission relay,
 // so ids stay unambiguous when read aloud or retyped on a phone.
+//
+// crypto, not Math.random: the id is what a tap settles. Only an allowlisted
+// approver can settle, so a guessed id is not an escalation — but it would
+// let one approver answer a card they never saw, and a CSPRNG costs nothing.
+// Rejection sampling keeps the 25-letter alphabet uniform (256 % 25 != 0).
 export function newConfirmId(): string {
   const alphabet = 'abcdefghijkmnopqrstuvwxyz'
+  const limit = 256 - (256 % alphabet.length)
   let out = ''
-  for (let i = 0; i < 5; i += 1) {
-    out += alphabet[Math.floor(Math.random() * alphabet.length)]
+  const buf = new Uint8Array(16)
+  while (out.length < 5) {
+    crypto.getRandomValues(buf)
+    for (const byte of buf) {
+      if (out.length === 5) break
+      if (byte >= limit) continue
+      out += alphabet[byte % alphabet.length]
+    }
   }
   return out
+}
+
+// The first card must carry enough to judge the call. A tool name alone is
+// not enough to approve a deletion, and an operator with three cards queued
+// will tap Подтвердить without opening «Подробнее» — so a short preview of
+// the arguments goes on the card itself, with the full text one tap away.
+export function shortPreview(inputPreview: string, limit = 160): string {
+  const collapsed = inputPreview.replace(/\s+/g, ' ').trim()
+  if (collapsed === '' || collapsed === '{}') return ''
+  return collapsed.length > limit ? `${collapsed.slice(0, limit)}…` : collapsed
 }
 
 export function renderConfirmCard(
@@ -80,10 +102,12 @@ export function renderConfirmCard(
   requestId: string = newConfirmId(),
 ): { text: string; replyMarkup: InlineKeyboardLike; requestId: string } {
   const mark = decision.cls === 'destroy' ? 'УДАЛЕНИЕ' : 'ИЗМЕНЕНИЕ'
+  const preview = shortPreview(inputPreview)
   const text =
     `<b>${mark} — подтверди операцию</b>\n\n`
     + `инструмент: <code>${escapeHtml(toolName)}</code>\n`
     + `причина: ${escapeHtml(reasonInRussian(decision))}\n`
+    + (preview === '' ? '' : `аргументы: <code>${escapeHtml(preview)}</code>\n`)
     + `id: <code>${requestId}</code>`
   const replyMarkup: InlineKeyboardLike = {
     inline_keyboard: [[
@@ -92,7 +116,6 @@ export function renderConfirmCard(
       { text: 'Отклонить', callback_data: `confirm:deny:${requestId}` },
     ]],
   }
-  void inputPreview
   return { text, replyMarkup, requestId }
 }
 

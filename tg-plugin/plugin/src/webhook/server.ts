@@ -885,6 +885,16 @@ async function handleConfirmRequest(
 
   const decision = decideGate(toolName, toolInput, loaded.policy)
   if (decision.action === 'allow') {
+    // Auditing EVERY allow would mean a line per tool call — the hook matcher
+    // is `*`, so permissions.jsonl would become a session transcript and the
+    // verdicts that matter would drown. Record the allows a policy decision
+    // produced (an explicit exemption, or the gate being switched off); the
+    // routine local-tool / plain-bash / read-verb traffic stays out.
+    if (decision.code === 'override-allow' || decision.code === 'mode-off') {
+      auditConfirm(statePaths, log, {
+        tool: toolName, verdict: 'allow', reason: decision.reason,
+      })
+    }
     reply(res, 200, { status: 'allow' })
     return
   }

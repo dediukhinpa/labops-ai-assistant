@@ -69,6 +69,7 @@ import { describePidHolder, readLockHolder } from './telegram/pid-inspect.js'
 import { BOT_COMMANDS } from './commands/oob.js'
 import { startWebhookServer, type WebhookServerHandle } from './webhook/server.js'
 import { createConfirmRegistry } from './webhook/confirm-route.js'
+import { loadConfirmPolicy } from './safety/confirm-policy.js'
 import {
   renderConfirmCard,
   renderConfirmDetails,
@@ -1107,6 +1108,21 @@ try {
 // ─────────────────────────────────────────────────────────────────────
 const confirmPolicyPath = process.env.CONFIRM_POLICY_PATH ?? ''
 const confirmRegistry = createConfirmRegistry(config.ask_user_question.timeout_ms)
+
+// Boot-time check. A typo'd or unmounted policy path is fail-closed, which is
+// correct but silent: the operator would learn about it from the first denied
+// business call, mid-task. Say it at startup instead.
+if (confirmPolicyPath !== '') {
+  const probe = loadConfirmPolicy(confirmPolicyPath)
+  if (!probe.ok) {
+    log.error('confirm policy unreadable at startup — the gate will deny every call', {
+      path: confirmPolicyPath,
+      reason: probe.reason,
+    })
+  } else {
+    log.info('confirm gate armed', { path: confirmPolicyPath, mode: probe.policy.mode })
+  }
+}
 
 async function notifyConfirm(
   toolName: string,

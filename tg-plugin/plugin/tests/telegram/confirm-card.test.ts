@@ -7,6 +7,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   renderConfirmCard, renderConfirmDetails, parseConfirmCallback, reasonInRussian,
+  newConfirmId, shortPreview,
 } from '../../src/telegram/confirm-card.js'
 import { redactSecrets } from '../../src/safety/redact.js'
 import type { GateDecision } from '../../src/safety/tool-classifier.js'
@@ -155,5 +156,45 @@ describe('details view redaction wiring', () => {
     })
     const rendered = renderConfirmDetails('Bash', DESTROY, cmd, 'abcde')
     expect(redactSecrets(rendered.text)).not.toContain('s3cr3tw3bh00kc0d3v4lu3xyz')
+  })
+})
+
+describe('newConfirmId', () => {
+  test('5 chars from the unambiguous alphabet, never the letter l', () => {
+    for (let i = 0; i < 200; i += 1) {
+      const id = newConfirmId()
+      expect(id).toMatch(/^[a-km-z]{5}$/)
+    }
+  })
+
+  test('ids do not repeat across a large sample', () => {
+    const seen = new Set<string>()
+    for (let i = 0; i < 500; i += 1) seen.add(newConfirmId())
+    // 9.7M space, 500 draws — a collision here would mean a broken generator.
+    expect(seen.size).toBeGreaterThan(495)
+  })
+})
+
+describe('shortPreview', () => {
+  test('empty input yields no preview line', () => {
+    expect(shortPreview('{}')).toBe('')
+    expect(shortPreview('')).toBe('')
+  })
+
+  test('collapses whitespace and clips long arguments', () => {
+    const long = JSON.stringify({ note: 'x'.repeat(400) })
+    const out = shortPreview(long)
+    expect(out.length).toBeLessThanOrEqual(161)
+    expect(out.endsWith('…')).toBe(true)
+  })
+
+  test('the first card shows what is being changed, not just the tool', () => {
+    const c = renderConfirmCard('mcp__crm__delete_deal', DESTROY, '{"deal_id":84512}')
+    expect(c.text).toContain('84512')
+  })
+
+  test('a call with no arguments has no empty аргументы line', () => {
+    const c = renderConfirmCard('mcp__crm__purge_all', DESTROY, '{}')
+    expect(c.text).not.toContain('аргументы')
   })
 })

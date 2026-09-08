@@ -115,17 +115,29 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 // The HTTP method is visible only inside a Bash command string. Explicit
-// -X/--request wins; a body flag without an explicit method means POST.
+// -X/--request wins; a body or upload flag without an explicit method
+// implies one.
+//
+// The separator after the flag is optional, not required: `curl -XDELETE`
+// glues the method to the flag and is the form people actually type. An
+// unrecognised capture (`tar -Xf`) is dropped by the method tables below,
+// so loosening the separator costs nothing.
 export function httpMethodFromBash(command: string): string | null {
-  const explicit = /(?:-X|--request)[=\s]+([A-Za-z]+)/.exec(command)
+  const explicit = /(?:-X|--request)[=\s]*([A-Za-z]+)/.exec(command)
   if (explicit && explicit[1]) {
     const m = explicit[1].toUpperCase()
     if (READ_METHODS.has(m) || WRITE_METHODS.has(m)) return m
   }
-  if (/\bcurl\b/.test(command)
-      && /(?:^|\s)(?:-d|--data|--data-raw|--data-binary)(?:[=\s])/.test(command)) {
+  if (!/\bcurl\b/.test(command)) return null
+  // `@` is a separator too: `curl -d@/tmp/body.json` reads the body from a
+  // file and is a POST like any other.
+  if (/(?:^|\s)(?:-d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii)(?:[=\s@])/
+      .test(command)) {
     return 'POST'
   }
+  // Multipart form upload is a POST; --upload-file is a PUT.
+  if (/(?:^|\s)(?:-F|--form)(?:[=\s@])/.test(command)) return 'POST'
+  if (/(?:^|\s)(?:-T|--upload-file)(?:[=\s@])/.test(command)) return 'PUT'
   return null
 }
 
@@ -220,9 +232,12 @@ export function decideGate(
       (typeof toolInput.file_path === 'string' ? toolInput.file_path : '')
       || (typeof toolInput.notebook_path === 'string' ? toolInput.notebook_path : '')
     if (target !== '') {
-      const lowerTarget = target.toLowerCase()
+      // Segment equality, not substring: `settings.json` must not fire on
+      // `/tmp/exported_settings.json.bak` or `src/settings.jsonc`. A prompt
+      // nobody expects is how a gate earns its way to being switched off.
+      const segments = target.toLowerCase().split('/').filter(seg => seg !== '')
       for (const p of policy.bash.confirmPatterns) {
-        if (lowerTarget.includes(p.toLowerCase())) {
+        if (segments.includes(p.toLowerCase())) {
           return {
             action: 'confirm', reason: `write to protected file: ${p}`, cls: 'mutate',
             code: 'protected-file', detail: p,
@@ -236,10 +251,15 @@ export function decideGate(
     }
   }
 
-  // 4. declared HTTP method on a generic request tool
+  // 4. declared HTTP method on a generic request tool.
+  //
+  // This field may only ESCALATE, never wave a call through. `method` is an
+  // ordinary argument name and its value is chosen by whoever composed the
+  // call — a destructive tool invoked with `{method: "GET"}` must still be
+  // judged by its verb, or the gate is disabled by one extra argument.
   const declared = typeof toolInput.method === 'string' ? toolInput.method.toUpperCase() : null
   if (declared !== null) {
-    if (READ_METHODS.has(declared)) {
+    if (READ_METHODS.has(declared) && classifyByVerb(toolName).cls === 'read') {
       return {
         action: 'allow', reason: `http method ${declared}`, cls: 'read',
         code: 'http-method', detail: declared,

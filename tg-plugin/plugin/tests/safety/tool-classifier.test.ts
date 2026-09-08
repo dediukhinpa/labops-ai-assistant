@@ -336,3 +336,88 @@ describe('decideGate — the gate protects its own config', () => {
     expect(d.action).toBe('allow')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────
+// Holes found by the branch review (2026-09-08). Each one let a real
+// mutating call through, and each is pinned here so it cannot come back.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('decideGate — curl forms that used to slip past', () => {
+  test('-XDELETE glued to the flag is still a DELETE', () => {
+    expect(httpMethodFromBash('curl -XDELETE https://api.example.com/users/42')).toBe('DELETE')
+    expect(decideGate('Bash', {
+      command: 'curl -XDELETE https://api.example.com/users/42',
+    }, POLICY).action).toBe('confirm')
+  })
+
+  test('-XPOST glued to the flag is still a POST', () => {
+    expect(decideGate('Bash', {
+      command: 'curl -XPOST https://api.example.com/v1/42',
+    }, POLICY).action).toBe('confirm')
+  })
+
+  test('-d@file reads the body from a file and is still a POST', () => {
+    expect(httpMethodFromBash('curl -d@/tmp/body.json https://api.example.com/v1/42'))
+      .toBe('POST')
+    expect(decideGate('Bash', {
+      command: 'curl -d@/tmp/body.json https://api.example.com/v1/42',
+    }, POLICY).action).toBe('confirm')
+  })
+
+  test('multipart form upload is a POST', () => {
+    expect(httpMethodFromBash('curl -F file=@/tmp/x.pdf https://api.example.com/v1/42'))
+      .toBe('POST')
+  })
+
+  test('--upload-file is a PUT', () => {
+    expect(httpMethodFromBash('curl -T /tmp/x.pdf https://api.example.com/v1/42')).toBe('PUT')
+  })
+
+  test('a non-curl -X flag is not mistaken for a method', () => {
+    expect(httpMethodFromBash('tar -Xf exclude.txt archive.tar')).toBeNull()
+  })
+})
+
+describe('decideGate — tool_input.method may escalate, never wave through', () => {
+  test('a destructive tool carrying method GET is still judged by its verb', () => {
+    const d = decideGate('mcp__crm__delete_deal', { method: 'GET', deal_id: 42 }, POLICY)
+    expect(d.action).toBe('confirm')
+    expect(d.code).toBe('verb-destroy')
+  })
+
+  test('a mutating tool carrying method GET is still judged by its verb', () => {
+    expect(decideGate('mcp__crm__update_deal', { method: 'GET' }, POLICY).action)
+      .toBe('confirm')
+  })
+
+  test('a read tool with method GET still passes', () => {
+    expect(decideGate('mcp__crm__get_deal', { method: 'GET', id: 1 }, POLICY).action)
+      .toBe('allow')
+  })
+
+  test('method DELETE still escalates an otherwise unremarkable tool', () => {
+    const d = decideGate('mcp__http__request', { method: 'DELETE' }, POLICY)
+    expect(d.action).toBe('confirm')
+    expect(d.cls).toBe('destroy')
+  })
+})
+
+describe('decideGate — protected-file match is by path segment', () => {
+  test('the real policy file prompts', () => {
+    expect(decideGate('Write', {
+      file_path: '/home/u/.claude/confirm-policy.yaml',
+    }, POLICY).action).toBe('confirm')
+  })
+
+  test('a backup copy of settings.json does not', () => {
+    expect(decideGate('Write', {
+      file_path: '/tmp/exported_settings.json.bak',
+    }, POLICY).action).toBe('allow')
+  })
+
+  test('settings.jsonc is a different file and does not prompt', () => {
+    expect(decideGate('Write', {
+      file_path: '/home/u/src/settings.jsonc',
+    }, POLICY).action).toBe('allow')
+  })
+})
