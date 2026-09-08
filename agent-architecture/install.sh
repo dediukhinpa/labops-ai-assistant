@@ -34,6 +34,7 @@
 #   SKIP_SECOND_BRAIN=1       # не клонировать labops-second-brain
 #   SKIP_TG_PLUGIN=1          # не клонировать labops-tg-plugin
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
+#   PREFLIGHT_DONE=1          # пропустить проверку доступности внешних хостов
 #
 # Монорепо (обычно задаётся корневым ../install.sh — единой точкой входа):
 #   TG_PLUGIN_DIR=<path>      # взять tg-plugin из локального дерева, НЕ клонировать
@@ -56,11 +57,6 @@ echo "════════════════════════�
 echo "  labops-agent-architecture · установка"
 echo "════════════════════════════════════════════"
 
-# ── 1. Системные пакеты (нужен root/sudo) ─────────────────────────
-# Ставим ДО создания/переключения на отдельного пользователя ниже — после
-# переключения sudo у него не будет (агенты работают без sudo, см. deny-
-# правило Bash(sudo *) в settings.json.template), apt-get тогда уже не поставить.
-say "1. Системные пакеты"
 command -v bash >/dev/null || die "нужен bash"
 
 # root не нуждается в sudo, а на голых серверах его вообще может не быть.
@@ -85,6 +81,82 @@ install_via_pkgmgr() {
   fi
 }
 
+# ── 0. Доступность внешних хостов ─────────────────────────────────
+# Проверяем связь ПЕРВЫМ делом, до любых изменений на машине. Установка тянет
+# из сети бинарь Claude Code и клонирует репозитории; если хост режется с этой
+# машины, лучше сказать об этом сразу, чем оборваться на середине, уже создав
+# пользователя и разложив дерево. Разбор ответа (и почему 403 — не «нет сети»)
+# живёт в orchestration/lib/preflight.sh.
+if [ "$MODE" != "test" ] && [ "${PREFLIGHT_DONE:-0}" != "1" ]; then
+  say "0. Доступность внешних хостов"
+  # Проба ходит через curl, так что его может понадобиться поставить раньше
+  # остальных пакетов.
+  command -v curl >/dev/null 2>&1 || install_via_pkgmgr curl
+
+  # shellcheck source=orchestration/lib/preflight.sh
+  . "$REPO_DIR/orchestration/lib/preflight.sh"
+
+  PF_BLOCKED=""; PF_UNREACHABLE=""
+  probe_host() {   # <метка> <url> <critical|optional>
+    local label="$1" url="$2" weight="$3" rc=0
+    preflight_host "$url" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      ok "$label — доступен"
+    elif [ "$rc" -eq 2 ]; then
+      warn "$label — HTTP 403, адрес этой машины режется на стороне хоста"
+      if [ "$weight" = "critical" ]; then PF_BLOCKED="$PF_BLOCKED
+      • $label"; fi
+    else
+      warn "$label — соединения нет (DNS / сеть / TLS)"
+      if [ "$weight" = "critical" ]; then PF_UNREACHABLE="$PF_UNREACHABLE
+      • $label"; fi
+    fi
+    return 0
+  }
+
+  # claude.ai — только редирект, сам дистрибутив лежит на downloads.claude.ai.
+  # Поэтому фронт помечен optional: при его 403 установка идёт в обход, напрямую
+  # (см. шаг 3). Критичен именно downloads — без него ставить нечего.
+  if ! command -v claude >/dev/null 2>&1; then
+    probe_host "downloads.claude.ai — дистрибутив Claude Code" \
+               "https://downloads.claude.ai/claude-code-releases/latest" critical
+    probe_host "claude.ai — штатный установщик" \
+               "https://claude.ai/install.sh" optional
+  fi
+  # Сюда идёт весь рабочий трафик агента. Закрыт — установка бессмысленна.
+  probe_host "api.anthropic.com — рантайм агента" \
+             "https://api.anthropic.com/v1/messages" critical
+  if [ "${SKIP_SECOND_BRAIN:-0}" != "1" ] || [ "${SKIP_TG_PLUGIN:-0}" != "1" ]; then
+    probe_host "github.com — клонирование репозиториев" "https://github.com" critical
+  fi
+
+  if [ -n "$PF_BLOCKED" ]; then
+    die "недоступно с этой машины, HTTP 403:$PF_BLOCKED
+
+    403 отдаём не мы, а сторона Anthropic/Cloudflare. Так отвечают на закрытый
+    регион (https://www.anthropic.com/supported-countries) и на адрес датацентра
+    с плохой репутацией. Повторный запуск, смена DNS и ожидание не помогут.
+    Проверить вручную:
+      curl -sSI -o /dev/null -w '%{http_code}\\n' <адрес>
+    Выход — ставить на хост в поддерживаемом регионе либо пускать трафик агента
+    через него. Продолжить вопреки проверке: PREFLIGHT_DONE=1 ./install.sh"
+  fi
+  if [ -n "$PF_UNREACHABLE" ]; then
+    die "нет соединения с:$PF_UNREACHABLE
+
+    Проверьте интернет, DNS и прокси на этой машине и повторите."
+  fi
+
+  # Понижение прав ниже перезапускает этот же скрипт от имени пользователя
+  # агента — сеть у него та же, второй прогон пробы ничего не добавит.
+  export PREFLIGHT_DONE=1
+fi
+
+# ── 1. Системные пакеты (нужен root/sudo) ─────────────────────────
+# Ставим ДО создания/переключения на отдельного пользователя ниже — после
+# переключения sudo у него не будет (агенты работают без sudo, см. deny-
+# правило Bash(sudo *) в settings.json.template), apt-get тогда уже не поставить.
+say "1. Системные пакеты"
 for c in git curl jq unzip; do
   command -v "$c" >/dev/null 2>&1 || install_via_pkgmgr "$c"
   command -v "$c" >/dev/null 2>&1 && ok "$c" || die "$c не удалось установить — установите вручную."
@@ -247,14 +319,42 @@ say "3. Claude Code и окружение"
 # повторно, но это лишняя сетевая операция и шумное предупреждение).
 export PATH="$HOME/.local/bin:$PATH"
 if ! command -v claude >/dev/null 2>&1; then
-  warn "claude не найден — устанавливаю (curl -fsSL https://claude.ai/install.sh | bash), без Node.js"
-  curl -fsSL https://claude.ai/install.sh | bash
+  # Скачиваем в файл и запускаем отдельной командой, а НЕ конвейером
+  # `curl -fsSL … | bash`. Конвейер под `set -e` + `pipefail` обрывал установку
+  # молча: curl -f отдаёт 22, конвейер падает, и die двумя строками ниже уже не
+  # выполняется — оператор видел только `curl: (22)` и внезапный конец.
+  fetch_and_run() {   # <url> → 0 успех, 1 не скачалось, 2 скрипт упал
+    local url="$1" tmp rc=0
+    tmp="$(mktemp)"
+    if ! curl -fsSL --connect-timeout 7 --max-time 180 "$url" -o "$tmp"; then
+      rm -f "$tmp"; return 1
+    fi
+    bash "$tmp" || rc=2
+    rm -f "$tmp"
+    return "$rc"
+  }
+
+  warn "claude не найден — устанавливаю (без Node.js)"
+  if ! fetch_and_run "https://claude.ai/install.sh"; then
+    # claude.ai — это только редирект; версия, манифест и сам бинарь (с проверкой
+    # SHA256 внутри bootstrap) лежат на downloads.claude.ai, за другой
+    # инфраструктурой. Cloudflare режет именно фронт, поэтому прямой адрес часто
+    # жив — случай 08.09.2026: claude.ai отдавал 403, downloads — 200.
+    warn "claude.ai недоступен — пробую напрямую downloads.claude.ai"
+    fetch_and_run "https://downloads.claude.ai/claude-code-releases/bootstrap.sh" || true
+  fi
 fi
 if command -v claude >/dev/null 2>&1; then
   ok "claude найден"
   echo "    Модель подключается через подписку (Max/Pro) — авторизация будет запрошена ниже, перед созданием агента, если ещё не входили."
 else
-  die "установка Claude Code не удалась — установите вручную: curl -fsSL https://claude.ai/install.sh | bash"
+  die "установка Claude Code не удалась.
+    Проверьте, доходит ли эта машина до источника дистрибутива:
+      curl -sSI -o /dev/null -w '%{http_code}\\n' https://downloads.claude.ai/claude-code-releases/latest
+    403 значит, что адрес режется на стороне Anthropic/Cloudflare (закрытый
+    регион или репутация адреса датацентра) — нужен другой хост или маршрут.
+    Иначе поставьте вручную:
+      curl -fsSL https://downloads.claude.ai/claude-code-releases/bootstrap.sh -o /tmp/bs.sh && bash /tmp/bs.sh"
 fi
 
 if command -v systemctl >/dev/null 2>&1; then ok "systemd найден"; else
