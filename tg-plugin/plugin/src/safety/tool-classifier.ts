@@ -136,6 +136,42 @@ export function extractUrls(command: string): string[] {
   return matches === null ? [] : matches
 }
 
+// Static-asset suffixes. A URL ending in one of these is a download, not an
+// RPC, so the verb table must not be run over it: `.../repo/main/update.sh`
+// and `.../archive/dataset.zip` are everyday session traffic and were both
+// prompting before this list existed. Business APIs that end in `.json`
+// Rails-style are the accepted cost — they are still caught by the HTTP
+// method and by confirm_patterns.
+const ASSET_EXTENSIONS = new Set([
+  'sh', 'bash', 'zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar', 'iso',
+  'deb', 'rpm', 'dmg', 'pkg', 'exe', 'bin', 'whl', 'jar', 'json', 'yaml',
+  'yml', 'toml', 'txt', 'md', 'csv', 'tsv', 'xml', 'html', 'css', 'js',
+  'mjs', 'ts', 'py', 'rb', 'go', 'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp',
+  'ico', 'pdf', 'docx', 'xlsx', 'pptx', 'mp3', 'mp4', 'wav', 'woff', 'woff2',
+])
+
+/**
+ * The part of a URL a verb may legitimately live in: path, query, fragment.
+ *
+ * The scheme and host are dropped on purpose — a verb there is part of a
+ * domain name (`update.example.com`), never an operation. Returns an empty
+ * string when the URL points at a static asset, which switches the verb rule
+ * off for that URL entirely.
+ */
+export function urlActionPart(url: string): string {
+  const afterScheme = url.slice(url.indexOf('://') + 3)
+  const slash = afterScheme.indexOf('/')
+  if (slash === -1) return ''
+  const rest = afterScheme.slice(slash)
+  const path = rest.split(/[?#]/)[0] ?? ''
+  const lastSegment = path.split('/').filter(seg => seg !== '').pop() ?? ''
+  const dot = lastSegment.lastIndexOf('.')
+  if (dot > 0 && ASSET_EXTENSIONS.has(lastSegment.slice(dot + 1).toLowerCase())) {
+    return ''
+  }
+  return rest
+}
+
 export function decideGate(
   toolName: string,
   toolInput: Record<string, unknown>,
@@ -226,7 +262,9 @@ export function decideGate(
     // urls — running the verb table over the whole command would flag
     // `git add` on the verb "add" and bury the operator in prompts.
     for (const url of extractUrls(command)) {
-      const v = classifyByVerb(url)
+      const action = urlActionPart(url)
+      if (action === '') continue
+      const v = classifyByVerb(action)
       if (v.cls === 'destroy' || v.cls === 'mutate') {
         return {
           action: 'confirm', reason: `url ${v.reason}`, cls: v.cls,

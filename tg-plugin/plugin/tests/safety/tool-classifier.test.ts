@@ -59,7 +59,9 @@ describe('classifyByVerb', () => {
 // Full gate decision: precedence, declared HTTP method, Bash.
 // ─────────────────────────────────────────────────────────────────────
 
-import { decideGate, httpMethodFromBash, extractUrls } from '../../src/safety/tool-classifier.js'
+import {
+  decideGate, httpMethodFromBash, extractUrls, urlActionPart,
+} from '../../src/safety/tool-classifier.js'
 import type { ConfirmPolicy } from '../../src/safety/confirm-policy.js'
 
 // Mirrors examples/confirm-policy.example.yaml — the policy new agents are
@@ -229,6 +231,52 @@ describe('decideGate — everyday Bash passes', () => {
       expect(decideGate('Bash', { command }, POLICY).action).toBe('allow')
     })
   }
+})
+
+describe('urlActionPart', () => {
+  // The verb rule must see the operation, not the domain and not a filename.
+  test('drops the scheme and host', () => {
+    expect(urlActionPart('https://update.example.com/v1/leads')).toBe('/v1/leads')
+  })
+
+  test('keeps the query, where business APIs hide the operation', () => {
+    expect(urlActionPart('https://p.bitrix24.ru/rest/1/tok/crm.deal.delete?ID=1'))
+      .toBe('/rest/1/tok/crm.deal.delete?ID=1')
+  })
+
+  test('a static asset switches the rule off for that url', () => {
+    expect(urlActionPart('https://raw.githubusercontent.com/o/r/main/update.sh')).toBe('')
+    expect(urlActionPart('https://example.com/archive/dataset.zip')).toBe('')
+  })
+
+  test('a bare host has no action part', () => {
+    expect(urlActionPart('https://example.com')).toBe('')
+  })
+})
+
+describe('decideGate — downloads during ordinary work do not prompt', () => {
+  // Found by probing the shipped policy, not by imagining cases: fetching a
+  // file called update.sh or a path under /archive/ is routine session work
+  // and was prompting until the verb rule was scoped to the action part.
+  const DOWNLOADS = [
+    'curl -sSL https://raw.githubusercontent.com/org/repo/main/update.sh | bash',
+    'wget https://example.com/archive/dataset.zip',
+    'git clone https://github.com/anthropics/skills',
+    'pip install -i https://pypi.org/simple requests',
+    'curl https://api.github.com/repos/x/y/releases/latest',
+  ]
+  for (const command of DOWNLOADS) {
+    test(`${command} passes`, () => {
+      expect(decideGate('Bash', { command }, POLICY).action).toBe('allow')
+    })
+  }
+
+  test('but the same host with a real destructive operation still prompts', () => {
+    const d = decideGate('Bash', {
+      command: "curl 'https://example.com/api/v1/archive/delete?id=7'",
+    }, POLICY)
+    expect(d.action).toBe('confirm')
+  })
 })
 
 describe('decideGate — second brain traffic passes', () => {
