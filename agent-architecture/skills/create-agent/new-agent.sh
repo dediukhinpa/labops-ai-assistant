@@ -46,6 +46,7 @@ set -euo pipefail
 unset AGENT_ID AGENT_WORKSPACE AGENT_BEARER \
       TELEGRAM_WEBHOOK_PORT TELEGRAM_EXPECTED_BOT_ID TELEGRAM_WEBHOOK_TOKEN \
       TELEGRAM_STATE_DIR TELEGRAM_WORKSPACE_ROOT \
+      CONFIRM_POLICY_PATH \
       TELEGRAM_MEMORY_WORKSPACE TELEGRAM_MEMORY_AGENT_LABEL 2>/dev/null || true
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -361,6 +362,7 @@ TELEGRAM_MEMORY_ENABLED=true
 TELEGRAM_MEMORY_WORKSPACE=$WORKSPACE
 TELEGRAM_MEMORY_AGENT_LABEL=$AGENT_NAME
 TELEGRAM_MEMORY_SOURCE_TAG=tg
+CONFIRM_POLICY_PATH=$WORKSPACE/confirm-policy.yaml
 ENV
     chmod 600 "$CH_ENV"
     ok "channel.env: $CH_ENV (chmod 600)"
@@ -382,6 +384,33 @@ ENV
   # ни то, ни другое channel.env выше не пишет. Добавляем отдельно и
   # идемпотентно: не трогаем уже сгенерированный токен при повторном запуске
   # (REUSE_EXISTING=1), работает и для уже настроенного, и для свежего agent.env.
+  # Confirm-gate: политика подтверждения изменяющих операций в сторонних
+  # интеграциях. Кладём ДО того, как агент впервые стартует — гейт fail-closed,
+  # и хук из settings.json без политики отказывал бы во всём подряд.
+  #
+  # Файл не перезаписываем: оператор правит исключения под свои интеграции, и
+  # донастройка агента (REUSE_EXISTING=1) не должна затирать эти правки.
+  CONFIRM_POLICY_DST="$WORKSPACE/confirm-policy.yaml"
+  CONFIRM_POLICY_SRC="$TG_PLUGIN_DIR/examples/confirm-policy.example.yaml"
+  if [ -f "$CONFIRM_POLICY_DST" ]; then
+    ok "confirm-policy.yaml уже есть — правки оператора сохранены"
+  elif [ -f "$CONFIRM_POLICY_SRC" ]; then
+    if cp "$CONFIRM_POLICY_SRC" "$CONFIRM_POLICY_DST" 2>/dev/null; then
+      ok "confirm-policy.yaml развёрнут: $CONFIRM_POLICY_DST"
+    else
+      DEGRADED+=("не удалось скопировать confirm-policy.yaml — гейт подтверждений заблокирует изменяющие вызовы; скопируйте вручную из $CONFIRM_POLICY_SRC")
+    fi
+  else
+    DEGRADED+=("не найден шаблон политики ($CONFIRM_POLICY_SRC) — гейт подтверждений заблокирует изменяющие вызовы")
+  fi
+  # Существующий агент мог быть создан до появления гейта — дописываем путь
+  # идемпотентно, тем же приёмом, что и токен ниже.
+  if [ -f "$CH_ENV" ] && ! grep -qs '^CONFIRM_POLICY_PATH=.\+' "$CH_ENV"; then
+    umask 077
+    printf 'CONFIRM_POLICY_PATH=%s\n' "$CONFIRM_POLICY_DST" >> "$CH_ENV"
+    ok "CONFIRM_POLICY_PATH добавлен в $CH_ENV"
+  fi
+
   if [ -f "$CH_ENV" ]; then
     if ! grep -qs '^TELEGRAM_WEBHOOK_TOKEN=.\+' "$CH_ENV"; then
       WEBHOOK_TOKEN_VAL="$(openssl rand -hex 32 2>/dev/null \

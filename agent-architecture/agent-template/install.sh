@@ -280,6 +280,23 @@ fill_template "${TEMPLATES_DIR}/LEARNINGS.md.template" "${WORKSPACE}/core/LEARNI
 fill_template "${TEMPLATES_DIR}/mcp.json.template"     "${WORKSPACE}/.mcp.json"
 fill_template "${TEMPLATES_DIR}/settings.json.template" "${WORKSPACE}/settings.json"
 
+# Confirm-gate policy. settings.json (just rendered above) registers the
+# PreToolUse gate, and the gate is fail-closed — so the policy has to land
+# before the agent ever starts, or every mutating call would be refused.
+# Not overwritten: the operator tunes exceptions for their own integrations.
+CONFIRM_POLICY_SRC="$(cd "${DISTRO_ROOT}/.." 2>/dev/null && pwd)/tg-plugin/examples/confirm-policy.example.yaml"
+if [ -f "${WORKSPACE}/confirm-policy.yaml" ]; then
+    log "confirm-policy.yaml already present — operator edits kept"
+elif [ -f "$CONFIRM_POLICY_SRC" ]; then
+    cp "$CONFIRM_POLICY_SRC" "${WORKSPACE}/confirm-policy.yaml"
+    log "confirm-policy.yaml installed"
+else
+    # Standalone checkout without the tg-plugin sibling: no plugin means no
+    # webhook port, and the hook passes through instead of blocking. Warn so
+    # the operator knows the gate is inert rather than silently trusting it.
+    warn "confirm-policy.yaml not installed (tg-plugin not found) — confirm gate inactive"
+fi
+
 # Global ~/.claude/CLAUDE.md only if missing
 fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_DIR}/CLAUDE.md"
 

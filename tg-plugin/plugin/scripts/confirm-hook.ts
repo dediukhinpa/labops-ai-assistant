@@ -78,6 +78,23 @@ export function shouldBypass(env: Record<string, string | undefined>): boolean {
   return (env.CONFIRM_GATE ?? '').trim().toLowerCase() === 'off'
 }
 
+// Where to ask. An explicit CONFIRM_WEBHOOK_URL wins; otherwise the URL is
+// derived from the channel's own host/port.
+//
+// Why derive instead of baking the port into settings.json: new-agent.sh
+// picks a free webhook port only AFTER the workspace scaffolder has already
+// rendered settings.json from its template. A port written into settings.json
+// would either be wrong or force a second patching pass — and would go stale
+// the moment the operator moves the agent to another port.
+export function resolveWebhookUrl(env: Record<string, string | undefined>): string {
+  const explicit = (env.CONFIRM_WEBHOOK_URL ?? '').trim()
+  if (explicit !== '') return explicit
+  const port = (env.TELEGRAM_WEBHOOK_PORT ?? '').trim()
+  if (!/^[0-9]+$/.test(port)) return ''
+  const host = (env.TELEGRAM_WEBHOOK_HOST ?? '').trim() || '127.0.0.1'
+  return `http://${host}:${port}/hooks/confirm/request`
+}
+
 async function readStdin(): Promise<string> {
   const chunks: Uint8Array[] = []
   for await (const chunk of process.stdin) {
@@ -109,10 +126,18 @@ async function main(): Promise<void> {
           ? envelope.tool_input
           : {}
 
-      const url = process.env.CONFIRM_WEBHOOK_URL ?? ''
+      const url = resolveWebhookUrl(process.env)
       const token = process.env.TELEGRAM_WEBHOOK_TOKEN ?? ''
       if (url === '') {
-        decision = { kind: 'deny', reason: 'CONFIRM_WEBHOOK_URL не задан — гейт не настроен' }
+        // No channel at all: neither an explicit URL nor a webhook port. The
+        // gate was never provisioned in this session, so there is nothing to
+        // ask — pass through rather than block every tool call.
+        //
+        // This is the ONE fail-open branch, and it is about PROVISIONING, not
+        // operation: once a channel exists, every failure below denies. A hook
+        // registered in a workspace whose plugin was never installed must not
+        // brick the agent.
+        decision = { kind: 'passthrough' }
       } else {
         const timeoutMs = Number(process.env.CONFIRM_HTTP_TIMEOUT_MS ?? DEFAULT_HTTP_TIMEOUT_MS)
         const controller = new AbortController()

@@ -726,6 +726,20 @@ echo "── 20. Confirm-gate: хук на месте и политика вал
 # не установлен, изменяющие вызовы проходят молча — это ошибка, а не
 # особенность. Соседа может не быть (agent-architecture ставится и
 # отдельно) — тогда проверку пропускаем, а не заваливаем.
+# Новый агент обязан получать гейт из коробки: хук в settings.json и путь к
+# политике в channel.env. Забыли одно из двух — механизм есть в репо, но не
+# включён ни у кого, и об этом никто не узнает.
+if grep -q 'labops-channel-confirm-gate' agent-template/templates/settings.json.template; then
+  ok "settings.json.template регистрирует confirm-gate у новых агентов"
+else
+  bad "settings.json.template без confirm-gate — новые агенты поднимутся без подтверждений"
+fi
+if grep -q '^CONFIRM_POLICY_PATH=' skills/create-agent/new-agent.sh; then
+  ok "new-agent.sh прописывает CONFIRM_POLICY_PATH в channel.env"
+else
+  bad "new-agent.sh не задаёт CONFIRM_POLICY_PATH — гейт не поднимется в сессии агента"
+fi
+
 TG_PLUGIN_ROOT="$(cd .. 2>/dev/null && pwd)/tg-plugin"
 if [ ! -d "$TG_PLUGIN_ROOT" ]; then
   printf "${Y}—${N} %s\n" "tg-plugin рядом не найден — проверка confirm-gate пропущена"

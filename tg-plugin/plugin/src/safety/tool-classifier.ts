@@ -113,6 +113,34 @@ export function decideGate(
       return { action: 'allow', reason: `overrides.allow: ${p}`, cls: 'read' }
     }
   }
+  // 3a. SCOPE. The gate exists for EXTERNAL integrations: MCP servers and
+  // HTTP calls issued through Bash. Everything else a Claude Code session
+  // does is local — reading files, editing code, spawning subagents — and
+  // must pass untouched.
+  //
+  // This check has to come before the verb table, because the built-in tool
+  // names collide with it head-on: Write/Edit/TodoWrite carry mutating verbs,
+  // while Glob/Grep/Task carry no known verb at all and would fall into the
+  // "unknown → ask" branch. Without this scope rule the gate would interrupt
+  // every session, get switched off within a day, and protect nothing.
+  if (!toolName.startsWith('mcp__') && toolName !== 'Bash') {
+    // One exception: a write aimed at the gate's own configuration. Bash is
+    // covered by confirm_patterns further down; the file-editing tools would
+    // otherwise walk straight past and disable the gate in one call.
+    const target =
+      (typeof toolInput.file_path === 'string' ? toolInput.file_path : '')
+      || (typeof toolInput.notebook_path === 'string' ? toolInput.notebook_path : '')
+    if (target !== '') {
+      const lowerTarget = target.toLowerCase()
+      for (const p of policy.bash.confirmPatterns) {
+        if (lowerTarget.includes(p.toLowerCase())) {
+          return { action: 'confirm', reason: `правка защищённого файла: ${p}`, cls: 'mutate' }
+        }
+      }
+    }
+    return { action: 'allow', reason: 'local tool, not an external integration', cls: 'read' }
+  }
+
   // 4. declared HTTP method on a generic request tool
   const declared = typeof toolInput.method === 'string' ? toolInput.method.toUpperCase() : null
   if (declared !== null) {

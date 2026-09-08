@@ -62,13 +62,22 @@ describe('classifyByVerb', () => {
 import { decideGate, httpMethodFromBash, extractUrls } from '../../src/safety/tool-classifier.js'
 import type { ConfirmPolicy } from '../../src/safety/confirm-policy.js'
 
+// Mirrors examples/confirm-policy.example.yaml — the policy new agents are
+// installed with. Keeping the fixture identical to the shipped default is the
+// point: these tests answer "what happens on a real agent", not "what happens
+// under a fixture invented to make them pass".
 const POLICY: ConfirmPolicy = {
   mode: 'enforce',
   overrides: {
-    allow: ['mcp__gbrain-*__*', 'mcp__firecrawl__*'],
-    deny: ['mcp__*__*bulk_delete*'],
+    allow: ['mcp__second_brain-*__*', 'mcp__gbrain-*__*', 'mcp__firecrawl__*'],
+    deny: ['mcp__*__*bulk_delete*', 'mcp__*__*delete_all*'],
   },
-  bash: { confirmPatterns: ['sudo ', 'rm -rf'] },
+  bash: {
+    confirmPatterns: [
+      'sudo ', 'rm -rf', 'drop table', 'truncate table',
+      'confirm-policy.yaml', 'settings.json',
+    ],
+  },
 }
 
 describe('httpMethodFromBash', () => {
@@ -160,5 +169,122 @@ describe('decideGate — business APIs over Bash', () => {
 
   test('bare git command is not tokenized as a url — "add" must not confirm', () => {
     expect(decideGate('Bash', { command: 'git add .' }, POLICY).action).toBe('allow')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// No false positives on ordinary session traffic.
+//
+// The gate exists for external business integrations. Everything a Claude
+// Code session does locally — reading files, editing code, running git,
+// spawning subagents — must pass untouched. A gate that interrupts normal
+// work gets switched off within a day, and then it protects nothing.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('decideGate — built-in tools never prompt', () => {
+  // Note the traps: Write/Edit/TodoWrite carry mutating verbs, and
+  // Glob/Grep/Task carry no known verb at all. Both would prompt if the
+  // gate did not scope itself to mcp__* and Bash first.
+  const BUILTINS = [
+    'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep',
+    'Task', 'TodoWrite', 'WebFetch', 'WebSearch', 'ExitPlanMode', 'Skill',
+    'SlashCommand', 'KillShell', 'BashOutput', 'AskUserQuestion',
+  ]
+  for (const tool of BUILTINS) {
+    test(`${tool} passes`, () => {
+      expect(decideGate(tool, { file_path: '/home/u/project/src/app.ts' }, POLICY).action)
+        .toBe('allow')
+    })
+  }
+})
+
+describe('decideGate — everyday Bash passes', () => {
+  const COMMANDS = [
+    'git status',
+    'git add -A',
+    'git commit -m "fix"',
+    'git push origin main',
+    'npm install',
+    'npm run build',
+    'bun test',
+    'ls -la',
+    'cat package.json',
+    'grep -rn TODO src/',
+    'mkdir -p build && cd build',
+    'python3 script.py',
+    'pytest -q',
+    'docker ps',
+    'systemctl --user status myservice',
+    'tail -n 50 logs/server.log',
+    'jq .name package.json',
+    'echo "done" > /tmp/out.txt',
+    'rm /tmp/scratch.txt',
+    'cp a.txt b.txt',
+    'mv old.txt new.txt',
+    'curl https://api.github.com/repos/x/y',
+    'curl -s https://registry.npmjs.org/react | jq .name',
+  ]
+  for (const command of COMMANDS) {
+    test(`${command} passes`, () => {
+      expect(decideGate('Bash', { command }, POLICY).action).toBe('allow')
+    })
+  }
+})
+
+describe('decideGate — second brain traffic passes', () => {
+  const SECOND_BRAIN = [
+    'mcp__gbrain-memory__create_decision_note',
+    'mcp__gbrain-memory__write_note',
+    'mcp__gbrain-recall__recall',
+    'mcp__gbrain-swarm__notify',
+    'mcp__second_brain-tasks__task_update',
+  ]
+  for (const tool of SECOND_BRAIN) {
+    test(`${tool} passes`, () => {
+      expect(decideGate(tool, {}, POLICY).action).toBe('allow')
+    })
+  }
+})
+
+describe('decideGate — real business changes still prompt', () => {
+  const GATED: Array<[string, Record<string, unknown>]> = [
+    ['mcp__amocrm__delete_lead', { id: 42 }],
+    ['mcp__bitrix24__crm_deal_update', { id: 42 }],
+    ['mcp__yandex_tracker__issue_create', {}],
+    ['mcp__yandex_disk__delete_resource', { path: '/docs' }],
+    ['mcp__hh__vacancy_publish', {}],
+    ['mcp__teamly__update_article', {}],
+    ['mcp__1c__post_document', {}],
+    ['mcp__newcrm__frobnicate', {}],
+  ]
+  for (const [tool, input] of GATED) {
+    test(`${tool} prompts`, () => {
+      expect(decideGate(tool, input, POLICY).action).toBe('confirm')
+    })
+  }
+
+  test('read-only calls into the same servers stay silent', () => {
+    expect(decideGate('mcp__amocrm__list_leads', {}, POLICY).action).toBe('allow')
+    expect(decideGate('mcp__bitrix24__crm_deal_get', { id: 1 }, POLICY).action).toBe('allow')
+  })
+})
+
+describe('decideGate — the gate protects its own config', () => {
+  // The one hole worth closing at this layer: disabling the gate by editing
+  // its policy. Bash is covered by confirm_patterns; the Write/Edit tools
+  // would otherwise walk straight past, since built-ins pass by default.
+  test('editing the policy file through Edit prompts', () => {
+    const d = decideGate('Edit', { file_path: '/home/u/.claude/confirm-policy.yaml' }, POLICY)
+    expect(d.action).toBe('confirm')
+  })
+
+  test('editing settings.json through Write prompts', () => {
+    const d = decideGate('Write', { file_path: '/home/u/.claude/settings.json' }, POLICY)
+    expect(d.action).toBe('confirm')
+  })
+
+  test('an ordinary source file does not prompt', () => {
+    const d = decideGate('Write', { file_path: '/home/u/project/src/settings.ts' }, POLICY)
+    expect(d.action).toBe('allow')
   })
 })
