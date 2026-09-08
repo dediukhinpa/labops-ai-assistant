@@ -1,0 +1,26 @@
+{
+  "_comment_1": "PreToolUse hook confirm-gate: удерживает изменяющий вызов до подтверждения оператором в Telegram.",
+  "_comment_2": "Замени <repo> на абсолютный путь к монорепо, <port> на порт плагина из его config.json.",
+  "_comment_3": "TELEGRAM_WEBHOOK_TOKEN, CONFIRM_POLICY_PATH и CONFIRM_GATE задаются в env сессии агента (systemd EnvironmentFile или wrapper запуска), НЕ здесь.",
+  "_comment_4": "Timeout 310 = 300с ожидания оператора + 5с маржа обёртки + 5с маржа Claude Code. Если меняешь ask_user_question.timeout_ms в config.json плагина — пересчитай и эту цифру: реестр подтверждений переиспользует тот же таймаут.",
+  "_comment_5": "matcher '*' обязателен: гейт должен видеть ВСЕ инструменты, включая MCP-серверы, которых сегодня ещё нет. Сузишь matcher — новая интеграция проскочит мимо гейта.",
+  "_comment_6": "Маркер labops-channel-confirm-gate позволяет install-hooks.sh обновлять запись идемпотентно, не плодя дубликаты.",
+  "_comment_7": "Без CONFIRM_POLICY_PATH плагин не поднимает гейт, роут отвечает 503, и хук ОТКАЗЫВАЕТ. Это намеренно: поставил хук — заведи и политику.",
+  "_comment_8": "После правки settings.json — рестарт сессии агента обязателен, hooks подхватываются только при старте.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "marker": "labops-channel-confirm-gate",
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CONFIRM_WEBHOOK_URL='http://127.0.0.1:<port>/hooks/confirm/request' bash '<repo>/tg-plugin/plugin/scripts/confirm-hook.sh'",
+            "timeout": 310
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -718,6 +718,60 @@ else
   bad "бренд просочился в системный промпт агента через описание скилла:$brand"
 fi
 
+echo "── 20. Confirm-gate: хук на месте и политика валидна ──"
+# Гейт подтверждения изменяющих вызовов живёт в соседнем tg-plugin. Под
+# --dangerously-skip-permissions это ЕДИНСТВЕННЫЙ барьер перед сторонними
+# бизнес-интеграциями (1С, amoCRM, Bitrix24, Yandex Tracker и т.д.):
+# permissions.allow/deny из settings.json там уже не действуют. Если хук
+# не установлен, изменяющие вызовы проходят молча — это ошибка, а не
+# особенность. Соседа может не быть (agent-architecture ставится и
+# отдельно) — тогда проверку пропускаем, а не заваливаем.
+# Новый агент обязан получать гейт из коробки: хук в settings.json и путь к
+# политике в channel.env. Забыли одно из двух — механизм есть в репо, но не
+# включён ни у кого, и об этом никто не узнает.
+if grep -q 'labops-channel-confirm-gate' agent-template/templates/settings.json.template; then
+  ok "settings.json.template регистрирует confirm-gate у новых агентов"
+else
+  bad "settings.json.template без confirm-gate — новые агенты поднимутся без подтверждений"
+fi
+if grep -q '^CONFIRM_POLICY_PATH=' skills/create-agent/new-agent.sh; then
+  ok "new-agent.sh прописывает CONFIRM_POLICY_PATH в channel.env"
+else
+  bad "new-agent.sh не задаёт CONFIRM_POLICY_PATH — гейт не поднимется в сессии агента"
+fi
+
+TG_PLUGIN_ROOT="$(cd .. 2>/dev/null && pwd)/tg-plugin"
+if [ ! -d "$TG_PLUGIN_ROOT" ]; then
+  printf "${Y}—${N} %s\n" "tg-plugin рядом не найден — проверка confirm-gate пропущена"
+else
+  if [ -f "$TG_PLUGIN_ROOT/plugin/scripts/confirm-hook.sh" ]; then
+    ok "confirm-hook.sh на месте"
+  else
+    bad "confirm-hook.sh отсутствует — гейт не установлен, изменяющие вызовы проходят молча"
+  fi
+
+  # Политика обязана парситься: при ошибке загрузки гейт fail-closed
+  # заблокирует ВСЁ, и агент встанет целиком.
+  POLICY_EXAMPLE="$TG_PLUGIN_ROOT/examples/confirm-policy.example.yaml"
+  if [ -f "$POLICY_EXAMPLE" ] && POLICY_EXAMPLE="$POLICY_EXAMPLE" python3 -c "
+import os, sys, yaml
+d = yaml.safe_load(open(os.environ['POLICY_EXAMPLE']))
+sys.exit(0 if isinstance(d, dict) and d.get('mode') in ('enforce', 'off') else 1)
+" 2>/dev/null; then
+    ok "confirm-policy.example.yaml парсится, mode валиден"
+  else
+    bad "confirm-policy.example.yaml не парсится или mode неверный"
+  fi
+
+  # Собственная инфраструктура должна оставаться в исключениях, иначе
+  # каждая запись в память попросит подтверждения и работать станет нечем.
+  if grep -q 'gbrain-\*\|second_brain-\*' "$POLICY_EXAMPLE" 2>/dev/null; then
+    ok "второй мозг в overrides.allow — гейт не дёргает на каждую запись памяти"
+  else
+    bad "в примере политики нет исключения для second_brain/gbrain"
+  fi
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

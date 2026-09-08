@@ -65,6 +65,17 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "marker": "labops-channel-confirm-gate",
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/labops-tg-plugin/plugin/scripts/confirm-hook.sh",
+            "timeout": 310
+          }
+        ]
       }
     ],
     "PostToolUse": [

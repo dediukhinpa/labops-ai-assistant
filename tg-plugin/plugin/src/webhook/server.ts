@@ -26,12 +26,16 @@ import { writeDeadLetter } from '../state/store.js'
 import {
   AskUserQuestionAnswerSchema,
   AskUserQuestionRequestSchema,
+  ConfirmRouteRequestSchema,
   ReactRouteRequestSchema,
   WebhookPayloadSchema,
   type AskUserQuestionAnswer,
   type AskUserQuestionRequest,
   type WebhookPayload,
 } from '../schemas.js'
+import { decideGate } from '../safety/tool-classifier.js'
+import { loadConfirmPolicy } from '../safety/confirm-policy.js'
+import type { ConfirmRegistry } from './confirm-route.js'
 import { sendChannelNotification, normalizeMeta } from '../channel/notify.js'
 import { toActivityEvent, toTodoWriteEvent } from '../hooks/claude-events.js'
 import type {
@@ -54,6 +58,10 @@ const ASK_BODY_LIMIT_BYTES = 64 * 1024
 // Read-receipt bodies are tiny ({chat_id, message_id, emoji}); 4 KB is
 // generous and keeps the route cheap to abuse-proof.
 const REACT_BODY_LIMIT_BYTES = 4 * 1024
+// Confirm-gate bodies carry the full tool_input so the operator can see WHAT
+// changes. Generous, but still bounded — an unbounded body on a fail-closed
+// route is a cheap way to wedge every tool call at once.
+const CONFIRM_BODY_LIMIT_BYTES = 64 * 1024
 const DEFAULT_AGENT_ID = 'labops-channel'
 
 // Margin added on top of the configured AskUserQuestion timeout to set
@@ -170,6 +178,30 @@ export interface WebhookDeps {
   // plugin". Optional so tests/legacy paths can omit; when absent the route
   // answers 503 and the hook degrades to a no-op (no read receipt, no crash).
   reactToMessage?: (chatId: string, messageId: number, emoji: string) => Promise<void>
+  // Confirm gate (2026-09-08): holds a mutating tool call until the operator
+  // confirms it in Telegram. Optional so tests and legacy wiring can omit it —
+  // but note the asymmetry with askRelay above: when the gate is NOT wired the
+  // route answers 503 and the HOOK denies. An unwired gate must never read as
+  // "approved"; the whole point is that silence is refusal.
+  confirmGate?: {
+    registry: ConfirmRegistry
+    policyPath: string
+    // How long the registry holds a call. Used to widen the per-request
+    // socket timeout. MUST stay <= config.ask_user_question.timeout_ms,
+    // because the server-level requestTimeout ceiling is derived from that
+    // value — a longer confirm wait would be cut off by the socket before
+    // the registry could resolve it cleanly.
+    timeoutMs: number
+    // Delivers the card to every approver. Returns the number of chats
+    // reached — zero means nobody can answer, so the caller denies rather
+    // than waiting out the full timeout.
+    notify(
+      toolName: string,
+      decision: ReturnType<typeof decideGate>,
+      inputPreview: string,
+      requestId: string,
+    ): Promise<number>
+  }
 }
 
 export interface WebhookServerHandle {
@@ -333,6 +365,14 @@ async function handleRequest(
   // bearer + chat allowlist, then sets 👀 via deps.reactToMessage.
   if (method === 'POST' && path === '/hooks/react') {
     await handleReact(req, res, deps, webhookToken)
+    return
+  }
+
+  // Confirm gate (2026-09-08). Wired before /hooks/agent so the more
+  // specific path wins. Long-wait route: the response is held until the
+  // operator answers or the registry times out.
+  if (method === 'POST' && path === '/hooks/confirm/request') {
+    await handleConfirmRequest(req, res, deps, webhookToken)
     return
   }
 
@@ -796,6 +836,142 @@ async function handleReact(
   }
 
   reply(res, 200, { status: 'reacted' })
+}
+
+// Confirm gate (2026-09-08). Classifies the held tool call and, when a
+// confirmation is required, keeps the HTTP response open until the operator
+// answers in Telegram.
+//
+// FAIL-CLOSED throughout, and deliberately unlike handleAskRequest: where the
+// question relay degrades to Claude's native terminal UI when something is
+// missing, every failure here answers `deny`. A gate that opens when it breaks
+// is not a gate.
+async function handleConfirmRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WebhookDeps,
+  webhookToken: string | undefined,
+): Promise<void> {
+  const { log, statePaths, confirmGate } = deps
+
+  if (!authGate(req, res, webhookToken)) return
+
+  if (!confirmGate) {
+    // 503, not 404: an operator triaging a stuck session can tell "wired but
+    // disabled" from "wrong route". The hook treats both as deny.
+    reply(res, 503, { status: 'deny', reason: 'confirm gate not wired' })
+    return
+  }
+
+  const parsed = await readJsonBody(
+    req,
+    res,
+    log,
+    CONFIRM_BODY_LIMIT_BYTES,
+    ConfirmRouteRequestSchema,
+    'confirm',
+  )
+  if (!parsed.ok) return
+  const toolName = parsed.value.tool_name
+  const toolInput = parsed.value.tool_input ?? {}
+
+  const loaded = loadConfirmPolicy(confirmGate.policyPath)
+  if (!loaded.ok) {
+    log.error('confirm policy load failed — denying', { reason: loaded.reason })
+    auditConfirm(statePaths, log, { tool: toolName, verdict: 'deny', reason: loaded.reason })
+    reply(res, 200, { status: 'deny', reason: `политика не загрузилась: ${loaded.reason}` })
+    return
+  }
+
+  const decision = decideGate(toolName, toolInput, loaded.policy)
+  if (decision.action === 'allow') {
+    // Auditing EVERY allow would mean a line per tool call — the hook matcher
+    // is `*`, so permissions.jsonl would become a session transcript and the
+    // verdicts that matter would drown. Record the allows a policy decision
+    // produced (an explicit exemption, or the gate being switched off); the
+    // routine local-tool / plain-bash / read-verb traffic stays out.
+    if (decision.code === 'override-allow' || decision.code === 'mode-off') {
+      auditConfirm(statePaths, log, {
+        tool: toolName, verdict: 'allow', reason: decision.reason,
+      })
+    }
+    reply(res, 200, { status: 'allow' })
+    return
+  }
+  if (decision.action === 'deny') {
+    auditConfirm(statePaths, log, { tool: toolName, verdict: 'deny', reason: decision.reason })
+    reply(res, 200, { status: 'deny', reason: decision.reason })
+    return
+  }
+
+  // action === 'confirm' — hold the call. Widen the socket timeout the same
+  // way the AskUserQuestion long-wait does, so the registry's own timeout
+  // resolves cleanly instead of racing a socket abort.
+  try {
+    req.setTimeout(confirmGate.timeoutMs + ASK_SOCKET_TIMEOUT_MARGIN_MS)
+    res.setTimeout(confirmGate.timeoutMs + ASK_SOCKET_TIMEOUT_MARGIN_MS)
+  } catch {
+    /* very old runtimes — best effort */
+  }
+
+  let inputPreview: string
+  try {
+    inputPreview = JSON.stringify(toolInput)
+  } catch {
+    inputPreview = '{}'
+  }
+  const { requestId, wait } = confirmGate.registry.create(toolName, decision, inputPreview)
+
+  let reached = 0
+  try {
+    reached = await confirmGate.notify(toolName, decision, inputPreview, requestId)
+  } catch (err) {
+    log.error('confirm card send failed', {
+      request_id: requestId,
+      error: err instanceof Error ? redactToken(err.message) : String(err),
+    })
+  }
+  if (reached === 0) {
+    // Nobody can answer. Waiting out the full timeout would just stall the
+    // agent for five minutes before denying anyway.
+    confirmGate.registry.settle(requestId, 'deny')
+    auditConfirm(statePaths, log, {
+      tool: toolName, verdict: 'deny', reason: 'no approver reachable', request_id: requestId,
+    })
+    reply(res, 200, { status: 'deny', reason: 'некому подтвердить — карточка не доставлена' })
+    return
+  }
+
+  const behavior = await wait
+  auditConfirm(statePaths, log, {
+    tool: toolName,
+    verdict: behavior,
+    reason: decision.reason,
+    request_id: requestId,
+  })
+  if (behavior === 'allow') {
+    reply(res, 200, { status: 'allow' })
+  } else {
+    reply(res, 200, { status: 'deny', reason: 'отклонено оператором или истёк таймаут' })
+  }
+}
+
+// Append-only audit of every gate verdict, next to the permission relay's own
+// jsonl. Best-effort: a failed audit write must not change the verdict.
+function auditConfirm(
+  statePaths: StatePaths,
+  log: Logger,
+  entry: Record<string, unknown>,
+): void {
+  const line = JSON.stringify({ ts: new Date().toISOString(), gate: 'confirm', ...entry }) + '\n'
+  try {
+    mkdirSync(dirname(statePaths.logs.permissions), { recursive: true, mode: 0o700 })
+    appendFileSync(statePaths.logs.permissions, line, { mode: 0o600 })
+  } catch (err) {
+    log.warn('confirm audit write failed', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
 }
 
 async function handleAskRequest(

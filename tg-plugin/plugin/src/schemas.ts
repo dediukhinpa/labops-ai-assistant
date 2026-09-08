@@ -49,6 +49,18 @@ export const ReactRouteRequestSchema = z.object({
 })
 export type ReactRouteRequest = z.infer<typeof ReactRouteRequestSchema>
 
+// Confirm gate (2026-09-08). The PreToolUse hook posts the tool call it is
+// holding; the plugin classifies it and, when a confirmation is required,
+// keeps the request open until the operator taps a button in Telegram.
+// tool_input is passthrough (`z.record`) on purpose: every MCP vendor has
+// its own argument shape and the gate must work for servers that do not
+// exist yet.
+export const ConfirmRouteRequestSchema = z.object({
+  tool_name: z.string().min(1),
+  tool_input: z.record(z.unknown()).default({}),
+})
+export type ConfirmRouteRequest = z.infer<typeof ConfirmRouteRequestSchema>
+
 // Tool args - download_attachment. chat_id is required so the tool can
 // gate the download through the chat allowlist — without it, Claude could
 // be tricked into fetching an arbitrary file_id (e.g. one leaked into a
