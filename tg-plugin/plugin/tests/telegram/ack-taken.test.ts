@@ -42,7 +42,7 @@ describe('подтверждение приёма', () => {
       log: silentLog(),
       chatId: '42',
       replyToMessageId: 7,
-      env: {} as NodeJS.ProcessEnv,
+      env: { TELEGRAM_ACK_TAKEN: '1' } as NodeJS.ProcessEnv,
     })
     expect(ok).toBe(true)
     expect(sent).toHaveLength(1)
@@ -58,24 +58,28 @@ describe('подтверждение приёма', () => {
       log: silentLog(),
       chatId: '42',
       busy: true,
-      env: {} as NodeJS.ProcessEnv,
+      env: { TELEGRAM_ACK_TAKEN: '1' } as NodeJS.ProcessEnv,
     })
     expect(ok).toBe(false)
     expect(sent).toHaveLength(0)
   })
 
-  test('выключается через TELEGRAM_ACK_TAKEN=0', async () => {
+  // Умолчание сменилось 08.09.2026 на выключенное: лишнее сообщение на каждое
+  // входящее оператору не нужно. Проверяем именно молчание «из коробки» —
+  // пустое окружение это и есть свежая установка.
+  test('по умолчанию молчит, включается через TELEGRAM_ACK_TAKEN=1', async () => {
     const sent: Sent[] = []
     const ok = await ackTaken({
       telegramApi: api(sent),
       log: silentLog(),
       chatId: '42',
-      env: { TELEGRAM_ACK_TAKEN: '0' } as NodeJS.ProcessEnv,
+      env: {} as NodeJS.ProcessEnv,
     })
     expect(ok).toBe(false)
     expect(sent).toHaveLength(0)
+    expect(ackTakenEnabled({} as NodeJS.ProcessEnv)).toBe(false)
     expect(ackTakenEnabled({ TELEGRAM_ACK_TAKEN: '0' } as NodeJS.ProcessEnv)).toBe(false)
-    expect(ackTakenEnabled({} as NodeJS.ProcessEnv)).toBe(true)
+    expect(ackTakenEnabled({ TELEGRAM_ACK_TAKEN: '1' } as NodeJS.ProcessEnv)).toBe(true)
   })
 
   test('недоступный Telegram не роняет обработку входящего', async () => {
@@ -84,7 +88,7 @@ describe('подтверждение приёма', () => {
       telegramApi: api(sent, true),
       log: silentLog(),
       chatId: '42',
-      env: {} as NodeJS.ProcessEnv,
+      env: { TELEGRAM_ACK_TAKEN: '1' } as NodeJS.ProcessEnv,
     })
     expect(ok).toBe(false)
   })
