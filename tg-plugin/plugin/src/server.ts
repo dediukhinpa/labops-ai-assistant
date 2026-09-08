@@ -53,6 +53,7 @@ import {
   createPendingMap,
   createPermissionRelayHooks,
   handlePermissionCallback,
+  isPermissionApprover,
   registerPermissionRelay,
   type CallbackQueryLike,
   type PermissionDeps,
@@ -67,6 +68,12 @@ import { TelegramPoller, tokenLock } from './telegram/poller.js'
 import { describePidHolder, readLockHolder } from './telegram/pid-inspect.js'
 import { BOT_COMMANDS } from './commands/oob.js'
 import { startWebhookServer, type WebhookServerHandle } from './webhook/server.js'
+import { createConfirmRegistry } from './webhook/confirm-route.js'
+import {
+  renderConfirmCard,
+  renderConfirmDetails,
+  parseConfirmCallback,
+} from './telegram/confirm-card.js'
 import {
   handleInboundAudio,
   handleInboundDocument,
@@ -707,6 +714,57 @@ const askUserQuestionUi: AskUserQuestionUi = createAskUserQuestionUi({
 // in the chat.
 bot.on('callback_query:data', async ctx => {
   const data = ctx.callbackQuery.data ?? ''
+  // Confirm gate (2026-09-08). Own namespace so a tap here is never consumed
+  // by the permission relay's `perm:` handler and vice versa.
+  const confirmTap = parseConfirmCallback(data)
+  if (confirmTap !== null) {
+    try {
+      if (!isPermissionApprover(ctx.from.id, config)) {
+        await ctx.answerCallbackQuery({ text: 'Не авторизован.' })
+        return
+      }
+      const entry = confirmRegistry.get(confirmTap.requestId)
+      if (!entry) {
+        // Already settled or timed out. Say so plainly — a silent ack would
+        // leave the operator thinking they had approved something.
+        await ctx.answerCallbackQuery({ text: 'Запрос уже закрыт или истёк.' })
+        return
+      }
+      if (confirmTap.behavior === 'more') {
+        const details = renderConfirmDetails(
+          entry.toolName, entry.decision, entry.inputPreview, confirmTap.requestId,
+        )
+        // grammY's InlineKeyboardMarkup requires callback_data; our structural
+        // type has it optional. Every button we build sets it, so drop the
+        // ones that somehow lack it rather than widening grammY's type.
+        await ctx.editMessageText(details.text, {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: details.replyMarkup.inline_keyboard.map(row =>
+              row
+                .filter((b): b is { text: string; callback_data: string } =>
+                  typeof b.callback_data === 'string')
+                .map(b => ({ text: b.text, callback_data: b.callback_data })),
+            ),
+          },
+        })
+        await ctx.answerCallbackQuery()
+        return
+      }
+      confirmRegistry.settle(confirmTap.requestId, confirmTap.behavior)
+      const label = confirmTap.behavior === 'allow' ? 'Подтверждено' : 'Отклонено'
+      await ctx.answerCallbackQuery({ text: label })
+      await ctx.editMessageText(
+        `<b>${label}</b>\n\nинструмент: <code>${entry.toolName}</code>\nid: <code>${confirmTap.requestId}</code>`,
+        { parse_mode: 'HTML' },
+      )
+    } catch (err) {
+      log.error('confirm callback_query handler threw', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return
+  }
   if (data.startsWith('ask:')) {
     const askCtx: AskCallbackContext = {
       callbackQuery: { data },
@@ -1030,6 +1088,44 @@ try {
 // — ports the behaviour from gateway.py:3531-3589.
 // ─────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────
+// Confirm gate (2026-09-08). Wired only when CONFIRM_POLICY_PATH names a
+// policy file. Without it the route answers 503 and the hook denies — which
+// is the correct default: an operator who installed the hook but no policy
+// gets a loud stop, not a silent pass.
+//
+// The registry timeout reuses config.ask_user_question.timeout_ms so the
+// server-level socket ceiling (derived from that same value) always outlives
+// the logical wait.
+// ─────────────────────────────────────────────────────────────────────
+const confirmPolicyPath = process.env.CONFIRM_POLICY_PATH ?? ''
+const confirmRegistry = createConfirmRegistry(config.ask_user_question.timeout_ms)
+
+async function notifyConfirm(
+  toolName: string,
+  decision: Parameters<typeof renderConfirmCard>[1],
+  inputPreview: string,
+  requestId: string,
+): Promise<number> {
+  const card = renderConfirmCard(toolName, decision, inputPreview, requestId)
+  let reached = 0
+  for (const userId of config.permission_relay.allowed_user_ids) {
+    try {
+      await telegramApi.sendMessage(String(userId), card.text, {
+        parse_mode: 'HTML',
+        reply_markup: card.replyMarkup,
+      })
+      reached += 1
+    } catch (err) {
+      log.error('confirm card send failed', {
+        chat_id: String(userId),
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+  return reached
+}
+
 try {
   webhookHandle = await startWebhookServer(config, {
     mcpServer: mcp,
@@ -1053,6 +1149,16 @@ try {
     // call goes through, so 👀 reactions share the per-chat rate budget.
     reactToMessage: (chatId, messageId, emoji) =>
       telegramApi.setMessageReaction(chatId, messageId, emoji),
+    ...(confirmPolicyPath !== ''
+      ? {
+          confirmGate: {
+            registry: confirmRegistry,
+            policyPath: confirmPolicyPath,
+            timeoutMs: config.ask_user_question.timeout_ms,
+            notify: notifyConfirm,
+          },
+        }
+      : {}),
   })
 } catch (err) {
   log.error('webhook server failed to start', {
