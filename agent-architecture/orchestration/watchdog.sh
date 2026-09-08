@@ -45,6 +45,14 @@ heartbeat_fresh() { [ "$(heartbeat_age)" -le "$HEARTBEAT_GRACE" ]; }
 # shellcheck source=lib/notify.sh
 source "$SCRIPT_DIR/lib/notify.sh"
 
+# Подхват самообновившегося Claude Code. Нативный установщик двигает симлинк, но
+# работающий процесс остаётся на своём inode — без перезапуска сессия сидит на
+# старой версии неделями (замер 08.09.2026: сессии отставали на две версии).
+# Сколько проходов простоя выждать перед перезапуском — цикл около 30 секунд.
+# shellcheck source=lib/cli-version.sh
+source "$SCRIPT_DIR/lib/cli-version.sh"
+CLI_UPDATE_IDLE_CYCLES="${WATCHDOG_CLI_UPDATE_IDLE_CYCLES:-2}"
+
 log() { echo "[watchdog/$AGENT] $(date -u '+%H:%M:%S') $*"; }
 
 # ── Что оператор действительно хочет знать ───────────────────────────────────
@@ -420,6 +428,13 @@ while true; do
     # залип). Закрываем висящую тревогу — иначе она не закрылась бы никогда:
     # heartbeat у спокойно простаивающего агента протухает штатно.
     note_idle_cycle
+    # Обновившийся CLI подбираем ТОЛЬКО отсюда: чистый простой — единственная
+    # точка, где ход не идёт и терять нечего. Пары проходов ждём, чтобы не
+    # рестартовать в паузе между двумя сообщениями оператора.
+    if [ "$IDLE_COUNT" -ge "$CLI_UPDATE_IDLE_CYCLES" ] && cli_version_drifted "$SESSION"; then
+      restart_session "claude обновился: $(cli_version_label "$(cli_version_running_exe "$SESSION")") → $(cli_version_label "$(cli_version_installed_exe)")"
+      continue
+    fi
     continue
   fi
 
