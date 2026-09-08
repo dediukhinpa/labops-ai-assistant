@@ -36,10 +36,20 @@ run_install() {   # <файл-вывода> → код возврата в RC
   RC=0
   PATH="$TMP/bin:$PATH" HOME="$TMP/home" \
   SKIP_SECOND_BRAIN=1 SKIP_TG_PLUGIN=1 SKIP_USER_SETUP=1 \
-    bash "$HERE/install.sh" >"$1" 2>&1 </dev/null || RC=$?
+    bash "$REPO/install.sh" >"$1" 2>&1 </dev/null || RC=$?
 }
 
 mkdir -p "$TMP/home"
+
+# install.sh гоняем из КОПИИ, а не из рабочего дерева. Если проверка сломана, он
+# поедет дальше нулевого шага и дойдёт до `chmod +x orchestration/*.sh` — то есть
+# тест начнёт править файлы репозитория (поймано 08.09.2026: два скрипта молча
+# стали исполняемыми). Копии нужен только шаг 0, поэтому берём install.sh и
+# библиотеку, которую он сорсит.
+REPO="$TMP/repo"
+mkdir -p "$REPO/orchestration/lib"
+cp "$HERE/install.sh" "$REPO/install.sh"
+cp "$HERE/orchestration/lib/preflight.sh" "$REPO/orchestration/lib/preflight.sh"
 
 # 1. Закрытый хост (403) — установка обязана остановиться.
 make_curl_stub 403
