@@ -111,11 +111,12 @@ echo "── 7b. start-agent: проброс agent.env с placeholder-guard ─�
 # Регрессия сессии 2026-07-19: agent.env существовал, но start-agent.sh не
 # пробрасывал его в tmux-сессию → хуки не видели MCP_HOST/AGENT_BEARER даже при
 # развёрнутом бэкенде. Проверяем, что source + guard от CHANGE_ME на месте.
-if grep -q 'agent\.env' orchestration/start-agent.sh \
-   && grep -q 'CHANGE_ME' orchestration/start-agent.sh; then
-  ok "start-agent.sh source'ит agent.env и содержит placeholder-guard (CHANGE_ME)"
+# С 08.09.2026 окружение собирает lib/agent-env.sh (см. секцию 17), проверяем там.
+if grep -q 'agent\.env' orchestration/lib/agent-env.sh \
+   && grep -q 'CHANGE_ME' orchestration/lib/agent-env.sh; then
+  ok "agent-env.sh source'ит agent.env и содержит placeholder-guard (CHANGE_ME)"
 else
-  bad "start-agent.sh не пробрасывает agent.env / нет guard'а CHANGE_ME — recall не заработает даже с развёрнутым second_brain"
+  bad "agent-env.sh не пробрасывает agent.env / нет guard'а CHANGE_ME — recall не заработает даже с развёрнутым second_brain"
 fi
 
 echo "── 8. Страховочный flush в общий мозг (brain-flush.sh) ──"
@@ -185,27 +186,27 @@ fi
 echo "── 10. Изоляция per-agent окружения (создание агента из сессии агента) ──"
 # new-agent.sh почти всегда запускается ИЗ сессии другого агента, а tmux
 # new-session строит env сессии из ГЛОБАЛЬНОГО env tmux-сервера (загрязнённого
-# первым стартовавшим агентом) плюс -e — НЕ из env процесса start-agent.
-# Отсюда класс тихих отказов: переменную добавили в channel.env, но забыли в
-# списке -e → у нового агента чужой bot_id ("bot_id mismatch -> poller exited")
-# и мёртвый webhook-порт, без единой ошибки в логах. Гейт статический.
+# первым стартовавшим агентом) — НЕ из env процесса start-agent. Отсюда класс
+# тихих отказов: у нового агента чужой bot_id ("bot_id mismatch -> poller
+# exited") и мёртвый webhook-порт, без единой ошибки в логах. Гейт статический.
 NA="skills/create-agent/new-agent.sh"
-SA="orchestration/start-agent.sh"
 
 ch_vars="$(awk '/cat > "\$CH_ENV" <<ENV/,/^ENV$/' "$NA" | grep -oE '^[A-Z_]+=' | tr -d '=' | sort -u)"
-e_vars="$(awk '/^tmux new-session/,/^ *"\$CLAUDE_BIN"/' "$SA" | grep -oE '^[[:space:]]*-e [A-Z_]+' | awk '{print $2}' | sort -u)"
 unset_vars="$(sed -n '/^unset /,/^$/p' "$NA" | grep -oE '\b[A-Z][A-Z_]+\b' | grep -v '^unset$' | sort -u)"
 
 # Пустая выборка = гейт проходит вхолостую и ничего не охраняет. Валим явно.
-if [ -z "$ch_vars" ] || [ -z "$e_vars" ] || [ -z "$unset_vars" ]; then
-  bad "env-isolation: не удалось извлечь списки переменных (изменилась структура $NA/$SA?) — гейт не работает"
+if [ -z "$ch_vars" ] || [ -z "$unset_vars" ]; then
+  bad "env-isolation: не удалось извлечь списки переменных (изменилась структура $NA?) — гейт не работает"
 else
-  # A. всё, что пишется в channel.env, обязано пробрасываться через -e
-  missing_e="$(comm -23 <(echo "$ch_vars") <(echo "$e_vars") | tr '\n' ' ')"
-  if [ -n "${missing_e// /}" ]; then
-    bad "start-agent.sh: нет в списке tmux -e → утечёт значение агента-родителя: $missing_e"
+  # A. Раньше здесь сверялся список tmux -e: переменную добавили в channel.env,
+  # забыли в -e — и значение молча протекало от соседа по общему tmux-серверу.
+  # Списка больше нет (секция 17): channel.env сорсится целиком под `set -a`
+  # уже внутри панели, поэтому полнота обеспечена структурно, а не сверкой.
+  # Проверяем именно `set -a` — без него экспорта не будет вовсе.
+  if grep -qE 'set -a; \. "\$ch_env"; set \+a' orchestration/lib/agent-env.sh; then
+    ok "channel.env целиком экспортируется в сессию (set -a, без списка -e)"
   else
-    ok "все переменные channel.env пробрасываются через tmux -e ($(echo "$ch_vars" | wc -l) шт.)"
+    bad "agent-env.sh сорсит channel.env без set -a — переменные не доедут до сессии"
   fi
 
   # B. идентичность агента обязана сбрасываться в new-agent.sh.
@@ -241,7 +242,7 @@ fi
 if grep -q 'second_brain-tasks' agent-template/templates/mcp.json.template \
      && grep -q 'SECOND_BRAIN_TASKS_URL' agent-template/install.sh \
      && grep -q 'SECOND_BRAIN_TASKS_URL' skills/create-agent/new-agent.sh \
-     && grep -q 'SECOND_BRAIN_TASKS_URL' orchestration/start-agent.sh; then
+     && grep -q 'SECOND_BRAIN_TASKS_URL' orchestration/lib/agent-env.sh; then
   ok "доска задач подключается новому агенту (шаблон + install + new-agent + start-agent)"
 else
   bad "доска задач не доедет до нового агента — проверь SECOND_BRAIN_TASKS_URL"
@@ -617,6 +618,44 @@ if grep -q '"model": "{{PRIMARY_MODEL}}"' agent-template/templates/settings.json
   ok "выбранная модель попадает в settings.json агента"
 else
   bad "settings.json.template не подставляет PRIMARY_MODEL"
+fi
+
+echo "── 17. Секреты не попадают в командную строку ──"
+
+# 17a. Поведенческий тест: реальный запуск session-exec.sh с подставным claude,
+# который печатает свою cmdline и своё окружение.
+if bash orchestration/lib/agent-env.test.sh >/dev/null 2>&1; then
+  ok "agent-env: секреты в окружении, но не в argv — юнит-тест зелёный"
+else
+  bad "agent-env: юнит-тест провален (orchestration/lib/agent-env.test.sh)"
+fi
+
+# 17b. Регрессия 08.09.2026: секреты уезжали в сессию флагами tmux -e VAR=value,
+# то есть лежали в командной строке и были видны в обычном ps любому
+# пользователю машины — и не мельком, а до перезапуска всего роя, потому что
+# tmux-сервер живёт с cmdline поднявшей его команды.
+if grep -n 'tmux new-session' orchestration/start-agent.sh | grep -q . \
+   && ! grep -qE '^\s*-e (TELEGRAM|AGENT_BEARER|GROQ|MCP_|SECOND_BRAIN)' orchestration/start-agent.sh; then
+  ok "сессия поднимается без передачи секретов флагами"
+else
+  bad "секреты снова уходят в командную строку tmux (-e VAR=value)"
+fi
+
+# 17c. Мало убрать -e: сам start-agent.sh не должен затягивать секреты в СВОЁ
+# окружение, иначе они снова окажутся в cmdline всего, что он запускает дальше.
+# Отсюда вызов резолва в подоболочке — только ради кода возврата.
+if grep -q 'if ! ( resolve_agent_env "\$AGENT" >/dev/null ); then' orchestration/start-agent.sh; then
+  ok "start-agent проверяет окружение, не втягивая его в себя"
+else
+  bad "start-agent резолвит секреты в собственное окружение"
+fi
+
+# 17d. Панель обязана СТАТЬ claude: без exec pane_pid укажет на обёртку, и мимо
+# промахнутся детектор дрейфа версии и снятие агента.
+if grep -qE '^exec "\$CLAUDE_BIN"' orchestration/session-exec.sh; then
+  ok "обёртка панели делает exec в claude"
+else
+  bad "session-exec.sh не делает exec — pane_pid укажет на bash"
 fi
 
 echo

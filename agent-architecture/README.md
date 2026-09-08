@@ -134,7 +134,7 @@ flowchart LR
     direction TB
     SD["systemd: claude-agent-&lt;agent&gt;.service<br/>Restart=on-failure, RestartSec=15"]
     WD["watchdog.sh &lt;agent&gt;<br/>eternal supervisor (daemon)"]
-    SA["start-agent.sh &lt;agent&gt;<br/>injects env/secrets, creates the session"]
+    SA["start-agent.sh &lt;agent&gt;<br/>creates the session; session-exec.sh builds env in the pane"]
     TM["tmux session labops-&lt;agent&gt;"]
     SD -->|ExecStart| WD
     WD -->|if no session / frozen| SA
@@ -164,7 +164,7 @@ flowchart LR
 
 1. **systemd** brings up the `claude-agent-<agent>.service` unit (one per agent). The main process of the service is not `claude` but `watchdog.sh`.
 2. **`watchdog.sh <agent>`** — a long-lived daemon. If the tmux session is missing or the pane is frozen, it calls `start-agent.sh`. It also "reaps" an orphaned channel server (bun).
-3. **`start-agent.sh <agent>`** reads secrets from `.claude/secrets/` (chmod 600, never hardcoded), sources `agent.env` (second_brain env, forwarded into the session only when `AGENT_BEARER` is real — the `CHANGE_ME` placeholder keeps recall off), creates the tmux session `labops-<agent>`, and launches `claude --settings <workspace>/settings.json … server:labops-channel` in it (the explicit `--settings` matters: the workspace is reached via a symlinked cwd, which Claude Code canonicalizes, so hooks would otherwise not load). Readiness is checked by facts, not TUI text: the channel webhook port is listening and/or the heartbeat file has advanced (current Claude builds no longer print `Listening for channel`).
+3. **`start-agent.sh <agent>`** creates the tmux session `labops-<agent>` with **`session-exec.sh <agent>`** as the pane command. That wrapper builds the environment **inside the pane** via `lib/agent-env.sh::resolve_agent_env` — reading secrets from `channel.env` and `.claude/secrets/` (chmod 600, never hardcoded) and sourcing `agent.env` (second_brain env reaches the session only when `AGENT_BEARER` is real; the `CHANGE_ME` placeholder is scrubbed and recall stays off) — then `exec`s into `claude --settings <workspace>/settings.json … server:labops-channel` (the explicit `--settings` matters: the workspace is reached via a symlinked cwd, which Claude Code canonicalizes, so hooks would otherwise not load). Readiness is checked by facts, not TUI text: the channel webhook port is listening and/or the heartbeat file has advanced (current Claude builds no longer print `Listening for channel`).
 4. **`claude`** (the engine) loads the channel plugin, spawns the child bun channel process over stdio, and connects the second_brain MCP over HTTP+Bearer.
 
 ### Liveness model (self-healing) in `watchdog.sh`
@@ -373,6 +373,8 @@ Most scripts in [`orchestration/`](orchestration/) are trigger-driven "one-shots
 | `update-rules.sh`, `tg-send.sh`, `second_brain-heartbeat.py` | helpers | rules updates, sending to TG, heartbeat client |
 | `lib/task-poller-launch.sh` | sourced by `watchdog.sh` / `start-agent.sh` | starts and supervises the per-agent board poller (the one long-running exception) |
 | `stop-agent.sh <agent>` | the unit's `ExecStop` | tears down exactly one agent — its tmux session, its board poller, its orphaned bun channel |
+| `session-exec.sh` | the tmux pane command | builds the session environment inside the pane, then `exec`s into `claude` — no secrets on the command line |
+| `lib/agent-env.sh` | sourced by `start-agent.sh` / `session-exec.sh` | the single place that assembles session env: `channel.env` → `secrets/` → `agent.env` |
 | `lib/cli-version.sh` | sourced by `watchdog.sh` | spots a session still executing an outdated Claude Code binary after the native installer moved the symlink |
 
 </details>
