@@ -548,6 +548,44 @@ else
   bad "smoke зелёный поверх сессии со старым .mcp.json"
 fi
 
+echo "── 16. Модель задаётся алиасом, а не прибитой версией ──"
+
+# 16a. Регрессия 08.09.2026: в подсказках оператору стояло «opus = Opus 4.8», и
+# это молча устарело — алиас opus давно резолвится в следующее поколение. Номер
+# версии в тексте устаревает всегда, алиас — никогда. Комментарии из проверки
+# исключаем: объяснение, ПОЧЕМУ версий тут быть не должно, само содержит пример.
+MODEL_FILES="skills/create-agent/new-agent.sh agent-template/install.sh"
+MODEL_FILES="$MODEL_FILES $(ls agent-template/templates/*.template 2>/dev/null)"
+pinned=""
+for f in $MODEL_FILES; do
+  [ -f "$f" ] || continue
+  if grep -vE '^[[:space:]]*#' "$f" | grep -qE '(Opus|Sonnet|Haiku|Fable)[[:space:]]+[0-9]'; then
+    pinned="$pinned $f"
+  fi
+done
+if [ -z "$pinned" ]; then
+  ok "в подсказках и шаблонах нет прибитых номеров версий модели"
+else
+  bad "прибитая версия модели устареет молча:$pinned"
+fi
+
+# 16b. Оператору должен предлагаться алиас последней модели и возможность
+# закрепить версию полным именем — иначе выбор между ними негде сделать.
+if grep -qE 'ask PRIMARY_MODEL.*алиас последней' skills/create-agent/new-agent.sh \
+   && grep -qE 'ask PRIMARY_MODEL.*полное имя' skills/create-agent/new-agent.sh; then
+  ok "подсказка объясняет и алиас, и закрепление версии"
+else
+  bad "подсказка модели не объясняет разницу алиаса и полного имени"
+fi
+
+# 16c. PRIMARY_MODEL по-прежнему доезжает до settings.json — без этого агент
+# молча уедет на дефолт CLI мимо выбора оператора.
+if grep -q '"model": "{{PRIMARY_MODEL}}"' agent-template/templates/settings.json.template; then
+  ok "выбранная модель попадает в settings.json агента"
+else
+  bad "settings.json.template не подставляет PRIMARY_MODEL"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
