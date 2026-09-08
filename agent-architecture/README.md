@@ -208,6 +208,8 @@ Mode (B) fires **only** on a non-empty input field — otherwise a clean idle pr
 > [!NOTE]
 > **Operator alerts.** On each of these events the watchdog also pings the Operator in Telegram (via the agent's own bot, `tg-send.sh` → `lib/notify.sh`): a session restart **with its cause**, a lost/unrendered prompt, an unsubmitted ("stuck") prompt, and a reaped orphaned channel server. Alerts are best-effort (a failed send never disrupts the watchdog) and throttled per-message, so flapping doesn't spam. Toggle with `WATCHDOG_TG_ALERTS` (default `1`), tune `WATCHDOG_ALERT_COOLDOWN` (seconds, default `300`), or route to a dedicated chat with `WATCHDOG_ALERT_CHAT_ID`. The same `lib/notify.sh` also powers **`second_brain-monitor.sh`** — a systemd timer that watches the MCP servers and workers (`systemctl is-active` + an HTTP `/mcp` probe that catches *wedged-but-alive*, + restart-loop detection) and alerts on the same channel; point `MONITOR_AGENT` at the agent whose bot relays ops alerts.
 
+> **Picking up a Claude Code update.** The native installer updates the CLI on its own — it downloads the new build to `~/.local/share/claude/versions/<version>` and repoints `~/.local/bin/claude`. A process that is already running keeps executing the old inode, so a session that only restarts on failure can sit on a stale build for weeks (measured 2026-09-08: sessions were two versions and five days behind). That matters beyond bug fixes — the model aliases (`opus`, `sonnet`, `fable`) are resolved by the CLI at session start, so an old binary quietly pins the agent to a previous model generation and does not know a newly added alias at all. The watchdog now compares the binary the session executes against the one on disk and restarts the session to adopt it — **only from the clean-idle branch**, after `WATCHDOG_CLI_UPDATE_IDLE_CYCLES` (default `2`, ~1 minute) idle cycles, so no turn in flight is ever interrupted. Detection is fail-open: anything uncertain counts as "no drift".
+
 ---
 
 ## Agent memory layers
@@ -371,6 +373,7 @@ Most scripts in [`orchestration/`](orchestration/) are trigger-driven "one-shots
 | `update-rules.sh`, `tg-send.sh`, `second_brain-heartbeat.py` | helpers | rules updates, sending to TG, heartbeat client |
 | `lib/task-poller-launch.sh` | sourced by `watchdog.sh` / `start-agent.sh` | starts and supervises the per-agent board poller (the one long-running exception) |
 | `stop-agent.sh <agent>` | the unit's `ExecStop` | tears down exactly one agent — its tmux session, its board poller, its orphaned bun channel |
+| `lib/cli-version.sh` | sourced by `watchdog.sh` | spots a session still executing an outdated Claude Code binary after the native installer moved the symlink |
 
 </details>
 
