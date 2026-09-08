@@ -658,6 +658,43 @@ else
   bad "session-exec.sh не делает exec — pane_pid укажет на bash"
 fi
 
+echo "── 18. Предполётная проверка доступности хостов ──"
+
+# 18a. Классификация ответа хоста (403 ≠ нет связи) — на подставном curl.
+if bash orchestration/lib/preflight.test.sh >/dev/null 2>&1; then
+  ok "preflight: разбор кодов ответа — юнит-тест зелёный"
+else
+  bad "preflight: юнит-тест провален (orchestration/lib/preflight.test.sh)"
+fi
+
+# 18b. Поведение самого install.sh: реальный запуск с закрытым хостом должен
+# останавливать установку на шаге 0, до пакетов и создания пользователя.
+if bash install-preflight.test.sh >/dev/null 2>&1; then
+  ok "install.sh останавливается на закрытом хосте — юнит-тест зелёный"
+else
+  bad "preflight в install.sh: юнит-тест провален (install-preflight.test.sh)"
+fi
+
+# 18c. Регрессия 08.09.2026: `curl -fsSL … | bash` под set -e + pipefail обрывал
+# установку молча — curl отдавал 22, конвейер падал, и die с объяснением уже не
+# выполнялся. Оператор видел только «curl: (22)» и внезапный конец.
+# Комментарии исключаем: объяснение, ПОЧЕМУ конвейера тут быть не должно, само
+# содержит его пример — ровно та же ловушка, что в проверках 14b и 16a.
+if grep -vE '^[[:space:]]*#' install.sh | grep -qE 'curl [^|]*\| *bash'; then
+  bad "установка Claude Code снова идёт конвейером — ошибка проглотится молча"
+else
+  ok "claude ставится без конвейера curl|bash — код ошибки не теряется"
+fi
+
+# 18d. claude.ai — только редирект; дистрибутив лежит на downloads.claude.ai за
+# другой инфраструктурой. Обход должен остаться, иначе 403 на фронте снова
+# заблокирует установку целиком.
+if grep -q 'downloads.claude.ai/claude-code-releases/bootstrap.sh' install.sh; then
+  ok "при недоступном claude.ai есть прямой обход на downloads.claude.ai"
+else
+  bad "нет обхода мимо claude.ai — 403 на фронте снова остановит установку"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
