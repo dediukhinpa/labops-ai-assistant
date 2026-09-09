@@ -57,6 +57,47 @@ has_prompt "$AUTH_DEAD"      && ok "auth-dead pane still renders a prompt (why i
 is_stuck_input "$AUTH_DEAD"  && bad "auth-dead pane misread as stuck input" \
                              || ok "auth-dead pane is not stuck input (nothing typed)"
 
+# ---- мастер первого запуска -------------------------------------------------
+# Реальный хвост панели developer 2026-09-09, снятый ровно так, как его берёт
+# watchdog (capture-pane -S -8): сессия перезапустилась на обновившийся CLI и
+# встала на выборе темы. Простояла двое суток — канал всё это время был мёртв.
+ONBOARDING='Welcome to Claude Code v2.1.263
+
+ Let'"'"'s get started.
+
+ Choose the text style that looks best with your terminal
+ To change this later, run /theme
+
+   1. Auto (match terminal)
+ ❯ 2. Dark mode ✔
+   3. Light mode
+   4. Dark mode (colorblind-friendly)'
+
+# Второй шаг мастера — на нём сессия встаёт точно так же.
+ONBOARDING_LOGIN=' Select login method:
+ ❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise
+   2. Anthropic Console account · API usage billing'
+
+looks_like_onboarding "$ONBOARDING"       && ok "мастер (выбор темы) распознан" \
+                                          || bad "мастер (выбор темы) пропущен"
+looks_like_onboarding "$ONBOARDING_LOGIN" && ok "мастер (способ входа) распознан" \
+                                          || bad "мастер (способ входа) пропущен"
+looks_like_onboarding "$IDLE"    && bad "простой принят за мастер"      || ok "простой — не мастер"
+looks_like_onboarding "$ACTIVE"  && bad "активный ход принят за мастер" \
+                                 || ok "активный ход — не мастер"
+looks_like_onboarding "$OVERLAY" && bad "оверлей принят за мастер"      || ok "оверлей — не мастер"
+looks_like_onboarding "$DEAD"    && bad "пустая панель принята за мастер" \
+                                 || ok "пустая панель — не мастер"
+# И — главное — почему нужна отдельная ветка ДО has_prompt: «❯» стоит у
+# выбранного пункта меню, поэтому мастер выглядит здоровым простоем.
+has_prompt "$ONBOARDING"     && ok "мастер рисует «❯» (почему он и прятался)" \
+                             || bad "у мастера не нашлось «❯» — проверка потеряла смысл"
+# Мастер выглядит и как застрявший ввод: после «❯» стоит текст пункта меню.
+# Это не лечится в предикате — «2. Dark mode ✔» неотличимо от набранной строки.
+# Отсюда требование к порядку веток в watchdog.sh, проверяемое ниже.
+is_stuck_input "$ONBOARDING" && ok "мастер похож и на застрявший ввод (вторая причина прятаться)" \
+                             || bad "мастер уже не похож на застрявший ввод — проверьте ветку (B)"
+
 # ---- stuck-input detection (pure) ------------------------------------------
 STUCK='────────────────────
 ❯ что дальше по плану, босс
@@ -226,8 +267,30 @@ else
   echo "· tmux not installed — skipping live pane checks"
 fi
 
-# ---- watchdog wiring: the ladder must exist and precede the restart ---------
+# ---- watchdog wiring: ветка мастера должна стоять раньше веток простоя ------
 W="$HERE/../watchdog.sh"
+# Мастер похож и на промпт, и на застрявший ввод, поэтому распознать его надо
+# ДО обеих веток — иначе он снова уедет в «здоровый простой», как 07–09.09.2026.
+# Якорь — сама ветка, а не сброс ладдера выше по циклу: с «первым вхождением»
+# тест проходил бы и в том случае, если ветку перенесли вниз, под (B).
+onb_line="$(grep -n '^  if looks_like_onboarding "\$TAIL"; then' "$W" | head -1 | cut -d: -f1)"
+noprompt_line="$(grep -n 'if ! has_prompt "\$TAIL"' "$W" | head -1 | cut -d: -f1)"
+stuck_line="$(grep -n '# (B) Idle prompt' "$W" | head -1 | cut -d: -f1)"
+if [ -n "$onb_line" ] && [ -n "$noprompt_line" ] && [ "$onb_line" -lt "$noprompt_line" ]; then
+  ok "ветка мастера стоит до проверки промпта (строка $onb_line < $noprompt_line)"
+else
+  bad "ветку мастера обошли: она должна быть до has_prompt"
+fi
+if [ -n "$onb_line" ] && [ -n "$stuck_line" ] && [ "$onb_line" -lt "$stuck_line" ]; then
+  ok "ветка мастера стоит до разбора застрявшего ввода (строка $onb_line < $stuck_line)"
+else
+  bad "ветку мастера обошли: она должна быть до is_stuck_input"
+fi
+if grep -q 'report_down "мастер первого запуска' "$W"; then
+  ok "мастер, переживший рестарт, эскалируется оператору"
+else
+  bad "мастер после рестарта никому не сообщается — снова тихая поломка"
+fi
 if grep -q 'send-keys .*Escape' "$W" && grep -q 'overlay' "$W"; then
   ok "watchdog.sh tries Escape before restarting on a missing prompt"
 else
