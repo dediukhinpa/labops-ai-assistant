@@ -25,7 +25,7 @@
     │   │       └── bot-token-agent2
     │   ├── skills/                    shared skills (symlinked)
     │   │   ├── groq-voice/            voice transcription
-    │   │   ├── superpowers/           TDD, debugging, planning, review
+    │   │   ├── memory-consolidate/    свёртка эпизодической памяти
     │   │   └── ...                    (10 base skills total)
     │   └── gateway/                   Telegram gateway
     │       ├── gateway.py

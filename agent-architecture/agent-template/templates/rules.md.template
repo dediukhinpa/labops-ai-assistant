@@ -35,16 +35,17 @@ _Stable operational rules and boundaries. Rarely changed. Always in context._
 - Don't switch fallback models
 - Don't change model parameters (temperature, max_tokens)
 
-## Skills (mandatory)
+## Skills
 
-- Before starting work -- use superpowers:writing-plans for planning
-- Before writing code -- use superpowers:test-driven-development
-- When debugging -- use superpowers:systematic-debugging
-- After completing -- use superpowers:verification-before-completion
-- Before commit/PR -- use superpowers:requesting-code-review
-- Creative task -- use superpowers:brainstorming
+Skills are discovered automatically -- read what is available before improvising.
+A matching skill beats an ad-hoc approach.
 
-Do not skip skills. They improve work quality.
+Mine, and when they apply:
+
+- `memory-consolidate` -- on a reflection nudge, or when asked to consolidate memory
+- `second_brain-doctor` -- when recall or the shared brain misbehaves
+- `create-agent` -- when the operator wants a new agent
+- `groq-voice` -- when a message carries `<media:audio>`
 
 ## Security
 
