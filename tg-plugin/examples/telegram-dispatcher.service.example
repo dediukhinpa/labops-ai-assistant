@@ -1,0 +1,33 @@
+[Unit]
+Description=LabOps Telegram dispatcher (общий бот → приёмник агента пользователя)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=<service-user>
+Group=<service-user>
+
+# Токен общего бота лежит только здесь, режим 600. В ExecStart его быть не
+# может: командная строка процесса видна всей системе через /proc.
+EnvironmentFile=/etc/labops-plugin/dispatcher.env
+
+Environment=HOME=/home/<service-user>
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+WorkingDirectory=/home/<service-user>/labops-ai-assistant/tg-plugin/plugin
+ExecStart=/usr/local/bin/bun run src/dispatcher/main.ts
+
+Restart=on-failure
+RestartSec=10
+
+# Диспетчер ходит только на loopback (приёмники агентов) и в api.telegram.org.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/<service-user>/.claude-lab/shared/state
+
+[Install]
+WantedBy=multi-user.target
