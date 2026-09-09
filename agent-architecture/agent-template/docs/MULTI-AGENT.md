@@ -185,7 +185,7 @@ Telegram
 │   │   └── media-inbound/            # Downloaded media
 │   └── skills/                        # Shared skills (symlinked)
 │       ├── groq-voice/               # Voice transcription
-│       ├── superpowers/              # TDD, debugging, planning, review
+│       ├── memory-consolidate/       # свёртка эпизодической памяти
 │       └── ...                       # (10 base skills total)
 ```
 
@@ -396,7 +396,7 @@ Why: fewer places to manage, rotate, and audit. Agents access via symlinks or en
 
 | Type | Path | Example | Who uses |
 |------|------|---------|----------|
-| **Shared** | `shared/skills/` | groq-voice, superpowers, perplexity-research | All agents (symlinked) |
+| **Shared** | `agent-architecture/skills` | groq-voice, memory-consolidate, second_brain-doctor, … | All agents (symlinked) |
 | **Specialized** | `{agent}/.claude/skills/` | custom agent-specific skills | Only that agent |
 
 Shared skills are symlinked into each agent's `skills/` at install time. Specialized skills live only in the agent's workspace.

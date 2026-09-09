@@ -2,7 +2,8 @@
 
 Essential commands for daily work with Claude Code. Organized by workflow.
 
-> **NOTE:** Some commands require the [Superpowers](https://github.com/pcvelz/superpowers) plugin. Install it first (see SETUP-GUIDE.md step 4).
+> **NOTE:** Skills live in `agent-architecture/skills` and are symlinked into every
+> workspace -- nothing extra to install.
 
 ## Core Workflow
 
