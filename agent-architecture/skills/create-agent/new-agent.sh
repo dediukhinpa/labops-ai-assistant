@@ -347,6 +347,13 @@ if [ -n "$TG_PLUGIN_DIR" ]; then
     fi
     mkdir -p "$STATE_DIR"
     umask 077
+    # Имя агента задаёт человек, и пробел в нём («LabOps App») превращал строку
+    # channel.env в команду: сорсинг падал с «App: command not found», сессия не
+    # поднималась вообще, канал не занимал порт (замер 09.09.2026). Кавычим
+    # ТОЛЬКО это значение: остальные — идентификаторы, пути и порт, пробелов в
+    # них нет, а сам порт читается отсюда регуляркой `=\K[0-9]+` (см. выше) и
+    # сравнивается по `=<порт>$` при поиске свободного — кавычки сломали бы обе.
+    AGENT_NAME_QUOTED="'$(printf '%s' "$AGENT_NAME" | sed "s/'/'\\\\''/g")'"
     cat > "$CH_ENV" <<ENV
 TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
 TELEGRAM_EXPECTED_BOT_ID=$BOT_ID
@@ -359,7 +366,7 @@ TELEGRAM_WEBHOOK_HOST=127.0.0.1
 TELEGRAM_WEBHOOK_PORT=${TELEGRAM_WEBHOOK_PORT:-6000}
 TELEGRAM_MEMORY_ENABLED=true
 TELEGRAM_MEMORY_WORKSPACE=$WORKSPACE
-TELEGRAM_MEMORY_AGENT_LABEL=$AGENT_NAME
+TELEGRAM_MEMORY_AGENT_LABEL=$AGENT_NAME_QUOTED
 TELEGRAM_MEMORY_SOURCE_TAG=tg
 ENV
     chmod 600 "$CH_ENV"

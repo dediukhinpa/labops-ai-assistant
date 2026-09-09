@@ -155,6 +155,16 @@ else
   ok "плагин нигде не линкуется симлинком в воркспейс"
 fi
 
+echo "── 9a. channel.env сорсится при любом имени агента ──"
+# Регрессия 09.09.2026: имя «LabOps App» уехало в channel.env без кавычек,
+# сорсинг падал на `App: command not found`, и агент, «активный» по systemd,
+# не поднимал ни сессию, ни порт канала.
+if bash skills/create-agent/channel-env.test.sh >/dev/null 2>&1; then
+  ok "channel.env: пробел в имени агента не ломает сорсинг — юнит-тест зелёный"
+else
+  bad "channel.env: юнит-тест провален (skills/create-agent/channel-env.test.sh)"
+fi
+
 echo "── 9b. Классификатор панели: overlay ≠ зависание (lib/pane.sh) ──"
 if bash orchestration/lib/pane.test.sh >/dev/null 2>&1; then
   ok "pane.sh: слеш-команда не принимается за смерть TUI — юнит-тест зелёный"
