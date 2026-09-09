@@ -74,4 +74,51 @@ CLI_VERSION_CLAUDE_BIN="$TMP/bin/claude"
 # 8. Метка неизвестного пути не роняет вызывающего.
 [ "$(cli_version_label '')" = "неизвестна" ] || fail "пустой путь должен давать «неизвестна»"
 
-echo "OK: cli-version.sh — 8 проверок пройдено"
+# ── Метка пройденного онбординга ─────────────────────────────────────────────
+export CLI_VERSION_CONFIG_JSON="$TMP/claude.json"
+ln -sfn "$TMP/versions/2.0" "$TMP/bin/claude"
+cfg_get() {   # <файл> <ключ>
+  python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))" "$1" "$2"
+}
+
+# 9. В существующий конфиг метка дописывается, а чужие ключи остаются на месте.
+printf '{"projects": {"/home/agent": {"hasTrustDialogAccepted": true}}}' \
+  > "$CLI_VERSION_CONFIG_JSON"
+cli_version_mark_onboarding_done
+[ "$(cfg_get "$CLI_VERSION_CONFIG_JSON" hasCompletedOnboarding)" = "True" ] \
+  || fail "метка онбординга не проставлена"
+[ "$(cfg_get "$CLI_VERSION_CONFIG_JSON" lastOnboardingVersion)" = "2.0" ] \
+  || fail "записана не та версия"
+python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d['projects']['/home/agent']['hasTrustDialogAccepted'] else 1)
+" "$CLI_VERSION_CONFIG_JSON" || fail "засев затёр подтверждённое доверие к каталогу"
+
+# 10. Версия обновилась — метка едет следом, иначе мастер выйдет снова.
+ln -sfn "$TMP/versions/1.0" "$TMP/bin/claude"
+cli_version_mark_onboarding_done
+[ "$(cfg_get "$CLI_VERSION_CONFIG_JSON" lastOnboardingVersion)" = "1.0" ] \
+  || fail "метка не поехала за сменой версии"
+
+# 11. Конфига нет — создаётся с нуля (первый запуск агента на чистом хосте).
+rm -f "$CLI_VERSION_CONFIG_JSON"
+cli_version_mark_onboarding_done
+[ "$(cfg_get "$CLI_VERSION_CONFIG_JSON" hasCompletedOnboarding)" = "True" ] \
+  || fail "на чистом хосте конфиг не создан"
+
+# 12. Битый конфиг НЕ затирается: его настоящее содержимое знает только CLI, а
+# пустышка стоила бы оператору всех подтверждённых доверий.
+printf '{сломано' > "$CLI_VERSION_CONFIG_JSON"
+cli_version_mark_onboarding_done
+[ "$(cat "$CLI_VERSION_CONFIG_JSON")" = '{сломано' ] || fail "битый конфиг затёрт"
+
+# 13. Бинаря нет — версия неизвестна, врать метке нельзя: конфиг не трогаем.
+printf '{}' > "$CLI_VERSION_CONFIG_JSON"
+CLI_VERSION_CLAUDE_BIN="$TMP/bin/nonexistent-claude" cli_version_mark_onboarding_done
+[ "$(cat "$CLI_VERSION_CONFIG_JSON")" = '{}' ] || fail "без бинаря записана выдуманная версия"
+
+# 14. Временный файл за собой не оставляем — конфиг общий на все сессии хоста.
+[ ! -e "$CLI_VERSION_CONFIG_JSON.tmp" ] || fail "остался временный файл рядом с конфигом"
+
+echo "OK: cli-version.sh — 14 проверок пройдено"

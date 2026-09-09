@@ -582,6 +582,19 @@ else
   bad "cli-version не проверяет существование бинаря перед readlink"
 fi
 
+# 15e. Регрессия 09.09.2026: обновившийся CLI встретил перезапущенные сессии
+# мастером первого запуска, и обе простояли на выборе темы двое суток. Метку
+# онбординга надо проставлять ДО подъёма сессии, иначе перезапуск под
+# обновление (15b) сам же агента и обездвиживает.
+mark_grep="$(grep -n 'cli_version_mark_onboarding_done' orchestration/start-agent.sh | tail -1)"
+mark_line="${mark_grep%%:*}"
+tmux_line="$(grep -n 'tmux new-session' orchestration/start-agent.sh | head -1 | cut -d: -f1)"
+if [ -n "$mark_line" ] && [ -n "$tmux_line" ] && [ "$mark_line" -lt "$tmux_line" ]; then
+  ok "метка онбординга ставится до подъёма сессии"
+else
+  bad "start-agent не помечает онбординг пройденным — мастер остановит сессию"
+fi
+
 echo "── 16. Модель задаётся алиасом, а не прибитой версией ──"
 
 # 16a. Регрессия 08.09.2026: в подсказках оператору стояло «opus = Opus 4.8», и

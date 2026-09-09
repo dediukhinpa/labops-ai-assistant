@@ -9,6 +9,9 @@ export PATH="$HOME/.local/bin:$PATH"
 source "$(dirname "$0")/lib/agents.sh"
 # Единый запуск/надзор task-поллера (тот же код использует watchdog для supervise).
 source "$(dirname "$0")/lib/task-poller-launch.sh"
+# Метка пройденного онбординга перед стартом — иначе обновившийся CLI встретит
+# сессию мастером первого запуска (см. cli_version_mark_onboarding_done).
+source "$(dirname "$0")/lib/cli-version.sh"
 
 AGENT="$1"
 SESSION="labops-$AGENT"
@@ -113,6 +116,11 @@ PY
 pretrust_folder "$WORKSPACE"
 pretrust_folder "$PLUGIN_CWD"
 pretrust_folder "$(readlink -f "$PLUGIN_CWD" 2>/dev/null || true)"
+
+# Тот же приём и по той же причине, но для ГЛОБАЛЬНОГО гейта: обновившийся CLI
+# показывает мастер первого запуска (тема, затем вход), и сессия встаёт на нём
+# насмерть — до промпта не доходит, канал порт не поднимает.
+cli_version_mark_onboarding_done
 
 # Панель запускает session-exec.sh, а он уже собирает окружение и становится
 # claude. Секретов в командной строке больше нет — в ps виден только агент.
