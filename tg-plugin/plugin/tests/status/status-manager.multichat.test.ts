@@ -72,6 +72,7 @@ function makeConfig(): AppConfig {
   return {
     bot_id: 100000002,
     dm_only: false,
+    ingress: 'poll' as const,
     allowed_user_ids: [100000001],
     allowed_chat_ids: [100000001, -1003784643974],
     status: {

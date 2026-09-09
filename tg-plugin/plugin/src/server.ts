@@ -1068,20 +1068,31 @@ try {
 // which dispatches to the bot.on(...) handlers registered above.
 // ─────────────────────────────────────────────────────────────────────
 
-poller = new TelegramPoller({
-  bot,
-  config,
-  statePaths,
-  log,
-  onUpdate: async (update) => {
-    await bot.handleUpdate(update)
-  },
-})
+// В режиме ingress='external' токеном владеет общий диспетчер: он
+// единственный читает getUpdates и приносит входящие в POST /hooks/agent.
+// Свой поллер здесь не поднимаем — два читателя одного токена растащили
+// бы апдейты между агентами. Отправка ниже по коду не затрагивается.
+if (config.ingress === 'poll') {
+  poller = new TelegramPoller({
+    bot,
+    config,
+    statePaths,
+    log,
+    onUpdate: async (update) => {
+      await bot.handleUpdate(update)
+    },
+  })
+} else {
+  log.info('ingress=external — свой поллер не запускаем, входящие идёт от диспетчера')
+}
 
 // Register the OOB command list with Telegram so they appear in the
 // client autocomplete («/» prefix in chat). Best-effort: a failure here
 // (no internet, token revoked) must not block the poller from starting.
 void (async () => {
+  // Список команд глобален для токена, поэтому на общем боте его
+  // регистрирует диспетчер — иначе каждый агент перетирал бы чужой.
+  if (config.ingress !== 'poll') return
   try {
     await bot.api.setMyCommands(
       BOT_COMMANDS.map((c) => ({ command: c.command, description: c.description })),
@@ -1162,8 +1173,10 @@ void (async () => {
 
   // Poller starts ONLY after recovery has resolved. The await chain
   // above is what closes the race in M1.
+  if (poller === undefined) return
+
   try {
-    await poller!.start()
+    await poller.start()
   } catch (err) {
     if (shuttingDown) return
     log.error('poller exited with error', {

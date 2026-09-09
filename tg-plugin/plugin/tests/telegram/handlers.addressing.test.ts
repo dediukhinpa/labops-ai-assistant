@@ -52,6 +52,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     bot_id: 100000002,
     dm_only: true,
+    ingress: 'poll' as const,
     allowed_user_ids: [OPERATOR_USER_ID],
     allowed_chat_ids: [OPERATOR_USER_ID],
     status: {

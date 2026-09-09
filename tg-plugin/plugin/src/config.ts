@@ -47,6 +47,14 @@ export const AppConfigSchema = z.object({
   // ignored. Kept here for backward compatibility with existing
   // config.json files; do NOT remove without a migration pass.
   dm_only: z.boolean().default(true),
+  // Приём входящих апдейтов. 'poll' — агент сам ходит в getUpdates (по
+  // умолчанию: так живут все существующие агенты). 'external' — токеном
+  // владеет общий диспетчер, он единственный поллит бота и доставляет
+  // входящие в POST /hooks/agent. Второй режим существует потому, что
+  // getUpdates отдаёт апдейт ровно одному читателю: два поллера на одном
+  // токене воровали бы сообщения друг у друга. Отправка (sendMessage) не
+  // эксклюзивна и работает одинаково в обоих режимах.
+  ingress: z.enum(['poll', 'external']).default('poll'),
   allowed_user_ids: z.array(z.number().int().positive()).min(1).default([100000001]),
   allowed_chat_ids: z.array(z.union([z.number(), z.string()])).default([100000001]),
   workspace_root: z.string().optional(),
@@ -287,6 +295,7 @@ export const RuntimeEnvSchema = z.object({
   // chat_not_allowed silently drops every inbound DM.
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
   TELEGRAM_WORKSPACE_ROOT: z.string().optional(),
+  TELEGRAM_INGRESS: z.enum(['poll', 'external']).optional(),
   TELEGRAM_STATUS_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   TELEGRAM_ALBUM_FLUSH_MS: z.coerce.number().int().positive().optional(),
   GROQ_API_KEY: z.string().optional(),
@@ -452,6 +461,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   }
   if (parsedEnv.TELEGRAM_WORKSPACE_ROOT !== undefined) {
     merged.workspace_root = parsedEnv.TELEGRAM_WORKSPACE_ROOT
+  }
+  if (parsedEnv.TELEGRAM_INGRESS !== undefined) {
+    merged.ingress = parsedEnv.TELEGRAM_INGRESS
   }
 
   // Nested overrides: status.interval_ms, album.flush_ms, webhook.{host,port}

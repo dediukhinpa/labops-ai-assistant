@@ -25,6 +25,7 @@ import type { AppConfig } from '../../src/config.js'
 const voiceConfig: AppConfig = {
   bot_id: 1,
   dm_only: true,
+  ingress: 'poll' as const,
   allowed_user_ids: [1],
   allowed_chat_ids: [1],
   status: { enabled: true, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, suppress_typing_bubble: false },

@@ -464,3 +464,32 @@ describe('loadConfig', () => {
     expect(paths.logs.ask_user_question).toBe(join(stateDir, 'logs', 'ask-user-question.jsonl'))
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────
+// ingress — приём апдейтов: свой поллер или внешний диспетчер.
+//
+// getUpdates отдаёт апдейт ровно одному читателю, поэтому на общем боте
+// поллер может быть только один. Агенты за диспетчером переводятся в
+// 'external' и приём не запускают; отправка (sendMessage) не эксклюзивна
+// и работает в обоих режимах.
+// ─────────────────────────────────────────────────────────────────────
+
+describe('loadConfig — ingress', () => {
+  test('defaults to poll so existing agents are untouched', () => {
+    expect(loadConfig(env()).ingress).toBe('poll')
+  })
+
+  test('reads external from config.json', () => {
+    writeFileSync(join(stateDir, 'config.json'), JSON.stringify({ ingress: 'external' }))
+    expect(loadConfig(env()).ingress).toBe('external')
+  })
+
+  test('env override wins over config.json', () => {
+    writeFileSync(join(stateDir, 'config.json'), JSON.stringify({ ingress: 'external' }))
+    expect(loadConfig(env({ TELEGRAM_INGRESS: 'poll' })).ingress).toBe('poll')
+  })
+
+  test('rejects an unknown mode instead of silently polling', () => {
+    expect(() => loadConfig(env({ TELEGRAM_INGRESS: 'webhook' }))).toThrow()
+  })
+})
