@@ -205,6 +205,24 @@ Mode (B) fires **only** on a non-empty input field — otherwise a clean idle pr
 > `KillMode=process` plus `ExecStop=stop-agent.sh <agent>`: each unit tears down
 > its own agent and leaves the shared server and its neighbours alone.
 
+> **tmux targets are always exact.** Every script addresses an agent's session
+> as `=<name>` (`tmux has-session -t "=labops-app"`) and its pane as
+> `=<name>:^.{top-left}`. Without `=`, tmux falls back to the first session whose
+> name merely *starts with* the target: on 2026-09-10 the watchdog of `labops-app`
+> took `labops-app-124546645` for its own session and never started its agent.
+> `=<name>:` is not enough for a pane either — it is the session's *current*
+> window: open a second window inside an agent's session, and keys, captures and
+> the `pane_pid` used for version-drift detection would all land in that
+> window's shell (a false restart). `^` is the lowest-numbered window — the
+> agent's, created first — and `{top-left}` its top-left pane, whatever
+> `base-index`/`pane-base-index` say. `scripts/check_tmux_targets.py` (self-test
+> section 22) enforces this in bash, Python and TypeScript, here and in
+> `../tg-plugin`; a deliberate exception needs `tmux-target-ok: <why>` on the
+> same line. Tests that start real sessions run on their own tmux server
+> (`orchestration/lib/tmux-test-isolation.sh`): inside an agent pane `$TMUX`
+> points at the swarm's server and overrides `TMUX_TMPDIR`, so a test's
+> `kill-server` would otherwise take down every agent.
+
 > [!NOTE]
 > **Operator alerts.** On each of these events the watchdog also pings the Operator in Telegram (via the agent's own bot, `tg-send.sh` → `lib/notify.sh`): a session restart **with its cause**, a lost/unrendered prompt, an unsubmitted ("stuck") prompt, and a reaped orphaned channel server. Alerts are best-effort (a failed send never disrupts the watchdog) and throttled per-message, so flapping doesn't spam. Toggle with `WATCHDOG_TG_ALERTS` (default `1`), tune `WATCHDOG_ALERT_COOLDOWN` (seconds, default `300`), or route to a dedicated chat with `WATCHDOG_ALERT_CHAT_ID`. The same `lib/notify.sh` also powers **`second_brain-monitor.sh`** — a systemd timer that watches the MCP servers and workers (`systemctl is-active` + an HTTP `/mcp` probe that catches *wedged-but-alive*, + restart-loop detection) and alerts on the same channel; point `MONITOR_AGENT` at the agent whose bot relays ops alerts.
 
@@ -504,7 +522,7 @@ A green smoke means: the workspace was created, the brain responds by Bearer, th
 
 | Symptom | Where to look / what to do |
 |---|---|
-| The bot is silent in Telegram | `tmux ls` → is there a `labops-<agent>`? `tmux attach -t labops-<agent>` — the error is visible. Check that your `user_id` is in `TELEGRAM_ALLOWED_USER_IDS` (`channel.env`). |
+| The bot is silent in Telegram | `tmux ls` → is there a `labops-<agent>`? `tmux attach -t '=labops-<agent>'` (the `=` keeps tmux from attaching a neighbour with a longer name) — the error is visible. Check that your `user_id` is in `TELEGRAM_ALLOWED_USER_IDS` (`channel.env`). |
 | The service is not `active` | `systemctl status claude-agent-<agent>` + `journalctl -u claude-agent-<agent> -n50`. A common cause — `claude` is not authorized (run `claude` and `/login`) or there's no `channel.env`. |
 | `no TELEGRAM_BOT_TOKEN` in the log | `channel.env` isn't where `start-agent.sh` looks — it takes it from `lib/agents.sh` (`/etc/labops-plugin/<agent>/` or `$CLAUDE_LAB/shared/state/<agent>/telegram/`). Recreate via `new-agent.sh`. |
 | "The model didn't respond" | run `claude` under the agent's user, `/login`, then `systemctl restart claude-agent-<agent>`. |

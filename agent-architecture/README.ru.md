@@ -206,6 +206,23 @@ flowchart LR
 > `KillMode=process` и `ExecStop=stop-agent.sh <агент>`: каждый снимает своего
 > агента и не трогает ни общий сервер, ни соседей.
 
+> **Цели tmux — только точные.** Все скрипты обращаются к сессии агента как
+> `=<имя>` (`tmux has-session -t "=labops-app"`), а к его панели — как
+> `=<имя>:^.{top-left}`. Без `=` tmux, не найдя точной сессии, берёт первую, чьё
+> имя лишь *начинается* так же: 10.09.2026 watchdog `labops-app` принял
+> `labops-app-124546645` за свою сессию и так и не поднял агента. Для панели мало
+> и `=<имя>:` — это *текущее* окно сессии: откроет оператор в сессии агента второе
+> окно, и клавиши, снимки экрана и `pane_pid` для детекта дрейфа версии уйдут в
+> bash этого окна (ложный рестарт). `^` — окно с наименьшим номером, то есть окно
+> агента, созданное первым, `{top-left}` — его верхняя левая панель при любых
+> `base-index`/`pane-base-index`. Соблюдение проверяет
+> `scripts/check_tmux_targets.py` (секция 22 self-test) — в bash, Python и
+> TypeScript, здесь и в `../tg-plugin`; осознанное исключение помечается в той же
+> строке `tmux-target-ok: <почему>`. Тесты с настоящими сессиями работают в своём
+> tmux-сервере (`orchestration/lib/tmux-test-isolation.sh`): в панели агента
+> `$TMUX` указывает на сервер роя и перекрывает `TMUX_TMPDIR`, так что
+> `kill-server` из теста иначе снёс бы всех агентов.
+
 > [!NOTE]
 > **Алерты оператору.** На каждое из этих событий watchdog ещё и пишет оператору в Telegram (через бота агента, `tg-send.sh` → `lib/notify.sh`): перезапуск сессии **с причиной**, потерянный/неотрисованный промпт, застрявший неотправленный промпт и подбор осиротевшего канал-сервера. Алерты best-effort (упавшая отправка никогда не ломает watchdog) и троттлятся по каждому сообщению, поэтому флаппинг не спамит. Включается через `WATCHDOG_TG_ALERTS` (по умолчанию `1`), окно троттлинга — `WATCHDOG_ALERT_COOLDOWN` (секунды, по умолчанию `300`), отдельный чат — `WATCHDOG_ALERT_CHAT_ID`. Тот же `lib/notify.sh` питает и **`second_brain-monitor.sh`** — systemd-таймер, который следит за MCP-серверами и воркерами (`systemctl is-active` + HTTP-проба `/mcp`, ловящая *жив, но завис*, + детект crash-loop) и алертит на тот же канал; укажи `MONITOR_AGENT` — агента, чей бот рассылает ops-алерты.
 
@@ -508,7 +525,7 @@ bash install.sh --test-only
 
 | Симптом | Где смотреть / что делать |
 |---|---|
-| Бот молчит в Telegram | `tmux ls` → есть ли `labops-<agent>`? `tmux attach -t labops-<agent>` — видно ошибку. Проверьте, что ваш `user_id` в `TELEGRAM_ALLOWED_USER_IDS` (`channel.env`). |
+| Бот молчит в Telegram | `tmux ls` → есть ли `labops-<agent>`? `tmux attach -t '=labops-<agent>'` (`=` не даст tmux подключиться к соседу с более длинным именем) — видно ошибку. Проверьте, что ваш `user_id` в `TELEGRAM_ALLOWED_USER_IDS` (`channel.env`). |
 | Сервис не `active` | `systemctl status claude-agent-<agent>` + `journalctl -u claude-agent-<agent> -n50`. Частая причина — `claude` не авторизован (запустите `claude` и `/login`) или нет `channel.env`. |
 | `no TELEGRAM_BOT_TOKEN` в логе | `channel.env` не там, где ищет `lib/agent-env.sh` — он берёт из `lib/agents.sh` (`/etc/labops-plugin/<agent>/` или `$CLAUDE_LAB/shared/state/<agent>/telegram/`). Пересоздайте через `new-agent.sh`. |
 | «Модель не ответила» | запустите `claude` под пользователем агента, войдите через `/login`, затем `systemctl restart claude-agent-<agent>`. |
