@@ -29,9 +29,9 @@ We use **1 CLAUDE.md + @include** -- best of both:
 CLAUDE.md                    # SOUL: personality, principles (entry point)
   @core/USER.md              # operator profile
   @core/rules.md             # learned rules
-  @core/passive/*.md            # semantic insights (decisions/errors/preferences)
+  @core/passive/decisions.md    # decisions (always in context)
+  @core/passive/preferences.md  # how the operator wants things done
   @core/active/handoff.md       # compact extract (last 10 entries)
-  @core/active/working-set.md   # materialised recall for the current task
   # On-demand (Read tool, NOT @include -- saves ~18KB):
   # core/AGENTS.md            # models, subagents, pipelines
   # tools/TOOLS.md            # servers, services, paths
@@ -44,10 +44,9 @@ CLAUDE.md                    # SOUL: personality, principles (entry point)
 | Concept | OpenClaw | Claude Code (official) | Our Architecture |
 |---------|----------|----------------------|-----------------|
 | Episodic journal (events) | `memory/YYYY-MM-DD.md` (daily) | _(auto memory)_ | `core/active/episodic.md` (raw append-only diary, salience-tagged) |
-| Materialised recall | _(none)_ | _(auto memory)_ | `core/active/working-set.md` (rebuilt per task from recall) |
 | Semantic insights (knowledge) | _(inside MEMORY.md)_ | _(auto memory)_ | `core/passive/*.md` (insights, decisions, errors, preferences -- YAML frontmatter) |
-| Long-term archive | `MEMORY.md` (manual curated) | `~/.claude/projects/*/memory/MEMORY.md` | `core/MEMORY.md` + `core/archived/` (on-demand) |
-| Lessons from mistakes | _(inside MEMORY.md)_ | _(auto memory)_ | `core/LEARNINGS.md` (on-demand) |
+| Long-term archive | `MEMORY.md` (manual curated) | `~/.claude/projects/*/memory/MEMORY.md` | `core/archived/` (on-demand) |
+| Lessons from mistakes | _(inside MEMORY.md)_ | _(auto memory)_ | `core/passive/errors.md` + `preferences.md` (distilled by memory-consolidate) |
 | Semantic search | _(none)_ | _(none)_ | second_brain L4 (HTTP API) |
 
 ### How memory flows (role-based, event-driven)
@@ -71,8 +70,7 @@ Stop hook -> active/episodic.md (raw diary, salience-tagged, NEVER model-compres
                     v                                          v
         archived/superseded/                        archived/episodic/YYYY-MM.md
 
-Recall (SessionStart + worthy prompts): working-set-build.sh fuses second_brain
-recall + local passive/ into active/working-set.md (non-blocking, hard timeout).
+Recall: the agent queries second_brain itself before a non-trivial task.
 ```
 
 OpenClaw uses daily files (`memory/YYYY-MM-DD.md`) and a silent pre-compaction flush.
@@ -131,7 +129,7 @@ housekeeping cron -- automated, predictable, agent-independent.
 | `~/.claude-lab/{agent}/.claude/` | Per-agent project directory | Claude Code project scope |
 | `core/` | Identity + memory files | Our convention (core = essential) |
 | `core/passive/` | Semantic insights (consolidated) | Our convention (passive = knowledge, recalled on demand) |
-| `core/active/` | Raw episodic diary + working-set | Our convention (active = current-task working memory) |
+| `core/active/` | Raw episodic diary + handoff | Our convention (active = current-task working memory) |
 | `core/archived/` | Aged-out episodic + decayed insights | Our convention (archive = cold storage) |
 | `tools/` | Infrastructure descriptions | OpenClaw convention (TOOLS.md) |
 | `skills/` | Callable commands | Claude Code official |
@@ -144,8 +142,6 @@ housekeeping cron -- automated, predictable, agent-independent.
 
 ### What we took from OpenClaw
 - Separate identity files (SOUL, AGENTS, USER, TOOLS) instead of one giant CLAUDE.md
-- Explicit MEMORY.md as curated archive
-- LEARNINGS.md for mistake tracking
 - Per-agent workspace isolation
 
 ### What we took from Claude Code
@@ -156,7 +152,7 @@ housekeeping cron -- automated, predictable, agent-independent.
 - `settings.json` for hooks, permissions, config
 
 ### What we added
-- **Role-based memory** (active episodic + working-set -> passive semantic insights -> archive -> L4 semantic) with event-driven consolidation
+- **Role-based memory** (active episodic -> passive semantic insights -> archive -> L4 semantic) with event-driven consolidation
 - **Shared resources** (`shared/secrets/`, `shared/skills/`, `shared/gateway/`)
 - **Telegram gateway** routing multiple bots to multiple agents
 - **In-session reflection + decay/reinforcement** for memory management (episodic never model-compressed, only role-promoted and size/usage-rolled by pure bash)

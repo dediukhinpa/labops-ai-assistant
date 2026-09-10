@@ -152,8 +152,8 @@ Telegram
 │       │   ├── USER.md               # Operator profile
 │       │   ├── rules.md              # Rules learned from mistakes
 │       │   ├── passive/                  # semantic insights (decisions/errors/...)
-│       │   ├── active/episodic.md         # raw append-only diary + working-set.md
-│       │   └── MEMORY.md             # ARCHIVE archive
+│       │   ├── active/episodic.md         # raw append-only diary (+ handoff.md)
+│       │   └── archived/             # ARCHIVE: rolled diary, decayed insights
 │       ├── tools/TOOLS.md            # Servers, Docker, services
 │       ├── skills/                    # Agent-specific + symlinks to shared
 │       └── agents/                   # Subagent definitions
@@ -419,7 +419,7 @@ All agents push to and search from one second_brain instance. Replaces file-base
 OLD: File mirrors          →  NEW: second_brain
 shared/state/tasks.json         create_decision_note / create_error_pattern_note (dual-write)
 shared/state/agents.json        (auto-indexed to semantic store)
-mirrors/sync-cron.sh            working-set-build.sh (recall) + in-session reflection (dual-write)
+mirrors/sync-cron.sh            agent-side recall + in-session reflection (dual-write)
 ```
 
 ### Namespacing
@@ -562,9 +562,9 @@ POST-RESPONSE (parallel)
 EVENT-DRIVEN CONSOLIDATION (no model crons)
     ├── checkpoint every 20 turns + watchdog idle 10 min → reflect-nudge.sh
     │        → live session runs memory-consolidate skill → passive/*.md + dual-write to second_brain
-    └── recall: working-set-build.sh (SessionStart + worthy prompts) → active/working-set.md
+    └── recall: the agent itself, before a non-trivial task (memory_router)
 
 NIGHTLY HOUSEKEEPING (optional, pure bash, no model)
-    ├── decay-sweep.sh  → reinforce + decay passive/ insights → archived/superseded/
+    ├── decay-sweep.sh  → decay passive/ insights (not preferences.md) → archived/superseded/
     └── archive-roll.sh → size-roll episodic.md → archived/episodic/YYYY-MM.md
 ```

@@ -18,7 +18,7 @@
             +-- core/rules.md              <-- правила, заработанные на ошибках
             +-- core/passive/*.md             <-- семантические инсайты (decisions/errors/...)
             +-- core/active/episodic.md         <-- сырой дневник ходов (append-only)
-            +-- core/MEMORY.md             <-- архив (не в контексте)
+            +-- core/archived/             <-- архив (не в контексте)
             +-- tools/TOOLS.md             <-- серверы, порты, скиллы
             +-- skills/                    <-- симлинки на shared скиллы
 ```
@@ -129,12 +129,11 @@ Claude Code загружает оба уровня. Глобальный все�
 | **IDENTITY** | CLAUDE.md, AGENTS.md, USER.md | Кто ты, кто владелец | Вручную |
 | **RULES** | core/rules.md | Правила, заработанные на ошибках | Оператор или агент по его просьбе |
 | **ACTIVE (episodic)** | core/active/episodic.md | Сырой append-only дневник ходов (salience-тег) | Stop-хук (active-writer.sh), НИКОГДА не сжимается моделью |
-| **ACTIVE (working-set)** | core/active/working-set.md | Материализованный recall под текущую задачу | working-set-build.sh (SessionStart + значимые промпты) |
 | **PASSIVE** | core/passive/*.md | Семантические инсайты (insights/decisions/errors/preferences) | Живая сессия при рефлексии (скилл memory-consolidate), событийно |
 | **ACTIVE (handoff)** | core/active/handoff.md | Последние 10 записей из журнала | Авто-запись |
-| **ARCHIVE** | core/MEMORY.md, core/archived/ | Архив (скрученный episodic, затухшие инсайты) | По запросу + ночной bash-крон (decay-sweep, archive-roll) |
+| **ARCHIVE** | core/archived/ | Архив (скрученный episodic, затухшие инсайты) | По запросу + ночной bash-крон (decay-sweep, archive-roll) |
 
-Правило: IDENTITY/RULES/PASSIVE/ACTIVE (handoff.md + working-set.md) -- всегда в контексте. episodic.md и ARCHIVE -- только по запросу.
+Правило: IDENTITY, RULES, `passive/decisions.md`, `passive/preferences.md` и `active/handoff.md` -- всегда в контексте. Остальной PASSIVE, episodic.md и ARCHIVE -- только по запросу.
 
 Консолидация **событийная, не по крону**: чекпойнт каждые 20 ходов (счётчик в Stop-хуке) + простой watchdog 10 мин -> reflect-nudge.sh будит живую сессию (фоновая модель запрещена, `claude -p` под запретом). Единственный крон -- опциональная ночная чисто-bash уборка (decay-sweep 03:00, archive-roll 03:05).
 

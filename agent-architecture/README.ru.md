@@ -215,15 +215,15 @@ flowchart LR
 
 ## Слои памяти агента
 
-Память организована по **роли**, а не по возрасту, и делится на два *рода*: **эпизодическую** (сырой дневник событий) и **семантическую** (выжатые инсайты — что понято). `active/` — рабочий набор, `passive/` — курируемое семантическое знание, `archive/` — холодное хранилище; четвёртый слой — общий мозг `labops-second-brain` по MCP. Консолидация (episodic → passive-инсайты) **событийная, а не по крону**: живую сессию «подталкивают» к рефлексии на чекпойнте (каждые ~20 ходов) или после ~10 мин простоя — фонового вызова модели нет (`claude -p` запрещён). Иерархия истины: **live-проверка (exec/grep) → second_brain (общий мозг) → git-история → локальная память**. Память противоречит проверке — побеждает проверка.
+Память организована по **роли**, а не по возрасту, и делится на два *рода*: **эпизодическую** (сырой дневник событий) и **семантическую** (выжатые инсайты — что понято). `active/` — сырой дневник и handoff, `passive/` — курируемое семантическое знание, `archive/` — холодное хранилище; четвёртый слой — общий мозг `labops-second-brain` по MCP. Консолидация (episodic → passive-инсайты) **событийная, а не по крону**: живую сессию «подталкивают» к рефлексии на чекпойнте (каждые ~20 ходов) или после ~10 мин простоя — фонового вызова модели нет (`claude -p` запрещён). Иерархия истины: **live-проверка (exec/grep) → second_brain (общий мозг) → git-история → локальная память**. Память противоречит проверке — побеждает проверка.
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'primaryColor':'#EDE9FE','primaryTextColor':'#4C1D95','primaryBorderColor':'#8B5CF6','lineColor':'#8B5CF6','secondaryColor':'#F1F5F9','tertiaryColor':'#ffffff','clusterBkg':'transparent','clusterBorder':'#B794F4','fontFamily':'Helvetica,Arial,sans-serif'}}}%%
 flowchart LR
   subgraph local["Локальная память агента (файлы воркспейса)"]
     L1["L1 IDENTITY<br/>CLAUDE.md · rules.md · USER.md<br/>(всегда в контексте)"]
-    L2["L2 ACTIVE<br/>episodic.md (сырой дневник) · working-set.md (recall) · handoff.md"]
-    L3["L3 PASSIVE (semantic)<br/>insights · decisions · errors · preferences<br/>ARCHIVE: archived/{episodic,superseded} · MEMORY.md (по запросу)"]
+    L2["L2 ACTIVE<br/>episodic.md (сырой дневник) · handoff.md"]
+    L3["L3 PASSIVE (semantic)<br/>insights · decisions · errors · preferences<br/>ARCHIVE: archived/{episodic,superseded} (по запросу)"]
   end
   L4["L4 ОБЩИЙ МОЗГ<br/>labops-second-brain · memory_router/memory/agent_router/tasks по MCP"]
   L1 --> L2 --> L3 --> L4
@@ -239,12 +239,12 @@ flowchart LR
 | Слой | Файлы / источник | В контексте | Кто правит |
 |---|---|---|---|
 | **L1 Идентичность** | `CLAUDE.md`, `rules.md`, `USER.md` | всегда (`@import`) | оператор; агент — только по его просьбе (RED-зона) |
-| **L2 Active** | `active/episodic.md` (сырой дневник, с salience-тегами), `active/working-set.md` (материализованный recall), `active/handoff.md` | да (working-set + handoff) | `active-writer.sh` (Stop-хук) пишет episodic; `working-set-build.sh` пересобирает working-set |
-| **L3 Passive** (semantic) | `passive/insights.md · decisions.md · errors.md · preferences.md` (инсайты + decay-frontmatter) | да | **живая сессия** на рефлексии (скилл `memory-consolidate`); `decay-sweep.sh` вычищает |
-| **ARCHIVE** | `archived/episodic/YYYY-MM.md`, `archived/superseded/`, `MEMORY.md`, `LEARNINGS.md` | нет — по запросу (Read) | `archive-roll.sh` / `decay-sweep.sh` (чистый bash) |
+| **L2 Active** | `active/episodic.md` (сырой дневник, с salience-тегами), `active/handoff.md` | только `handoff.md`; дневник читает консолидация | `active-writer.sh` (Stop-хук) пишет episodic |
+| **L3 Passive** (semantic) | `passive/insights.md · decisions.md · errors.md · preferences.md` (инсайты + decay-frontmatter) | `decisions.md` + `preferences.md` всегда; остальное по запросу | **живая сессия** на рефлексии (скилл `memory-consolidate`); `decay-sweep.sh` вычищает всё, кроме `preferences.md` |
+| **ARCHIVE** | `archived/episodic/YYYY-MM.md`, `archived/superseded/` | нет — по запросу (Read) | `archive-roll.sh` / `decay-sweep.sh` (чистый bash) |
 | **L4 Общий** | second_brain `memory_router` / `memory` / `agent_router` / `tasks` (доска) | нет — по запросу (MCP) | по RBAC-scopes (dual-write на рефлексии) |
 
-Episodic **никогда не сжимается моделью** — только скручивается по размеру в `archived/episodic/`; семантический слой *синтезируется* из него (обратимо через `provenance`). Зоны доступа к файлам: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — только оператор; **YELLOW** (`passive/*`, `AGENTS.md`, `TOOLS.md`) — агент с обоснованием; **GREEN** (`LEARNINGS.md`, `active/episodic.md`, `feedback_*`) — агент автономно.
+Episodic **никогда не сжимается моделью** — только скручивается по размеру в `archived/episodic/`; семантический слой *синтезируется* из него (обратимо через `provenance`). Зоны доступа к файлам: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — только оператор; **YELLOW** (`passive/*`, `AGENTS.md`, `TOOLS.md`) — агент с обоснованием; **GREEN** (`active/episodic.md`) — пишет Stop-хук сам.
 
 **Политика записи в общий мозг** зафиксирована в [`SECONDBRAIN_WRITE_RULES.md`](SECONDBRAIN_WRITE_RULES.md) — это единый canonical-файл (RED-зона). `agent-template/install.sh` копирует его в корень воркспейса рядом с `AGENT_ROUTER.md`, и оба **@-импортятся в `CLAUDE.md`** (`@SECONDBRAIN_WRITE_RULES.md`, `@AGENT_ROUTER.md`). До 02.09.2026 ни один документ не копировался вовсе — поллер отсылал агента к `AGENT_ROUTER.md`, которого в воркспейсе не существовало. Четыре дисциплины: (1) `recall` **перед** записью — не плодить дубли; (2) **dual-write** важного — и в локальный `.md`, и в second_brain (идемпотентно по sha256); (3) писать **сразу**, не «потом» (компакция знания не выгружает); (4) писать в свой `scope`. Инструменты записи жёстко зафиксированы кодом: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_personal_note` (→ `personal`), `create_project_note` (→ `projects`), `create_handoff`, `append_daily_log`, `supersede_decision`.
 
@@ -262,26 +262,26 @@ Episodic **никогда не сжимается моделью** — толь�
 ~/.claude-lab/<agent-id>/.claude/
 ├── CLAUDE.md            # SOUL / идентичность (из templates/CLAUDE.md.template)
 ├── .mcp.json            # ТОЛЬКО 4 сервера second_brain (memory/memory_router/agent_router/tasks), chmod 600
-├── settings.json        # хуки SessionStart / UserPromptSubmit / Stop / PreCompact (+ heartbeat на каждом событии)
+├── settings.json        # хуки SessionStart / Stop / PreCompact / SessionEnd (+ heartbeat на каждом событии)
 ├── agent.env            # source перед запуском: MCP_HOST / SECOND_BRAIN_*_URL / AGENT_BEARER
 ├── core/
-│   ├── USER.md · rules.md · AGENTS.md · MEMORY.md · LEARNINGS.md
-│   ├── passive/decisions.md           # PASSIVE (последние 14д)
+│   ├── USER.md · rules.md · AGENTS.md
+│   ├── passive/{decisions,preferences}.md   # PASSIVE, в контексте; errors/insights появляются с консолидацией
 │   └── active/{episodic.md, handoff.md, archived/, pre-compact/}
 ├── tools/TOOLS.md
-├── scripts/             # episodic-писатель, working-set recall, reflect-nudge, decay/archive housekeeping,
+├── scripts/             # episodic-писатель, reflect-nudge, decay/archive housekeeping,
 │                       #   brain-flush, mcp-call helper, поллер доски задач
-├── hooks/               # session-start, user-prompt-submit, stop, precompact, heartbeat
+├── hooks/               # session-start, stop, precompact, heartbeat
 ├── logs/
 └── skills/              # симлинк на общий бандл скиллов
 ```
 
 | Каталог шаблона | Содержимое |
 |---|---|
-| `templates/` | `CLAUDE.md`, `rules.md`, `USER.md`, `tools.md`, `agents.md`, `decisions.md`, `episodic.md`, `MEMORY.md`, `LEARNINGS.md`, `mcp.json`, `settings.json`, `global-CLAUDE.md` |
-| `hooks/` | `session-start-hook.sh`, `user-prompt-submit-hook.sh`, `stop-hook.sh`, `precompact-hook.sh`, `heartbeat-hook.sh` |
-| `scripts/` | `active-writer.sh`, `working-set-build.sh`, `reflect-nudge.sh`, `decay-sweep.sh`, `archive-roll.sh`, `brain-flush.sh`, `mcp-call.sh`, `task-poller.sh` + `task_poller.py` |
-| `docs/` | `ARCHITECTURE.md`, `MEMORY.md`, `HOOKS.md`, `MULTI-AGENT.md`, `SETUP-GUIDE.md`, `AGENT-LAWS.md`, … (16 файлов) |
+| `templates/` | `CLAUDE.md`, `rules.md`, `USER.md`, `tools.md`, `agents.md`, `decisions.md`, `preferences.md`, `episodic.md`, `mcp.json`, `settings.json`, `global-CLAUDE.md` |
+| `hooks/` | `session-start-hook.sh`, `stop-hook.sh`, `precompact-hook.sh`, `heartbeat-hook.sh` |
+| `scripts/` | `active-writer.sh`, `reflect-nudge.sh`, `decay-sweep.sh`, `archive-roll.sh`, `brain-flush.sh`, `mcp-call.sh`, `task-poller.sh` + `task_poller.py` |
+| `docs/` | `ARCHITECTURE.md`, `MEMORY.md`, `HOOKS.md`, `MULTI-AGENT.md`, `SETUP-GUIDE.md`, `AGENT-LAWS.md`, … (15 файлов) |
 
 Важно: `mcp.json.template` подключает агенту **только** second_brain — теперь это **4 сервера**, включая доску задач (`:5003`): она и есть межагентный канал роя, поэтому доска заводится каждому агенту, и скоуп `task-board` выдаётся по умолчанию. Канал (`labops-channel`) по-прежнему грузится отдельно при запуске через `claude … server:labops-channel`. Два документа, задающих правила общей памяти и маршрутизации, — `SECONDBRAIN_WRITE_RULES.md` и `AGENT_ROUTER.md` — копируются в корень воркспейса и подключаются через `@`-импорт из `CLAUDE.md`. Крон здесь не нужен: housekeeping едет на Stop-хуке, а поллер доски надзирается watchdog'ом.
 
@@ -346,8 +346,7 @@ flowchart LR
 
 | Событие | Хук (`agent-template/hooks/`) | Что делает |
 |---|---|---|
-| **SessionStart** | `session-start-hook.sh` | логирует старт; пересобирает `active/working-set.md` через `working-set-build.sh` (сливает shared-recall second_brain — hard-timeout, non-blocking — с локальным лексическим recall из `passive/`; работает и file-only); surface `handoff.md`. В рое также `agent-boot-sequence.sh`: 👀 на свежие сообщения + `agent_router.list_my_pending()` (pull-страховка) |
-| **UserPromptSubmit** | `user-prompt-submit-hook.sh` | проактивный recall: bash-гейт значимости отбрасывает ack'и/короткие промпты, затем пересобирает `working-set.md` под сам промпт (фоном, non-blocking) |
+| **SessionStart** | `session-start-hook.sh` | логирует старт и есть ли что-то в `handoff.md`. Поиск в памяти под задачу агент делает сам — так велит `CLAUDE.md`. В рое также `agent-boot-sequence.sh`: 👀 на свежие сообщения + `agent_router.list_my_pending()` (pull-страховка) |
 | **Stop** | `stop-hook.sh` | дописывает salience-тегированную episodic-запись в `active/episodic.md` (через `active-writer.sh`) + подробную JSON-строку в `logs/verbose-*.jsonl`; инкрементит счётчик ходов и каждые ~20 ходов дёргает in-session консолидацию (`reflect-nudge.sh`); не чаще раза в сутки фоном запускает housekeeping (`decay-sweep.sh` + `archive-roll.sh`) — ротация теперь дефолт, а не опциональный cron. В рое также `read-receipt-hook.ts` (POST `/hooks/react` → 👌) и `reflect-error-pattern.sh` |
 | **PreCompact** | `precompact-hook.sh` | снапшотит `active/episodic.md` в `active/pre-compact/` перед авто-компакцией, держит последние `KEEP_SNAPSHOTS` (10); затем `brain-flush.sh` — страховочный сброс handoff + хвоста episodic в inbox общего мозга (`create_handoff`, fail-open, sha-дедуп, no-op при плейсхолдере `CHANGE_ME`) |
 | **SessionEnd** | `scripts/brain-flush.sh --reason session-end` | тот же страховочный flush в конце сессии — второй момент, где знания иначе теряются |
@@ -371,7 +370,7 @@ flowchart LR
 | `vault-audit-broadcast.sh` + `second_brain-vault-audit.sh` | по запросу / cron | рассылает рою задачу проверить и дозаполнить общий vault |
 | `agent-boot-sequence.sh` | SessionStart | детерминированно забирает делегированные задачи (`list_my_pending`) |
 | `reflect-error-pattern.sh` | Stop | нудж записать error-pattern при коррекции от Оператора |
-| `update-rules.sh`, `tg-send.sh`, `second_brain-heartbeat.py` | вспомогательные | обновление правил, отправка в TG, heartbeat-клиент |
+| `tg-send.sh`, `second_brain-heartbeat.py` | вспомогательные | отправка в TG, heartbeat-клиент |
 | `lib/task-poller-launch.sh` | сорсится из `watchdog.sh` / `start-agent.sh` | поднимает и надзирает за поллером доски (единственный постоянный процесс) |
 | `stop-agent.sh <агент>` | `ExecStop` юнита | снимает ровно одного агента — его сессию tmux, поллер доски и осиротевший bun-канал |
 | `session-exec.sh` | команда панели tmux | собирает окружение внутри панели и делает `exec` в `claude` — секретов в командной строке нет |

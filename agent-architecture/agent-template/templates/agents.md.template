@@ -42,11 +42,9 @@ Heavy work -> subagents. Architecture and review -> main agent.
 
 ## Self-Learning
 
-Local-only learning log: `core/LEARNINGS.md` (triggers and the Repeats metric are
-described there). Who may change which file -- the access zones table in
-`tools/TOOLS.md`.
-
-1. Event -> classify type (tool / behavior / workflow / architecture)
-2. Record in core/LEARNINGS.md (structured log)
-3. Record in auto-memory feedback_*.md if behavioral
-4. If stable pattern -> propose a rule for core/rules.md; add it once the operator agrees
+Corrections and mistakes land in the diary (`core/active/episodic.md`) on their own;
+`memory-consolidate` distils them into `core/passive/` and the shared brain:
+`preferences.md` -- how the operator wants things done (always in context),
+`errors.md` -- failure patterns, `insights.md` -- everything else. When the same
+correction comes back, a rule is proposed for `core/rules.md` (see its header).
+Who may change which file -- the access zones table in `tools/TOOLS.md`.

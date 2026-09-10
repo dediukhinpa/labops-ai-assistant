@@ -282,25 +282,6 @@ Replace `npx prettier --write` with your formatter: `black` (Python), `gofmt` (G
 
 Creates atomic commits after each Claude response. Combine with `claude -w feature-branch` (worktrees) for isolated auto-committed feature branches.
 
-### Rebuild recall working-set on session start
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "bash scripts/working-set-build.sh >> /tmp/working-set.log 2>&1 &",
-        "timeout": 10
-      }]
-    }]
-  }
-}
-```
-
-Rebuilds `core/active/working-set.md` -- the materialised recall for the current task. It fuses shared second_brain recall (RRF over embeddings, hard-timeout so it never blocks) with local `core/passive/*.md` lexical recall, and logs every hit to `core/recall-events.jsonl` (the reinforcement signal). Recall is a *view*, never an edit of `episodic.md`. Wire the same script on `UserPromptSubmit` behind a worthiness gate so it also refreshes on substantive prompts. Persisting insights back to `passive/` is done by the **live session** during reflection (nudged by `reflect-nudge.sh`), never a background model -- `claude -p` is forbidden repo-wide. See MEMORY.md for full details.
-
 ### Inject context on session start
 
 ```json
@@ -333,7 +314,7 @@ These hooks form the production memory and safety pipeline for agents running vi
 | log-commands.sh | PostToolUse (Bash) | Logs every command |
 | session-bootstrap.sh | SessionStart | Loads top-5 learnings, checks inbox, heartbeat |
 | auto-recall.mjs | UserPromptSubmit | Semantic search in second_brain |
-| local-recall.sh | UserPromptSubmit | Local grep in LEARNINGS/TOOLS |
+| local-recall.sh | UserPromptSubmit | Local grep in TOOLS/AGENTS |
 | correction-detector.sh | UserPromptSubmit | Catches correction phrases, triggers learning |
 | bash-firewall.sh | PreToolUse (Bash) | Additional bash command filtering |
 | review-reminder.sh | PostToolUse | After 10+ edits, reminds code review |
@@ -355,7 +336,7 @@ These hooks form the production memory and safety pipeline for agents running vi
 | Hook | Purpose |
 |------|---------|
 | **auto-recall.mjs** | Sends user prompt to second_brain shared semantic memory, returns relevant memories as injected context. Adds long-term memory without consuming CLAUDE.md space. |
-| **local-recall.sh** | Grep-searches local reference files (TOOLS.md, AGENTS.md, LEARNINGS.md) for keywords extracted from user prompt. Fast fallback when second_brain is unavailable. |
+| **local-recall.sh** | Grep-searches local reference files (TOOLS.md, AGENTS.md) for keywords extracted from user prompt. Fast fallback when second_brain is unavailable. |
 | **correction-detector.sh** | Pattern-matches correction phrases in user messages ("not like that", "wrong", "I said"). When detected, injects a reminder to capture a learning via `learnings-engine.mjs capture`. |
 
 ### PreToolUse

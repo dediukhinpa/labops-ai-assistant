@@ -10,9 +10,9 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 WS="$TMP/.claude"; mkdir -p "$WS/core/passive"
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# note A: old + short half-life + never recalled  -> should be archived
-# note B: fresh + never recalled                  -> should survive
-# note C: old + short half-life BUT recalled       -> reinforced, survives
+# note A: old + short half-life + never reinforced          -> should be archived
+# note B: fresh + never reinforced                           -> should survive
+# note C: old + short half-life BUT reinforced by consolidation -> survives
 cat > "$WS/core/passive/insights.md" <<EOF
 # Passive insights
 
@@ -40,40 +40,49 @@ Fresh decision to use pgvector RRF fusion for recall ranking.
 id: ccc33333
 created: 2020-01-01T00:00:00Z
 last_recalled: 2020-01-01T00:00:00Z
+recall_count: 2
+half_life_days: 1
+salience: fact
+---
+Staging database is rebuilt from the nightly dump every Monday.
+EOF
+
+# Предпочтение владельца, старое и ни разу не подкреплённое. Будь это insights.md,
+# оно ушло бы в архив; в preferences.md обязано остаться.
+cat > "$WS/core/passive/preferences.md" <<EOF
+# PREFERENCES
+
+---
+id: ddd44444
+created: 2020-01-01T00:00:00Z
+last_recalled: 2020-01-01T00:00:00Z
 recall_count: 0
 half_life_days: 1
 salience: preference
 ---
-Operator prefers deploy announcements posted in Telegram before they begin.
+Operator wants documents for people as .docx, without meta sections.
 EOF
-
-# recall event that reinforces note C (ref matches its body prefix)
-printf '%s\n' '{"ts":"'"$NOW"'","source":"passive","ref":"Operator prefers deploy announcements posted in Telegram before they begin.","query":"deploy telegram"}' \
-  > "$WS/core/recall-events.jsonl"
+cp "$WS/core/passive/preferences.md" "$TMP/preferences.before"
 
 echo "== run decay-sweep =="
 AGENT_WORKSPACE="$WS" bash "$SWEEP"; ok $? "exit 0"
 
-echo "== note A (old, unrecalled) archived =="
+echo "== note A (old, never reinforced) archived =="
 grep -q 'aaa11111' "$WS/core/passive/insights.md" && ok 1 "A removed from passive" || ok 0 "A removed from passive"
 test -f "$WS/core/archived/superseded/insights.md" && grep -q 'aaa11111' "$WS/core/archived/superseded/insights.md"; ok $? "A moved to superseded"
 
 echo "== note B (fresh) survives =="
 grep -q 'bbb22222' "$WS/core/passive/insights.md"; ok $? "B kept"
 
-echo "== note C (recalled) survives + reinforced =="
+echo "== note C (reinforced by consolidation) survives =="
 grep -q 'ccc33333' "$WS/core/passive/insights.md"; ok $? "C kept"
-# recall_count bumped above 0 for note C
-python3 - "$WS/core/passive/insights.md" <<'PY'
-import re,sys
-t=open(sys.argv[1]).read()
-m=re.search(r'id: ccc33333.*?recall_count: (\d+)', t, re.S)
-assert m and int(m.group(1))>=1, "C recall_count not reinforced"
-PY
-ok $? "C recall_count reinforced"
 
-echo "== events consumed (truncated) =="
-[ ! -s "$WS/core/recall-events.jsonl" ]; ok $? "recall-events.jsonl emptied"
+echo "== preferences.md is never swept =="
+cmp -s "$TMP/preferences.before" "$WS/core/passive/preferences.md"; ok $? "preferences.md unchanged"
+[ ! -e "$WS/core/archived/superseded/preferences.md" ]; ok $? "nothing from preferences archived"
+
+echo "== no recall-events journal is created =="
+[ ! -e "$WS/core/recall-events.jsonl" ]; ok $? "recall-events.jsonl absent"
 
 echo ""
 echo "decay-sweep.test.sh: $pass passed, $fail failed"

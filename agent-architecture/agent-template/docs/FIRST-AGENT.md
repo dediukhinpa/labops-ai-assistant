@@ -28,8 +28,7 @@ ln -s ~/.claude-lab/shared/skills ~/.claude-lab/${AGENT_NAME}/.claude/skills
 # Create empty memory files
 echo "# PASSIVE DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/decisions.md
 echo "# Active memory -- raw append-only episodic diary" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/episodic.md
-echo "# MEMORY -- Archive Archive" > ~/.claude-lab/${AGENT_NAME}/.claude/core/MEMORY.md
-echo "# LEARNINGS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/LEARNINGS.md
+echo "# PREFERENCES" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/preferences.md
 ```
 
 ## Step 2: Write the SOUL (CLAUDE.md)
@@ -92,7 +91,7 @@ Create `~/.claude-lab/reviewer/.claude/core/AGENTS.md`:
 - Key: ~/.claude-lab/shared/secrets/second_brain.key
 - Search: POST `${SECOND_BRAIN_MEMORY_ROUTER_URL}` (default `http://${MCP_HOST}:5002/mcp`) — JSON-RPC tools/call recall
 - Write: POST `${SECOND_BRAIN_MEMORY_URL}` (default `http://${MCP_HOST}:5001/mcp`)
-- Recall: SessionStart + worthy prompts via working-set-build.sh (RRF recall + local passive/); dual-write of insights during in-session reflection (see MEMORY.md)
+- Recall: the agent queries memory_router itself before a task; dual-write of insights during in-session reflection (see MEMORY.md)
 ```
 
 ## Step 4: Write USER.md
@@ -221,10 +220,9 @@ See [jarvis-telegram-gateway](https://github.com/your-org/telegram-gateway) for 
     │   ├── AGENTS.md          ← models, subagents
     │   ├── USER.md            ← your profile
     │   ├── rules.md           ← review rules
-    │   ├── passive/decisions.md  ← recent decisions (auto)
+    │   ├── passive/decisions.md, preferences.md  ← decisions, operator preferences (auto)
     │   ├── active/episodic.md      ← conversation log (auto)
-    │   ├── MEMORY.md          ← archive (auto)
-    │   └── LEARNINGS.md       ← lessons from mistakes
+    │   └── archived/          ← archive (auto)
     ├── tools/TOOLS.md         ← available tools
     ├── skills/ → shared       ← shared skills (symlink)
     ├── agents/                ← subagent definitions

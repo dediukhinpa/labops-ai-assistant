@@ -14,15 +14,14 @@ forbidden repo-wide). The only cron is optional nightly pure-bash housekeeping.
 ├──────────────────────────────────────────┤
 │  ACTIVE (current-task working memory)        │
 │  active/episodic.md  raw diary (on-demand)   │
-│  active/working-set.md  recall (in context)  │
 │  active/handoff.md   last 10 (in context)    │
 ├──────────────────────────────────────────┤
 │  PASSIVE (semantic insights)                 │
 │  passive/insights|decisions|errors|prefs.md  │
-│  Always in context; written in-session       │
+│  decisions+prefs in context; rest on demand  │
 ├──────────────────────────────────────────┤
 │  ARCHIVE (cold storage, grows)              │
-│  MEMORY.md, LEARNINGS.md, archived/       │
+│  archived/episodic, archived/superseded   │
 │  NOT in context, Read tool on demand      │
 ├──────────────────────────────────────────┤
 │  L4 SEMANTIC (second_brain)                │
@@ -45,9 +44,8 @@ forbidden repo-wide). The only cron is optional nightly pure-bash housekeeping.
 
 ### ACTIVE (current-task working memory)
 
-- Files: `core/active/episodic.md`, `core/active/working-set.md`, `core/active/handoff.md`
+- Files: `core/active/episodic.md`, `core/active/handoff.md`
 - **episodic.md** — raw, append-only diary of turns, salience-tagged. Written by `active-writer.sh` (Stop hook). **Never model-compressed**; only size-rolled to `archived/episodic/`. On-demand Read (NOT loaded at startup).
-- **working-set.md** — materialised recall for the current task, rebuilt by `working-set-build.sh` (SessionStart + worthy prompts). Loaded via @include.
 - **handoff.md** — compact extract (last 10 entries) for continuity. Loaded via @include.
 - WARNING: episodic.md grows to 80KB+ but is never in context; `archive-roll.sh` size-rolls it.
 
@@ -71,12 +69,12 @@ Salience classes: `ephemeral` | `error` | `decision` | `preference` | `fact`.
 - Contains: consolidated SEMANTIC insights ("what I understood"), not raw events
 - Written by: the **live session** during reflection (via the `memory-consolidate` skill), never a background model
 - Each insight carries YAML frontmatter: `id`, `created`, `last_recalled`, `recall_count`, `half_life_days`, `salience`, `provenance`
-- Decay: `decay-sweep.sh` (nightly bash) evicts never-recalled decayed insights to `archived/superseded/`
-- Always in context via @include
+- Decay: `decay-sweep.sh` (daily, from the Stop hook) evicts never-reinforced decayed insights to `archived/superseded/`; `preferences.md` never decays
+- `decisions.md` and `preferences.md` are always in context via @include; `errors.md` / `insights.md` are read on demand
 
 ### ARCHIVE (cold storage)
 
-- Files: `MEMORY.md`, `LEARNINGS.md`, `archived/episodic/`, `archived/superseded/`
+- Files: `archived/episodic/`, `archived/superseded/`
 - NOT loaded at startup
 - Accessed via Read tool when needed
 - Grows indefinitely; `archived/episodic/` = size-rolled diary, `archived/superseded/` = decayed insights
@@ -138,16 +136,13 @@ Operator sends `/compact` in Telegram:
 Operator sends `/reset` in Telegram:
 
 ```
-1. Claude reads current context (via --resume old session)
-2. Saves important info to core/MEMORY.md (ARCHIVE):
-   - current focus, decisions, pending actions, user preferences
-3. Deletes session ID file (state/sid-{agent}-{chat}.txt)
-4. Next message starts a fresh session
+1. The next message starts a fresh session
+2. The old session's history stays on disk (nothing is deleted or summarised)
 ```
 
-- `/reset force` — skips saving, immediately deletes session
-- Model: Sonnet (for the save step)
-- After reset, first message injects latest MEMORY.md section as context bridge
+- Nothing is saved to a separate archive file: decisions and preferences already
+  live in `passive/` (loaded every session) and in second_brain.
+- `/reset force` is accepted and behaves the same.
 
 ### Reflection: ACTIVE episodic -> PASSIVE insights (event-driven, no cron)
 
@@ -164,23 +159,22 @@ Triggers:
 Reflection is **synthesis of new knowledge**, not text compression. `episodic.md`
 itself is never rewritten by a model — it is the append-only source of truth.
 
-### Recall: build the working-set (working-set-build.sh)
+### Recall
 
-`working-set-build.sh` materialises `active/working-set.md` for the current task.
-It fuses two sources and never edits `episodic.md`:
-1. **Shared brain** — second_brain `memory_router recall` (RRF over embeddings). Non-blocking: a hard timeout (`RECALL_TIMEOUT_MS`, default **1000** ms) skips the shared half rather than delaying the session.
-2. **Local passive** — lexical keyword-overlap over `core/passive/*.md` (`RECALL_MIN_OVERLAP`, default **2**), the file-only fallback when the brain is unreachable.
+There is no recall hook. Before a non-trivial task the agent queries the shared
+brain itself (`memory_router` recall, as `CLAUDE.md` instructs), keyed on the real
+task; `decisions.md` and `preferences.md` are already in context.
 
-Every hit is appended to `core/recall-events.jsonl` — the reinforcement signal that
-`decay-sweep.sh` replays. Runs on SessionStart and on substantive prompts
-(UserPromptSubmit, behind a worthiness gate).
-
-### Decay / reinforcement (decay-sweep.sh, nightly bash)
+### Decay (decay-sweep.sh, daily bash)
 
 Each insight in `passive/` has YAML frontmatter. `decay-sweep.sh` (pure bash +
-Python arithmetic, no model):
-1. **Reinforce** — replays `recall-events.jsonl`: a recalled insight gets `recall_count++`, `half_life_days *= 1.5` (capped), `last_recalled` bumped.
-2. **Decay** — `score = 2^(-age_days / half_life_days)`; an insight scoring below `DECAY_ARCHIVE_THRESHOLD` (default **0.25**) that was **never** recalled moves to `archived/superseded/`.
+Python arithmetic, no model) scores it `2^(-age_days / half_life_days)`; an insight
+scoring below `DECAY_ARCHIVE_THRESHOLD` (default **0.25**) that was **never**
+reinforced (`recall_count == 0`) moves to `archived/superseded/`. Reinforcement is
+done by `memory-consolidate`: when an insight comes back, it bumps `recall_count`
+and `half_life_days` on the existing note instead of writing a duplicate.
+`preferences.md` is never swept -- a preference the agent follows never resurfaces
+in the diary, so age alone would drop it about a month later.
 
 Base `half_life_days` default **14** (`DECAY_HALF_LIFE_DAYS`).
 
@@ -197,7 +191,7 @@ Consolidation needs no cron (it is event-driven). The only cron is optional nigh
 housekeeping:
 
 ```crontab
-# 1. Decay sweep: reinforce recalled insights, evict decayed ones -> archived/superseded/
+# 1. Decay sweep: evict decayed insights -> archived/superseded/
 0 3 * * * /path/to/decay-sweep.sh
 
 # 2. Archive roll: size-roll episodic.md -> archived/episodic/YYYY-MM.md
@@ -211,7 +205,7 @@ in the live session, on event.
 ## second_brain: Triggers and Data Flow
 
 second_brain is written on the **write** path (dual-write of insights) and read on
-the **recall** path (working-set build). No batch upload script, no model cron.
+demand by the agent itself (`memory_router` recall before a task). No batch upload script, no model cron.
 
 ### Method 1: Dual-write insights during in-session reflection (recommended)
 
@@ -237,12 +231,10 @@ Dual-write rules are fixed in `SECONDBRAIN_WRITE_RULES.md` (RED zone): recall be
 write; write immediately (compaction/session-end do NOT auto-flush); write only
 within your `can_write_scopes`.
 
-### Recall path: working-set-build.sh
+### Recall path
 
-On SessionStart and worthy prompts, `working-set-build.sh` posts a JSON-RPC
-`recall` to `${SECOND_BRAIN_MEMORY_ROUTER_URL}` (RRF, hard-timeout, non-blocking),
-fuses the hits with local `passive/` lexical recall, and writes
-`active/working-set.md` — logging each hit to `recall-events.jsonl`.
+The agent calls `memory_router` recall itself before a non-trivial task; nothing
+is materialised into a local file.
 
 ### Method 2: Real-time push from gateway (optional)
 
@@ -314,22 +306,22 @@ This means a 10 KB file in Russian consumes ~4,500 tokens, while the same 10 KB 
 | Language rules (rules/*.md) | ~3 KB | ~1,350 | ~900 |
 | **IDENTITY subtotal** | **~38 KB** | **~17,100** | **~11,400** |
 | PASSIVE insights + decisions/errors/prefs | 3-15 KB | 1,350-6,750 | 900-4,500 |
-| ACTIVE handoff.md + working-set.md (loaded) | 2-8 KB | 900-3,600 | 600-2,400 |
+| ACTIVE handoff.md (loaded) | 1-4 KB | 450-1,800 | 300-1,200 |
 | ACTIVE episodic.md (NOT loaded, on-demand) | 5-80 KB | — | — |
 
 IDENTITY is fixed cost -- it loads every session regardless. PASSIVE and the loaded
-ACTIVE files (handoff + working-set) are variable; `episodic.md` is never loaded
+ACTIVE file (handoff) are variable; `episodic.md` is never loaded
 into context (on-demand Read only), so its size does not enter the startup budget.
 
 ### Three load scenarios
 
 **Scenario 1: Consolidated state (optimal)**
 
-Reflection has run recently. Insights consolidated in PASSIVE (~3 KB), working-set
-built for the current task (~2 KB), episodic on-demand only.
+Reflection has run recently. Insights consolidated in PASSIVE (~3 KB), handoff
+(~2 KB), episodic on-demand only.
 
 ```
-IDENTITY: 17,100 + PASSIVE: 1,350 + ACTIVE loaded (handoff+working-set): 1,800 = 20,250 tokens (~5% of 400K working context)
+IDENTITY: 17,100 + PASSIVE: 1,350 + ACTIVE loaded (handoff): 1,800 = 20,250 tokens (~5% of 400K working context)
 ```
 
 This is the target operating state. The agent starts each session with clean, focused context.

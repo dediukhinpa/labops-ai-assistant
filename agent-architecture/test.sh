@@ -832,6 +832,40 @@ else
   bad "шаблоны разошлись с курсом: язык должен жить в USER.md, зоны — в личном CLAUDE.md"
 fi
 
+# Файлы памяти — только те, что кто-то ведёт и читает. LEARNINGS.md и MEMORY.md за два
+# месяца не тронул ни один живой агент, working-set.md собирался на каждом старте, но
+# в контекст не попадал. Вернётся ссылка на них — агенту снова пообещают файл, которого
+# никто не ведёт. Комментарии в скриптах не считаем: там объясняется, почему их убрали.
+mem_refs="$(
+  { grep -nE 'LEARNINGS\.md|core/MEMORY\.md|working-set' "$T"/* skills/*/SKILL.md 2>/dev/null
+    grep -nE 'LEARNINGS\.md|core/MEMORY\.md|working-set' agent-template/install.sh \
+        agent-template/hooks/*.sh agent-template/scripts/*.sh 2>/dev/null \
+      | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#'
+  } || true
+)"
+if [ -z "$mem_refs" ]; then
+  ok "шаблоны и скрипты не ссылаются на убранные LEARNINGS.md / MEMORY.md / working-set"
+else
+  bad "вернулась ссылка на убранный файл памяти:"
+  printf '%s\n' "$mem_refs" | sed -n '1,5s/^/      /p'
+fi
+
+# preferences.md импортирован в CLAUDE.md — значит, установщик обязан его создать,
+# иначе у свежего агента импорт указывает в пустоту.
+if grep -q '^@core/passive/preferences.md' "$T/CLAUDE.md.template" \
+   && grep -q 'preferences.md.template' agent-template/install.sh; then
+  ok "preferences.md в контексте агента и создаётся при установке"
+else
+  bad "preferences.md: импорт в CLAUDE.md и создание в install.sh должны идти парой"
+fi
+
+# Уборка стареет выводы, но не пожелания владельца — почему, см. шапку decay-sweep.sh.
+if bash agent-template/scripts/decay-sweep.test.sh >/dev/null 2>&1; then
+  ok "decay-sweep: стареют выводы, preferences.md не трогается"
+else
+  bad "decay-sweep: юнит-тест провален (agent-template/scripts/decay-sweep.test.sh)"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
