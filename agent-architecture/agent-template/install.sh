@@ -118,7 +118,10 @@ prompt OPERATOR_ADDRESS       "How agent should address you (e.g. Boss, Chief)" 
 prompt TIMEZONE               "Your timezone (e.g. UTC+3, America/New_York)" "UTC"
 prompt LANGUAGE               "Response language (e.g. English, Russian)" "English"
 prompt COMMIT_LANGUAGE        "Commit language (e.g. English, Russian)" "English"
-prompt BUDGET_LIMIT           "Red zone budget limit in USD [50]" "50"
+# Порога трат нет: любые траты агента -- через владельца (общая красная зона).
+# Раньше здесь спрашивали лимит, но в обычной установке (через new-agent.sh, без
+# вопросов) он не показывался, и в красную зону молча уезжали $50, которые никто
+# не выбирал.
 prompt GITHUB_USERNAME        "GitHub username (or skip)" "your-username"
 
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "--- second_brain MCP server ---"; }
@@ -224,7 +227,6 @@ fill_template() {
     sed_i "s|{{TIMEZONE}}|${TIMEZONE}|g" "$dst"
     sed_i "s|{{LANGUAGE}}|${LANGUAGE}|g" "$dst"
     sed_i "s|{{COMMIT_LANGUAGE}}|${COMMIT_LANGUAGE}|g" "$dst"
-    sed_i "s|{{BUDGET_LIMIT}}|${BUDGET_LIMIT}|g" "$dst"
     sed_i "s|{{GITHUB_USERNAME}}|${GITHUB_USERNAME}|g" "$dst"
     sed_i "s|{{INSTALL_DATE}}|$(date -u +%Y-%m-%d)|g" "$dst"
 

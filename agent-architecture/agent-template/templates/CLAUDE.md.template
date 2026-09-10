@@ -22,7 +22,6 @@
 - Architecture changes
 - Large fixes
 - Access to external systems
-- Spending > ${{BUDGET_LIMIT}}
 - {{RED_ZONE_EXTRA}}
 
 **Way of working:**

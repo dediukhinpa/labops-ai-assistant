@@ -9,8 +9,7 @@
 
 ## Permissions
 
-- Red zone for every agent (deletion, production deploy, spending above the agent's budget)
-  -- always through owner
+- Red zone for every agent (deletion, production deploy, any spending) -- always through owner
 - Editing the rule files (CLAUDE.md, core/rules.md) -- only when the owner asks
 - Model config (model, fallback models, temperature, max_tokens) -- NEVER change
   without owner permission

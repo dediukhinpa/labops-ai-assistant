@@ -45,7 +45,7 @@ bash install.sh
 The script asks for:
 
 1. Agent identity (name, role, character, language, primary model, max subagents)
-2. Operator profile (name, address, timezone, budget cap)
+2. Operator profile (name, address, timezone, language)
 3. **second_brain connection** (MCP host — host/IP only, Bearer token, comma-separated scopes)
 
 Default scopes: `decisions,external,knowledge,inbox`. Issue the token
