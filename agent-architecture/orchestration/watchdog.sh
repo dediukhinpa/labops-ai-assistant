@@ -188,6 +188,10 @@ IDLE_CONSOLIDATED=0
 AUTH_RESTARTED=0
 # То же самое для мастера первого запуска (ветка A1): один рестарт на эпизод.
 ONBOARDING_RESTARTED=0
+# Вопрос о каналах для разработки (ветка A0): сколько раз ответили за эпизод.
+# Не уходит после нескольких ответов — зовём оператора, а не жмём Enter вечно.
+DEV_CHANNELS_ANSWERS=0
+DEV_CHANNELS_MAX_ANSWERS="${WATCHDOG_DEV_CHANNELS_MAX_ANSWERS:-3}"
 
 # ── Обслуживание команды /doctor ─────────────────────────────────────────────
 # Исполняет запрос, положенный плагином (или аварийным приёмом), и САМ отвечает
@@ -321,6 +325,30 @@ while true; do
   fi
 
   TAIL=$(tmux capture-pane -pt "$SESSION" -S -8 2>/dev/null || true)
+
+  # (A0) Вопрос о каналах для разработки на старте сессии. Отвечаем сразу, не
+  # дожидаясь статичной панели: вопрос однозначен, а пока он на экране, сессия
+  # стоит — MCP-серверы не стартуют, канал не поднимает порт. Для веток ниже он
+  # неотличим от простоя или застрявшего ввода (см. DEV_CHANNELS_RE в lib/pane.sh),
+  # поэтому стоит выше всех. start-agent.sh тоже отвечает, но смотрит на экран
+  # ограниченное время: 10.09.2026 claude после самообновления поднялся позже, и
+  # labops-app остался на вопросе без присмотра.
+  if looks_like_dev_channels_prompt "$TAIL"; then
+    if [ "$DEV_CHANNELS_ANSWERS" -lt "$DEV_CHANNELS_MAX_ANSWERS" ]; then
+      DEV_CHANNELS_ANSWERS=$((DEV_CHANNELS_ANSWERS + 1))
+      if answer_dev_channels_prompt "$SESSION" "$TAIL"; then
+        log "вопрос о каналах разработки на экране — подтвердил (попытка $DEV_CHANNELS_ANSWERS)"
+      else
+        # Enter на «2. Exit» закрыл бы claude — жмём только на первом пункте.
+        log "вопрос о каналах разработки: выбран не первый пункт — Enter не жму"
+      fi
+    else
+      report_down "вопрос о каналах разработки не уходит после $DEV_CHANNELS_ANSWERS ответов"
+    fi
+    PREV_TAIL=""
+    continue
+  fi
+  DEV_CHANNELS_ANSWERS=0
 
   # Pane moved since last cycle → agent is progressing; reset and move on
   if [ "$TAIL" != "$PREV_TAIL" ]; then
