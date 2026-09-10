@@ -173,6 +173,48 @@ GOOD_TS: dict[str, str] = {
 }
 
 
+# Раскладка как в tg-plugin: форму цели строит один модуль из констант, index.ts
+# реэкспортирует помощники, остальные модули их импортируют.
+TARGETS_TS = """\
+/** Префикс, запрещающий tmux подбирать сессию по началу имени. */
+const EXACT_SESSION_PREFIX = '='
+const FIRST_WINDOW_TOP_LEFT_PANE = '^.{top-left}'
+// target = `${name}` — комментарий, не присваивание
+const FORBIDDEN_NAME_CHARS = /[:.\\s]/
+export function assertSessionName(name: string): void {
+  if (FORBIDDEN_NAME_CHARS.test(name)) {
+    throw new TypeError(`bad name: ${name}`)
+  }
+}
+export function sessionTarget(name: string): string {
+  assertSessionName(name)
+  return `${EXACT_SESSION_PREFIX}${name}`
+}
+export function paneTarget(name: string): string {
+  return `${sessionTarget(name)}:${FIRST_WINDOW_TOP_LEFT_PANE}`
+}
+export function looseTarget(name: string): string {
+  return `${name}:${FIRST_WINDOW_TOP_LEFT_PANE}`
+}
+"""
+INDEX_TS = "export { paneTarget, sessionTarget, looseTarget } from './targets.js'\n"
+GOOD_CONSUMER_TS = """\
+import { paneTarget, sessionTarget as exactSession } from '../tmux/index.js'
+export async function submit(session: string, text: string): Promise<void> {
+  const target = paneTarget(session)
+  await exec(['send-keys', '-t', target, '-l', text])
+  await exec(['capture-pane', '-p', '-t', paneTarget(session), '-S', '-8'])
+  await runTmux(['kill-session', '-t', exactSession(session)])
+}
+"""
+BAD_CONSUMER_TS = """\
+import { looseTarget } from '../tmux/index.js'
+export async function submit(session: string): Promise<void> {
+  await exec(['send-keys', '-t', looseTarget(session), 'Enter'])
+}
+"""
+
+
 class BadFormsTest(unittest.TestCase):
     """Каждая неточная форма даёт ровно одно нарушение."""
 
@@ -236,6 +278,34 @@ class TreeTest(unittest.TestCase):
             found, count = ctt.scan_paths([aa, Path(tmp) / "tg-plugin"])
         self.assertEqual(count, 2)
         self.assertEqual([v.path.name for v in found], ["bad.ts"])
+
+    def _plugin_tree(self, tmp: str, consumer: str) -> Path:
+        """Дерево в раскладке tg-plugin: tmux/targets.ts, tmux/index.ts, потребитель."""
+        src = Path(tmp) / "src"
+        (src / "tmux").mkdir(parents=True)
+        (src / "channel").mkdir()
+        (src / "tmux" / "targets.ts").write_text(TARGETS_TS, encoding="utf-8")
+        (src / "tmux" / "index.ts").write_text(INDEX_TS, encoding="utf-8")
+        (src / "channel" / "submit.ts").write_text(consumer, encoding="utf-8")
+        return src
+
+    def test_imported_helpers_resolve(self) -> None:
+        """Помощник из другого модуля (через реэкспорт index.ts) — точная цель.
+
+        Так устроен tg-plugin: без разбора импортов и констант в шаблонах страж
+        объявил бы нарушением каждый точный вызов и держал бы гейт красным.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            found, count = ctt.scan_paths([self._plugin_tree(tmp, GOOD_CONSUMER_TS)])
+        self.assertEqual(count, 3)
+        self.assertEqual([v.reason for v in found], [])
+
+    def test_imported_helper_without_prefix(self) -> None:
+        """Импортированный помощник, собирающий цель без «=», — нарушение."""
+        with tempfile.TemporaryDirectory() as tmp:
+            found, _ = ctt.scan_paths([self._plugin_tree(tmp, BAD_CONSUMER_TS)])
+        self.assertEqual([v.path.name for v in found], ["submit.ts"])
+        self.assertIn("без «=»", found[0].reason)
 
     def test_tests_are_exempt(self) -> None:
         """Тесты нарочно пишут неточные формы и работают в своём сервере."""

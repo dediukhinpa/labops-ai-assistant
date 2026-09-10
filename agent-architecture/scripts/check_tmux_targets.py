@@ -23,10 +23,13 @@
       шаблонные строки с командой tmux.
 
 Нарушение — у флага с «t» (-t, -pt, -Jt, -t"…", -t$x) цель не начинается с «=»,
-либо у команды над панелью цель «=имя:» (текущее окно). Переменная-цель
-разрешается по присваиваниям в том же файле: цель точна, если каждое
-присваивание даёт строку с «=». Исключения — тесты (*.test.*, test_*.py,
-каталоги tests/) и строка с пометкой «tmux-target-ok: <почему>».
+либо у команды над панелью цель «=имя:» (текущее окно). Цель-выражение
+разрешается статически: переменная — по присваиваниям, вызов — по тому, что
+возвращает функция-помощник; в TypeScript и через импорты (включая реэкспорт из
+index.ts) и константы внутри шаблонных строк. Параметры функций неизвестны:
+внутри строки они становятся «{}», а сами по себе целью не считаются.
+Исключения — тесты (*.test.*, test_*.py, каталоги tests/) и строка с пометкой
+«tmux-target-ok: <почему>».
 
 Usage: check_tmux_targets.py [корень ...]   (по умолчанию agent-architecture
 и соседний tg-plugin). Код выхода 1, если найдено хоть одно нарушение.
@@ -175,9 +178,12 @@ NOT_TMUX_BINARY = frozenset({"TMUX", "TMUX_PANE", "TMUX_TMPDIR"})
 # Строка содержит команду tmux — повод разобрать её как командную строку.
 EMBEDDED_TMUX_RE = re.compile(r"(?:^|[\s;&|(`])tmux\s+-?[a-zA-Z]")
 # Сколько раз разрешать ссылку «имя → присваивание → имя …», чтобы не зациклиться.
-MAX_RESOLVE_DEPTH = 5
-# Сколько символов после объявления функции смотреть в поисках return (TypeScript).
-TS_FUNC_BODY_WINDOW = 600
+MAX_RESOLVE_DEPTH = 8
+# TypeScript тратит уровень на каждый шаг: вызов → импорт → return → шаблон →
+# константа; цепочка paneTarget → sessionTarget → EXACT_SESSION_PREFIX уже ~10.
+TS_MAX_RESOLVE_DEPTH = 32
+# Предел вариантов значения (переменная с несколькими присваиваниями и т.п.).
+MAX_VARIANTS = 16
 
 Resolver = Callable[[object], Optional[list[str]]]
 
@@ -448,8 +454,8 @@ def scan_shell(path: Path, text: str) -> list[Violation]:
     """Проверить shell-скрипт."""
     lines = text.splitlines()
 
-    def resolve(expr: object, depth: int = 0) -> Optional[list[str]]:
-        if not (isinstance(expr, tuple) and expr[0] == "shellvar") or depth > MAX_RESOLVE_DEPTH:
+    def resolve(expr: object) -> Optional[list[str]]:
+        if not (isinstance(expr, tuple) and expr[0] == "shellvar"):
             return None
         found = _shell_assignments(text, str(expr[1]))
         return found or None
@@ -538,7 +544,7 @@ class PyResolver:
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             left = self.literal(node.left, depth + 1)
             right = self.literal(node.right, depth + 1) or ["{}"]
-            return [a + b for a in left for b in right] if left else None
+            return [a + b for a in left for b in right][:MAX_VARIANTS] if left else None
         sources: list[ast.expr] = []
         if isinstance(node, ast.Name):
             sources = self.by_name.get(node.id, [])
@@ -616,22 +622,31 @@ def scan_python(path: Path, text: str) -> list[Violation]:
     return out
 
 
-# ── TypeScript ──────────────────────────────────────────────────────────────
+# ── TypeScript: лексер ──────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
 class TsTok:
-    """Лексема TypeScript: str (значение строки), id (цепочка a.b.c), punct, other."""
+    """Лексема TypeScript.
+
+    kind: str (строка в кавычках, text — значение), tpl (шаблонная строка, text —
+    значение с «{}» на месте ${…}), id (цепочка a.b.c), punct, other. start/end —
+    смещения в исходнике: по ним берётся текст выражения для разрешения.
+    """
 
     kind: str
     text: str
     line: int
+    start: int
+    end: int
 
 
 # После этих слов «/» открывает регулярное выражение, а не делит.
 TS_REGEX_KEYWORDS = frozenset(
     {"return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else",
      "do", "yield", "await"})
+TS_IDENT_RE = re.compile(r"[\w$]+(?:\??\.[\w$]+)*")
+TS_NUMBER_RE = re.compile(r"[\w.]+")
 
 
 def _ts_regex_allowed(prev: Optional[TsTok]) -> bool:
@@ -651,31 +666,58 @@ def _ts_skip_string(src: str, i: int) -> int:
     return j + 1
 
 
-def _ts_template(src: str, i: int) -> tuple[str, int]:
-    """Разобрать шаблонную строку с i: (текст с «{}» вместо ${…}, индекс за ней)."""
+def _ts_template_parts(src: str, i: int) -> tuple[list[tuple[bool, str]], int]:
+    """Разобрать шаблонную строку с i.
+
+    Returns:
+        (части: (это ли ${выражение}, текст), индекс за закрывающей кавычкой).
+    """
     j, n = i + 1, len(src)
-    parts: list[str] = []
+    parts: list[tuple[bool, str]] = []
+    buf: list[str] = []
     while j < n and src[j] != "`":
         if src[j] == "\\" and j + 1 < n:
-            parts.append(src[j + 1])
+            buf.append(src[j + 1])
             j += 2
         elif src.startswith("${", j):
-            depth, j = 1, j + 2
-            while j < n and depth:
-                ch = src[j]
-                if ch in "'\"":
-                    j = _ts_skip_string(src, j)
-                    continue
-                if ch == "`":
-                    j = _ts_template(src, j)[1]
-                    continue
-                depth += 1 if ch == "{" else -1 if ch == "}" else 0
-                j += 1
-            parts.append("{}")
+            if buf:
+                parts.append((False, "".join(buf)))
+                buf = []
+            end = _ts_skip_balanced(src, j + 1)
+            parts.append((True, src[j + 2:end - 1]))
+            j = end
         else:
-            parts.append(src[j])
+            buf.append(src[j])
             j += 1
-    return "".join(parts), j + 1
+    if buf:
+        parts.append((False, "".join(buf)))
+    return parts, j + 1
+
+
+def _ts_template_text(parts: Sequence[tuple[bool, str]]) -> str:
+    """Текст шаблона с «{}» на месте подстановок."""
+    return "".join("{}" if is_expr else text for is_expr, text in parts)
+
+
+def _ts_skip_balanced(src: str, i: int) -> int:
+    """Индекс за скобкой, парной открывающей в i (строки внутри пропускаются)."""
+    depth, j, n = 0, i, len(src)
+    while j < n:
+        ch = src[j]
+        if ch in "'\"":
+            j = _ts_skip_string(src, j)
+            continue
+        if ch == "`":
+            j = _ts_template_parts(src, j)[1]
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return n
 
 
 def ts_tokens(src: str) -> list[TsTok]:
@@ -687,8 +729,8 @@ def ts_tokens(src: str) -> list[TsTok]:
     toks: list[TsTok] = []
     i, n = 0, len(src)
 
-    def line_at(pos: int) -> int:
-        return src.count("\n", 0, pos) + 1
+    def add(kind: str, text: str, start: int, end: int) -> None:
+        toks.append(TsTok(kind, text, src.count("\n", 0, start) + 1, start, end))
 
     while i < n:
         ch = src[i]
@@ -702,12 +744,11 @@ def ts_tokens(src: str) -> list[TsTok]:
             i = n if end < 0 else end + 2
         elif ch in "'\"":
             end = _ts_skip_string(src, i)
-            raw = src[i + 1:end - 1]
-            toks.append(TsTok("str", re.sub(r"\\(.)", r"\1", raw), line_at(i)))
+            add("str", re.sub(r"\\(.)", r"\1", src[i + 1:end - 1]), i, end)
             i = end
         elif ch == "`":
-            value, end = _ts_template(src, i)
-            toks.append(TsTok("str", value, line_at(i)))
+            parts, end = _ts_template_parts(src, i)
+            add("tpl", _ts_template_text(parts), i, end)
             i = end
         elif ch == "/" and _ts_regex_allowed(toks[-1] if toks else None):
             j, in_class = i + 1, False
@@ -725,22 +766,333 @@ def ts_tokens(src: str) -> list[TsTok]:
             j += 1
             while j < n and src[j].isalpha():
                 j += 1
-            toks.append(TsTok("other", src[i:j], line_at(i)))
+            add("other", src[i:j], i, j)
             i = j
         elif ch.isalpha() or ch in "_$":
-            m = re.compile(r"[\w$]+(?:\??\.[\w$]+)*").match(src, i)
+            m = TS_IDENT_RE.match(src, i)
             assert m is not None
-            toks.append(TsTok("id", m.group(0).replace("?.", "."), line_at(i)))
+            add("id", m.group(0).replace("?.", "."), i, m.end())
             i = m.end()
         elif ch.isdigit():
-            m = re.compile(r"[\w.]+").match(src, i)
+            m = TS_NUMBER_RE.match(src, i)
             assert m is not None
-            toks.append(TsTok("other", m.group(0), line_at(i)))
+            add("other", m.group(0), i, m.end())
             i = m.end()
         else:
-            toks.append(TsTok("punct", ch, line_at(i)))
+            add("punct", ch, i, i + 1)
             i += 1
     return toks
+
+
+def ts_strip_comments(src: str) -> str:
+    """Исходник с комментариями, заменёнными пробелами (смещения сохраняются).
+
+    Разрешение имён ищет присваивания по тексту, и фраза «target = …» в
+    комментарии иначе читалась бы как присваивание.
+    """
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        ch = src[i]
+        if ch in "'\"":
+            i = _ts_skip_string(src, i)
+            continue
+        if ch == "`":
+            i = _ts_template_parts(src, i)[1]
+            continue
+        if src.startswith("//", i):
+            end = src.find("\n", i)
+            end = n if end < 0 else end
+        elif src.startswith("/*", i):
+            end = src.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+        else:
+            i += 1
+            continue
+        for k in range(i, end):
+            if out[k] != "\n":
+                out[k] = " "
+        i = end
+    return "".join(out)
+
+
+# ── TypeScript: разрешение целей ────────────────────────────────────────────
+
+# Хвост/начало строки, при которых выражение продолжается на следующей строке.
+TS_CONTINUE_TAIL = ("+", "=", "(", ",", "?", ":", "&&", "||", "=>")
+TS_CONTINUE_HEAD = ("+", ".", "?", ":", "&&", "||")
+TS_CAST_RE = re.compile(r"\s+as\s+[\w$.<>\[\]| ]+$")
+TS_CALL_RE = re.compile(r"(?P<name>[\w$]+(?:\??\.[\w$]+)*)\s*\(")
+TS_NAME_RE = re.compile(r"[\w$]+(?:\??\.[\w$]+)*")
+TS_ARROW_RE = re.compile(r"(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*(?::\s*[^=]+?)?=>")
+TS_IMPORT_RE = re.compile(
+    r"\bimport\s+(?:type\s+)?\{(?P<names>[^}]*)\}\s*from\s*['\"](?P<spec>[^'\"]+)['\"]")
+TS_REEXPORT_RE = re.compile(
+    r"\bexport\s+(?:type\s+)?\{(?P<names>[^}]*)\}\s*from\s*['\"](?P<spec>[^'\"]+)['\"]")
+TS_STAR_EXPORT_RE = re.compile(r"\bexport\s+\*\s+from\s*['\"](?P<spec>[^'\"]+)['\"]")
+
+
+def _ts_expr_end(src: str, i: int) -> int:
+    """Индекс конца выражения, начинающегося в i (до ; , или закрывающей скобки)."""
+    depth, j, n = 0, i, len(src)
+    while j < n:
+        ch = src[j]
+        if ch in "'\"":
+            j = _ts_skip_string(src, j)
+            continue
+        if ch == "`":
+            j = _ts_template_parts(src, j)[1]
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                return j
+            depth -= 1
+        elif depth == 0 and ch in ";,":
+            return j
+        elif depth == 0 and ch == "\n":
+            before, after = src[i:j].rstrip(), src[j:].lstrip()
+            if before and not before.endswith(TS_CONTINUE_TAIL) \
+                    and not after.startswith(TS_CONTINUE_HEAD):
+                return j
+        j += 1
+    return n
+
+
+def _ts_split_plus(expr: str) -> list[str]:
+    """Разбить выражение по «+» верхнего уровня (конкатенация строк)."""
+    parts: list[str] = []
+    depth, j, start, n = 0, 0, 0, len(expr)
+    while j < n:
+        ch = expr[j]
+        if ch in "'\"":
+            j = _ts_skip_string(expr, j)
+            continue
+        if ch == "`":
+            j = _ts_template_parts(expr, j)[1]
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "+" and depth == 0 and expr[j + 1:j + 2] not in ("+", "=") \
+                and expr[j - 1:j] != "+":
+            parts.append(expr[start:j])
+            start = j + 1
+        j += 1
+    parts.append(expr[start:])
+    return [p.strip() for p in parts]
+
+
+def _ts_named(names: str) -> Iterator[tuple[str, str]]:
+    """Пары (исходное имя, локальное имя) из «{ a, b as c, type d }»."""
+    for item in names.split(","):
+        item = re.sub(r"^\s*type\s+", "", item).strip()
+        if not item:
+            continue
+        orig, _, local = item.partition(" as ")
+        yield orig.strip(), (local or orig).strip()
+
+
+def _ts_returns(body: str) -> list[str]:
+    """Выражения всех return в теле функции."""
+    return [body[r.end():_ts_expr_end(body, r.end())]
+            for r in re.finditer(r"\breturn\b\s*", body)]
+
+
+class TsProject:
+    """Разрешение выражений-целей TypeScript: литералы, константы, помощники, импорты.
+
+    Цель вроде paneTarget(session) точна, если помощник — в этом же файле или
+    импортированный, в том числе через реэкспорт из index.ts, — возвращает
+    строку с «=». Так устроен tg-plugin: форму цели строит один модуль, и без
+    разбора импортов страж объявил бы нарушением каждый точный вызов.
+    """
+
+    def __init__(self) -> None:
+        """Кэш исходников: путь → текст без комментариев."""
+        self._sources: dict[Path, str] = {}
+
+    def remember(self, path: Path, text: str) -> str:
+        """Запомнить уже прочитанный файл; вернуть его текст без комментариев."""
+        code = ts_strip_comments(text)
+        self._sources[path.resolve()] = code
+        return code
+
+    def source(self, path: Path) -> str:
+        """Текст файла без комментариев (пусто, если не читается)."""
+        key = path.resolve()
+        if key not in self._sources:
+            try:
+                self._sources[key] = ts_strip_comments(key.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                self._sources[key] = ""
+        return self._sources[key]
+
+    def evaluate(self, path: Path, expr: str, depth: int = 0) -> Optional[list[str]]:
+        """Все строки, которыми может оказаться выражение, или None.
+
+        Args:
+            path: Файл, в контексте которого записано выражение.
+            expr: Текст выражения.
+            depth: Глубина разрешения (защита от циклов).
+
+        Returns:
+            Список вариантов значения (неизвестные подстановки — «{}») или None.
+        """
+        if depth > TS_MAX_RESOLVE_DEPTH:
+            return None
+        expr = TS_CAST_RE.sub("", expr.strip()).rstrip("!").strip()
+        if not expr:
+            return None
+        pieces = _ts_split_plus(expr)
+        if len(pieces) > 1:
+            acc = [""]
+            for idx, piece in enumerate(pieces):
+                vals = self.evaluate(path, piece, depth + 1)
+                if vals is None:
+                    if idx == 0:
+                        return None
+                    vals = ["{}"]
+                acc = [a + v for a in acc for v in vals][:MAX_VARIANTS]
+            return acc
+        head = expr[0]
+        if head in "'\"":
+            end = _ts_skip_string(expr, 0)
+            return [re.sub(r"\\(.)", r"\1", expr[1:end - 1])] if end == len(expr) else None
+        if head == "`":
+            parts, end = _ts_template_parts(expr, 0)
+            if end != len(expr):
+                return None
+            acc = [""]
+            for is_expr, text in parts:
+                vals = (self.evaluate(path, text, depth + 1) or ["{}"]) if is_expr else [text]
+                acc = [a + v for a in acc for v in vals][:MAX_VARIANTS]
+            return acc
+        if head == "(" and _ts_skip_balanced(expr, 0) == len(expr):
+            return self.evaluate(path, expr[1:-1], depth + 1)
+        call = TS_CALL_RE.match(expr)
+        if call and _ts_skip_balanced(expr, call.end() - 1) == len(expr):
+            name = call.group("name").replace("?.", ".").rsplit(".", 1)[-1]
+            return self.call_values(path, name, depth + 1)
+        if TS_NAME_RE.fullmatch(expr):
+            return self.name_values(path, expr.replace("?.", ".").rsplit(".", 1)[-1], depth + 1)
+        return None
+
+    def name_values(self, path: Path, name: str, depth: int) -> Optional[list[str]]:
+        """Значения, которые получает имя: присваивания, литеральные свойства, импорт."""
+        if depth > TS_MAX_RESOLVE_DEPTH:
+            return None
+        src = self.source(path)
+        esc = re.escape(name)
+        assign = re.compile(
+            r"(?:\b(?:const|let|var)\s+|(?<![\w$]))(?:[\w$]+\.)*" + esc
+            + r"\s*(?::\s*[^=;\n]+?)?\s*=(?![=>])\s*")
+        # Свойство объекта считаем, только если его значение — строка: иначе
+        # «name: string» в типе читалось бы как присваивание.
+        prop = re.compile(r"(?<![\w$?.])" + esc + r"\s*:\s*(?=['\"`])")
+        values: list[str] = []
+        found = False
+        for m in assign.finditer(src):
+            rhs = src[m.end():_ts_expr_end(src, m.end())]
+            if TS_ARROW_RE.match(rhs):
+                continue    # это функция, а не значение
+            found = True
+            got = self.evaluate(path, rhs, depth + 1)
+            if got is None:
+                return None
+            values.extend(got)
+        for m in prop.finditer(src):
+            got = self.evaluate(path, src[m.end():_ts_expr_end(src, m.end())], depth + 1)
+            if got is not None:
+                found = True
+                values.extend(got)
+        if not found:
+            origin = self.import_origin(path, name)
+            if origin is not None:
+                return self.name_values(origin[0], origin[1], depth + 1)
+        return values[:MAX_VARIANTS] or None
+
+    def call_values(self, path: Path, name: str, depth: int) -> Optional[list[str]]:
+        """Строки, которые возвращает функция-помощник (здесь или импортированная)."""
+        if depth > TS_MAX_RESOLVE_DEPTH:
+            return None
+        returns = self.function_returns(path, name)
+        if returns is None:
+            origin = self.import_origin(path, name)
+            return self.call_values(origin[0], origin[1], depth + 1) if origin else None
+        values: list[str] = []
+        for expr in returns:
+            got = self.evaluate(path, expr, depth + 1)
+            if got is None:
+                return None
+            values.extend(got)
+        return values[:MAX_VARIANTS] or None
+
+    def function_returns(self, path: Path, name: str) -> Optional[list[str]]:
+        """Выражения return функции name, объявленной в файле; None — её здесь нет."""
+        src = self.source(path)
+        esc = re.escape(name)
+        decl = re.search(r"\bfunction\s+" + esc + r"\s*(?:<[^>]*>)?\s*\(", src)
+        if decl:
+            close = _ts_skip_balanced(src, decl.end() - 1)
+            brace = src.find("{", close)
+            if brace < 0:
+                return []
+            return _ts_returns(src[brace:_ts_skip_balanced(src, brace)])
+        arrow_decl = re.search(r"\b(?:const|let|var)\s+" + esc + r"\s*(?::[^=]+?)?=\s*", src)
+        if arrow_decl:
+            arrow = TS_ARROW_RE.match(src, arrow_decl.end())
+            if arrow:
+                k = arrow.end()
+                while k < len(src) and src[k].isspace():
+                    k += 1
+                if k < len(src) and src[k] == "{":
+                    return _ts_returns(src[k:_ts_skip_balanced(src, k)])
+                return [src[k:_ts_expr_end(src, k)]]
+        return None
+
+    def import_origin(self, path: Path, name: str) -> Optional[tuple[Path, str]]:
+        """Файл и исходное имя, откуда импортировано локальное имя."""
+        for m in TS_IMPORT_RE.finditer(self.source(path)):
+            for orig, local in _ts_named(m.group("names")):
+                if local == name:
+                    module = self.module_path(path, m.group("spec"))
+                    return self.export_origin(module, orig, 0) if module else None
+        return None
+
+    def export_origin(self, module: Path, name: str, depth: int) -> Optional[tuple[Path, str]]:
+        """Где на самом деле объявлено экспортируемое имя (сквозь реэкспорты)."""
+        if depth > TS_MAX_RESOLVE_DEPTH:
+            return None
+        src = self.source(module)
+        if re.search(r"\b(?:function\s+|(?:const|let|var)\s+)" + re.escape(name) + r"\b", src):
+            return module, name
+        for m in TS_REEXPORT_RE.finditer(src):
+            for orig, exported in _ts_named(m.group("names")):
+                if exported == name:
+                    sub = self.module_path(module, m.group("spec"))
+                    return self.export_origin(sub, orig, depth + 1) if sub else None
+        for m in TS_STAR_EXPORT_RE.finditer(src):
+            sub = self.module_path(module, m.group("spec"))
+            got = self.export_origin(sub, name, depth + 1) if sub else None
+            if got is not None:
+                return got
+        return None
+
+    @staticmethod
+    def module_path(path: Path, spec: str) -> Optional[Path]:
+        """Файл модуля по относительному спецификатору импорта ('./x.js' → x.ts)."""
+        if not spec.startswith("."):
+            return None
+        base = path.parent / spec
+        candidates = [base.with_suffix(".ts")] if base.suffix == ".js" else []
+        candidates += [base, Path(f"{base}.ts"), base / "index.ts"]
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate.resolve()
+        return None
 
 
 def _ts_group(toks: Sequence[TsTok], open_idx: int) -> tuple[list[list[TsTok]], int]:
@@ -770,91 +1122,35 @@ def _ts_group(toks: Sequence[TsTok], open_idx: int) -> tuple[list[list[TsTok]], 
     return [e for e in elements if e], len(toks) - 1
 
 
-def _ts_element_tok(element: list[TsTok]) -> Tok:
-    """Элемент массива/вызова как аргумент tmux."""
-    head = element[0]
-    if head.kind == "str" and len(element) == 1:
-        return Tok(head.text)
-    if head.kind == "str" and element[1].kind == "punct" and element[1].text == "+":
-        return Tok(head.text + "{}")   # '=' + session — префикс известен
-    return Tok(None, ("ts", tuple(element)))
+def _ts_element_tok(code: str, element: list[TsTok]) -> Tok:
+    """Элемент массива/вызова как аргумент tmux: строка — литерал, прочее — выражение."""
+    if len(element) == 1 and element[0].kind == "str":
+        return Tok(element[0].text)
+    return Tok(None, ("ts", code[element[0].start:element[-1].end]))
 
 
-class TsResolver:
-    """Разрешение выражений-целей TypeScript по тексту того же файла."""
+def scan_typescript(path: Path, text: str,
+                    project: Optional[TsProject] = None) -> list[Violation]:
+    """Проверить модуль TypeScript.
 
-    def __init__(self, src: str) -> None:
-        """Args:
-            src: Исходный текст файла.
-        """
-        self.src = src
+    Args:
+        path: Путь к файлу.
+        text: Его содержимое.
+        project: Общий кэш разрешения импортов (для обхода дерева).
 
-    def __call__(self, expr: object) -> Optional[list[str]]:
-        """Все строки, которыми может оказаться выражение, или None."""
-        if not (isinstance(expr, tuple) and expr[0] == "ts"):
-            return None
-        element: tuple[TsTok, ...] = expr[1]
-        head = element[0]
-        if head.kind != "id":
-            return None
-        name = head.text.rsplit(".", 1)[-1]
-        if len(element) == 1:
-            return self.name_values(name)
-        if element[1].kind == "punct" and element[1].text == "(":
-            return self.func_values(name)
-        return None
-
-    def _literal_at(self, pos: int) -> Optional[str]:
-        """Строковый литерал, начинающийся в pos, или None."""
-        if pos >= len(self.src) or self.src[pos] not in "'\"`":
-            return None
-        if self.src[pos] == "`":
-            return _ts_template(self.src, pos)[0]
-        return self.src[pos + 1:_ts_skip_string(self.src, pos) - 1]
-
-    def name_values(self, name: str) -> Optional[list[str]]:
-        """Значения, присваиваемые имени; None, если хоть одно не литерал."""
-        esc = re.escape(name)
-        assign = re.compile(
-            r"(?:\b(?:const|let|var)\s+|(?<![\w$]))(?:[\w$]+\.)*" + esc
-            + r"\s*(?::\s*[^=;\n]+?)?\s*=(?![=>])\s*")
-        prop = re.compile(r"(?<![\w$?.])" + esc + r"\s*:\s*(?=['\"`])")
-        values: list[str] = []
-        for m in assign.finditer(self.src):
-            lit = self._literal_at(m.end())
-            if lit is None:
-                return None
-            values.append(lit)
-        for m in prop.finditer(self.src):
-            lit = self._literal_at(m.end())
-            if lit is not None:
-                values.append(lit)
-        return values or None
-
-    def func_values(self, name: str) -> Optional[list[str]]:
-        """Строки, которые возвращает функция-помощник из того же файла."""
-        esc = re.escape(name)
-        decl = re.compile(r"\bfunction\s+" + esc + r"\s*\(|\b" + esc
-                          + r"\s*=\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*(?::[^=]+)?=>")
-        values: list[str] = []
-        for m in decl.finditer(self.src):
-            body = self.src[m.end():m.end() + TS_FUNC_BODY_WINDOW]
-            for r in re.finditer(r"(?:\breturn|=>)\s*(?=['\"`])", body):
-                lit = self._literal_at(m.end() + r.end())
-                if lit is not None:
-                    values.append(lit)
-            if m.group(0).rstrip().endswith("=>"):
-                lit = self._literal_at(m.end() + len(body) - len(body.lstrip()))
-                if lit is not None:
-                    values.append(lit)
-        return values or None
-
-
-def scan_typescript(path: Path, text: str) -> list[Violation]:
-    """Проверить модуль TypeScript."""
+    Returns:
+        Найденные нарушения.
+    """
+    project = project or TsProject()
+    code = project.remember(path, text)
     lines = text.splitlines()
     toks = ts_tokens(text)
-    resolve = TsResolver(text)
+
+    def resolve(expr: object) -> Optional[list[str]]:
+        if not (isinstance(expr, tuple) and expr[0] == "ts"):
+            return None
+        return project.evaluate(path, str(expr[1]))
+
     out: list[Violation] = []
     for i, tok in enumerate(toks):
         is_array = tok.kind == "punct" and tok.text == "["
@@ -862,23 +1158,16 @@ def scan_typescript(path: Path, text: str) -> list[Violation]:
                    and toks[i - 1].kind == "id")
         if is_array or is_call:
             elements, close = _ts_group(toks, i)
-            args = [_ts_element_tok(e) for e in elements]
+            args = [_ts_element_tok(code, e) for e in elements]
             for use in arg_list_uses(args):
                 out.extend(_report(path, lines, tok.line, toks[close].line,
                                    judge(use, resolve)))
-        elif tok.kind == "str":
+        elif tok.kind in ("str", "tpl"):
             out.extend(scan_embedded_shell(path, lines, tok.text, tok.line, tok.line))
     return out
 
 
 # ── обход дерева ────────────────────────────────────────────────────────────
-
-
-SCANNERS: dict[str, Callable[[Path, str], list[Violation]]] = {
-    ".sh": scan_shell,
-    ".py": scan_python,
-    ".ts": scan_typescript,
-}
 
 
 def iter_files(root: Path) -> Iterator[Path]:
@@ -895,14 +1184,26 @@ def iter_files(root: Path) -> Iterator[Path]:
             yield path
 
 
-def scan_file(path: Path) -> list[Violation]:
-    """Проверить один файл."""
+def scan_file(path: Path, project: Optional[TsProject] = None) -> list[Violation]:
+    """Проверить один файл.
+
+    Args:
+        path: Путь к файлу (.sh, .py или .ts).
+        project: Общий кэш разрешения импортов TypeScript.
+
+    Returns:
+        Найденные нарушения.
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as err:
         LOG.warning("%s: не читается (%s) — пропуск", path, err)
         return []
-    return SCANNERS[path.suffix](path, text)
+    if path.suffix == ".sh":
+        return scan_shell(path, text)
+    if path.suffix == ".py":
+        return scan_python(path, text)
+    return scan_typescript(path, text, project)
 
 
 def scan_paths(roots: Sequence[Path]) -> tuple[list[Violation], int]:
@@ -915,6 +1216,7 @@ def scan_paths(roots: Sequence[Path]) -> tuple[list[Violation], int]:
         (нарушения, число проверенных файлов).
     """
     violations: list[Violation] = []
+    project = TsProject()
     count = 0
     for root in roots:
         if not root.exists():
@@ -922,7 +1224,7 @@ def scan_paths(roots: Sequence[Path]) -> tuple[list[Violation], int]:
             continue
         for path in iter_files(root):
             count += 1
-            violations.extend(scan_file(path))
+            violations.extend(scan_file(path, project))
     return violations, count
 
 
