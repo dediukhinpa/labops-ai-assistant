@@ -53,6 +53,41 @@ ONBOARDING_RE='Choose the text style that looks best|Select login method'
 # looks_like_onboarding <pane-text> — на экране мастер первого запуска?
 looks_like_onboarding() { printf '%s' "${1:-}" | grep -qaE "$ONBOARDING_RE"; }
 
+# ── Вопрос о каналах для разработки ─────────────────────────────────────────
+# Агенты стартуют с --dangerously-load-development-channels (канал Telegram —
+# research-preview Claude Code), и на каждом старте claude спрашивает, точно ли
+# это локальная разработка: «1. I am using this for local development / 2. Exit».
+# Ответ всегда первый пункт — тот же выбор, что оператор сделал, поставив агента.
+#
+# Пока вопрос на экране, сессия стоит: MCP-серверы не стартуют, порт канала не
+# поднимается, агент нем. start-agent.sh отвечает на вопрос, но смотрел на экран
+# лишь 30 секунд; 10.09.2026 claude после самообновления поднялся позже, и
+# labops-app остался на вопросе. Для watchdog вопрос выглядел как простой или
+# застрявший ввод: выбранный пункт начинается с «❯», и has_prompt отвечает «да».
+DEV_CHANNELS_RE='I am using this for local development'
+
+# _last_marker_line <pane-text> — последняя строка с «❯»: выбранный пункт меню
+# или поле ввода. Судить надо по ней, а не по тексту вопроса где угодно: отвеченный
+# вопрос остаётся в захваченной истории над промптом, и по нему watchdog жал бы
+# Enter в пустое поле, а в конце концов поднял бы ложную тревогу.
+_last_marker_line() { printf '%s' "${1:-}" | grep -a '❯' | tail -1; }
+
+# looks_like_dev_channels_prompt <pane-text> — вопрос на экране и ждёт ответа?
+# Считается и при выбранном «2. Exit»: на него не жмём, но эпизод учитываем.
+looks_like_dev_channels_prompt() {
+  printf '%s' "${1:-}" | grep -qa "$DEV_CHANNELS_RE" || return 1
+  _last_marker_line "${1:-}" | grep -qaE "1\. $DEV_CHANNELS_RE|2\. Exit"
+}
+
+# answer_dev_channels_prompt <session> <pane-text> — подтвердить первый пункт.
+# 0 — Enter отправлен; 1 — вопроса нет или выбран «2. Exit» (Enter закрыл бы claude).
+answer_dev_channels_prompt() {
+  looks_like_dev_channels_prompt "${2:-}" || return 1
+  _last_marker_line "${2:-}" | grep -qa "1\. $DEV_CHANNELS_RE" || return 1
+  tmux send-keys -t "${1:-}" Enter 2>/dev/null || return 1
+  return 0
+}
+
 # ── Мёртвая авторизация ──────────────────────────────────────────────────────
 # Самый коварный отказ: сессия ЖИВА (TUI рисует ❯, tmux цел, процесс на месте),
 # но каждый ход мгновенно падает на авторизации — Claude Code печатает ошибку и

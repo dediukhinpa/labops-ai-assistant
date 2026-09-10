@@ -98,6 +98,77 @@ has_prompt "$ONBOARDING"     && ok "мастер рисует «❯» (поче�
 is_stuck_input "$ONBOARDING" && ok "мастер похож и на застрявший ввод (вторая причина прятаться)" \
                              || bad "мастер уже не похож на застрявший ввод — проверьте ветку (B)"
 
+# ---- вопрос о каналах для разработки ---------------------------------------
+# Хвост панели labops-app 10.09.2026: claude после самообновления поднялся позже,
+# чем start-agent.sh смотрел на экран, и сессия встала на вопросе.
+DEV_CHANNELS=' Channels: server:labops-channel
+
+ ❯ 1. I am using this for local development
+   2. Exit
+
+ Enter to confirm · Esc to cancel'
+DEV_CHANNELS_EXIT=' Channels: server:labops-channel
+
+   1. I am using this for local development
+ ❯ 2. Exit
+
+ Enter to confirm · Esc to cancel'
+# Выбранный пункт рисуется и с неразрывным пробелом после «❯» — как поле ввода.
+DEV_CHANNELS_NBSP="$(printf ' \xe2\x9d\xaf\xc2\xa01. I am using this for local development\n   2. Exit')"
+# Вопрос уже отвечен, но остался в захваченной истории над свежим промптом.
+DEV_ANSWERED=' ❯ 1. I am using this for local development
+   2. Exit
+ Enter to confirm · Esc to cancel
+────────────────────
+❯
+  ⏵⏵ bypass permissions on'
+
+looks_like_dev_channels_prompt "$DEV_CHANNELS"      && ok "вопрос о каналах распознан" \
+                                                    || bad "вопрос о каналах пропущен"
+looks_like_dev_channels_prompt "$DEV_CHANNELS_NBSP" && ok "вопрос распознан и с nbsp после «❯»" \
+                                                    || bad "вопрос с nbsp после «❯» пропущен"
+looks_like_dev_channels_prompt "$DEV_CHANNELS_EXIT" && ok "вопрос с выбранным Exit — тоже вопрос (учёт и эскалация)" \
+                                                    || bad "вопрос с выбранным Exit не распознан"
+looks_like_dev_channels_prompt "$DEV_ANSWERED" && bad "отвеченный вопрос из истории принят за живой (ложный Enter и тревога)" \
+                                               || ok "отвеченный вопрос в истории — не вопрос"
+for pane in "$IDLE" "$ACTIVE" "$OVERLAY" "$ONBOARDING" "$DEAD"; do
+  if looks_like_dev_channels_prompt "$pane"; then
+    bad "чужая панель принята за вопрос о каналах: [$(printf '%s' "$pane" | head -1)]"
+  else
+    ok "не вопрос о каналах: [$(printf '%s' "$pane" | head -1)]"
+  fi
+done
+# Почему нужна отдельная ветка выше всех: вопрос выглядит и промптом, и вводом.
+has_prompt "$DEV_CHANNELS"     && ok "вопрос о каналах рисует «❯» (почему он прятался)" \
+                               || bad "у вопроса не нашлось «❯» — проверка потеряла смысл"
+is_stuck_input "$DEV_CHANNELS" && ok "вопрос похож и на застрявший ввод (вторая причина)" \
+                               || bad "вопрос уже не похож на застрявший ввод — проверьте ветку (B)"
+
+# Ответ: Enter — только на первом пункте. Мок tmux записывает нажатия.
+KEYS="$(mktemp)"
+tmux() {
+  if [ "${1:-}" = send-keys ]; then
+    shift; [ "${1:-}" = -t ] && shift 2
+    printf '%s\n' "${1:-}" >> "$KEYS"
+  fi
+  return 0
+}
+if answer_dev_channels_prompt fake "$DEV_CHANNELS" && [ "$(cat "$KEYS")" = Enter ]; then
+  ok "первый пункт подтверждён одним Enter"
+else
+  bad "первый пункт не подтверждён (нажато: $(tr '\n' ' ' < "$KEYS"))"
+fi
+for pane in "$DEV_CHANNELS_EXIT" "$DEV_ANSWERED" "$IDLE"; do
+  : > "$KEYS"
+  if answer_dev_channels_prompt fake "$pane" || [ -s "$KEYS" ]; then
+    bad "Enter нажат там, где нельзя: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
+  else
+    ok "Enter не нажат: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
+  fi
+done
+rm -f "$KEYS"
+unset -f tmux
+
 # ---- stuck-input detection (pure) ------------------------------------------
 STUCK='────────────────────
 ❯ что дальше по плану, босс
@@ -265,6 +336,61 @@ if command -v tmux >/dev/null 2>&1; then
   fi
 else
   echo "· tmux not installed — skipping live pane checks"
+fi
+
+# ---- real tmux: ответ на вопрос о каналах доходит до сессии ----------------
+# Имитация вопроса ждёт строку ввода и рисует промпт. Текст вопроса при этом
+# остаётся на экране над промптом — заодно проверяется, что отвеченный вопрос не
+# принимается за живой.
+if command -v tmux >/dev/null 2>&1; then
+  S="panetest-dev-$$"
+  tmux kill-session -t "$S" 2>/dev/null || true
+  if tmux new-session -d -s "$S" -x 80 -y 20 \
+       "bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; read -r _; printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'" 2>/dev/null; then
+    wait_pane "$S" looks_like_dev_channels_prompt || true
+    if looks_like_dev_channels_prompt "$t"; then
+      ok "tmux: вопрос о каналах распознан на живой панели"
+      answer_dev_channels_prompt "$S" "$t" || bad "tmux: ответ на вопрос не отправлен"
+      dev_passed() { has_prompt "$1" && ! looks_like_dev_channels_prompt "$1"; }
+      wait_pane "$S" dev_passed && ok "tmux: после ответа вопрос ушёл, промпт на месте" \
+                               || bad "tmux: вопрос остался после ответа"
+    else
+      bad "tmux: вопрос о каналах не распознан на живой панели"
+    fi
+    tmux kill-session -t "$S" 2>/dev/null || true
+  else
+    echo "· tmux session could not start — skipping live dev-channels check"
+  fi
+fi
+
+# ---- проводка: вопрос о каналах разработки ---------------------------------
+# Вопрос похож и на промпт, и на застрявший ввод, поэтому ветка обязана стоять
+# выше обеих — иначе он снова уедет в «здоровый простой».
+WD="$HERE/../watchdog.sh"
+SA="$HERE/../start-agent.sh"
+dev_line="$(grep -n '^  if looks_like_dev_channels_prompt "\$TAIL"; then' "$WD" | head -1 | cut -d: -f1)"
+np_line="$(grep -n 'if ! has_prompt "\$TAIL"' "$WD" | head -1 | cut -d: -f1)"
+st_line="$(grep -n '# (B) Idle prompt' "$WD" | head -1 | cut -d: -f1)"
+if [ -n "$dev_line" ] && [ -n "$np_line" ] && [ -n "$st_line" ] \
+   && [ "$dev_line" -lt "$np_line" ] && [ "$dev_line" -lt "$st_line" ]; then
+  ok "ветка вопроса о каналах стоит до промпта и ввода (строка $dev_line)"
+else
+  bad "ветку вопроса о каналах обошли (dev=$dev_line prompt=$np_line stuck=$st_line)"
+fi
+if grep -q 'report_down "вопрос о каналах разработки' "$WD"; then
+  ok "неуходящий вопрос о каналах эскалируется оператору"
+else
+  bad "неуходящий вопрос о каналах никому не сообщается"
+fi
+if grep -q 'lib/pane.sh' "$SA" && grep -q 'answer_dev_channels_prompt' "$SA"; then
+  ok "start-agent.sh отвечает тем же детектором из lib/pane.sh"
+else
+  bad "start-agent.sh отвечает на вопрос своим грепом — детекторы разъедутся"
+fi
+if grep -qE 'START_READY_TIMEOUT:-([6-9][0-9]|[1-9][0-9]{2,})\}' "$SA"; then
+  ok "start-agent.sh ждёт готовности дольше минуты"
+else
+  bad "start-agent.sh снова ждёт меньше минуты — медленный старт опять повиснет"
 fi
 
 # ---- watchdog wiring: ветка мастера должна стоять раньше веток простоя ------

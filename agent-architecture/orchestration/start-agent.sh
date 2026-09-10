@@ -12,6 +12,8 @@ source "$(dirname "$0")/lib/task-poller-launch.sh"
 # Метка пройденного онбординга перед стартом — иначе обновившийся CLI встретит
 # сессию мастером первого запуска (см. cli_version_mark_onboarding_done).
 source "$(dirname "$0")/lib/cli-version.sh"
+# Распознавание вопроса о каналах для разработки — общее с watchdog.sh.
+source "$(dirname "$0")/lib/pane.sh"
 
 AGENT="$1"
 SESSION="labops-$AGENT"
@@ -171,7 +173,14 @@ session_ready() {
   [ "$hb" -ge "$LAUNCH_TS" ]
 }
 
-DEADLINE=$(( $(date +%s) + 30 ))
+# Сколько ждать готовности. Вопрос о каналах для разработки claude задаёт не
+# сразу: после самообновления CLI первый старт медленнее, и 10.09.2026 вопрос
+# появился позже прежних 30 секунд — скрипт вышел, не ответив, и агент так и
+# остался на нём. Ответ продублирован в watchdog.sh (ветка A0), а здесь просто
+# ждём дольше. watchdog зовёт этот скрипт синхронно, юнит Type=simple, поэтому
+# лимит запуска systemd на это ожидание не распространяется.
+START_READY_TIMEOUT="${START_READY_TIMEOUT:-90}"
+DEADLINE=$(( $(date +%s) + START_READY_TIMEOUT ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   # Агент с каналом готов, когда его webhook-порт слушается (строгое доказательство,
   # что claude поднял MCP-сервер); агент без канала — когда SessionStart-хук
@@ -187,7 +196,7 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   PANE=$(tmux capture-pane -pt "$SESSION" -S -30 2>/dev/null || true)
   # Стоит на экране логина — ~/.claude/.credentials.json нет/просрочен. Токен
   # из окружения тут не поможет (TUI его не проверяет, см. install.sh), и
-  # 30с-таймаут ниже дал бы неинформативный WARNING — watchdog.sh тихо крутил
+  # таймаут ниже дал бы неинформативный WARNING — watchdog.sh тихо крутил
   # бы рестарты (StartLimitIntervalSec=120, StartLimitBurst=5), пока это не
   # исправят вручную. Фейлим сразу с понятной причиной.
   if echo "$PANE" | grep -qE "Browser didn't open|Use the url below to sign in"; then
@@ -196,11 +205,13 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     exit 1
   fi
-  if echo "$PANE" | grep -q "I am using this for local development"; then
-    tmux send-keys -t "$SESSION" Enter
+  # Тот же детектор и тот же ответ, что в watchdog.sh (ветка A0): Enter только
+  # на первом пункте, иначе claude бы вышел.
+  if looks_like_dev_channels_prompt "$PANE"; then
+    answer_dev_channels_prompt "$SESSION" "$PANE" || true
   fi
   sleep 1
 done
 
-echo "[start-agent] WARNING: $AGENT — webhook :$TELEGRAM_WEBHOOK_PORT не слушается за 30s (канал не поднялся)" >&2
+echo "[start-agent] WARNING: $AGENT — webhook :$TELEGRAM_WEBHOOK_PORT не слушается за ${START_READY_TIMEOUT}s (канал не поднялся)" >&2
 exit 0
