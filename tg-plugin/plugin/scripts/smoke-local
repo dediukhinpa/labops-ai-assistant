@@ -51,7 +51,7 @@ cat <<'HINT'
 Next step (operator, interactive):
 
   1. Stop the Python canary:
-       tmux kill-session -t labops-canary 2>/dev/null || true
+       tmux kill-session -t =labops-canary 2>/dev/null || true
 
   2. Launch the channel plugin in a tmux session:
        tmux new-session -d -s labops-canary-channel \
@@ -63,7 +63,7 @@ Next step (operator, interactive):
 
   3. Walk the 15-row smoke matrix in docs/canary-smoke.md.
 
-Rollback: tmux kill-session -t labops-canary-channel, then restart the
+Rollback: tmux kill-session -t =labops-canary-channel, then restart the
 Python canary as documented.
 
 Do NOT touch production bot tokens, gateway.py, or production tmux sessions.
