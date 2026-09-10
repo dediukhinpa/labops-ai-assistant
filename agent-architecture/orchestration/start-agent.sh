@@ -50,7 +50,7 @@ if ! ( resolve_agent_env "$AGENT" >/dev/null ); then
   exit 1
 fi
 
-tmux kill-session -t "$SESSION" 2>/dev/null || true
+tmux kill-session -t "=$SESSION" 2>/dev/null || true
 
 # Reap any leaked channel-server (bun) for THIS agent. kill-session kills claude,
 # but its child bun reparents to PID 1; on a bad-luck race it lands in an EPIPE
@@ -193,7 +193,7 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     echo "[start-agent] $AGENT ready (session up)"
     exit 0
   fi
-  PANE=$(tmux capture-pane -pt "$SESSION" -S -30 2>/dev/null || true)
+  PANE=$(tmux capture-pane -pt "=$SESSION:" -S -30 2>/dev/null || true)
   # Стоит на экране логина — ~/.claude/.credentials.json нет/просрочен. Токен
   # из окружения тут не поможет (TUI его не проверяет, см. install.sh), и
   # таймаут ниже дал бы неинформативный WARNING — watchdog.sh тихо крутил
@@ -202,7 +202,7 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   if echo "$PANE" | grep -qE "Browser didn't open|Use the url below to sign in"; then
     echo "[start-agent] ERROR: $AGENT застрял на экране логина — нет ~/.claude/.credentials.json (или просрочен)." >&2
     echo "  Исправьте один раз: claude --dangerously-skip-permissions (войдите по ссылке, затем /exit), затем перезапустите сервис." >&2
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    tmux kill-session -t "=$SESSION" 2>/dev/null || true
     exit 1
   fi
   # Тот же детектор и тот же ответ, что в watchdog.sh (ветка A0): Enter только

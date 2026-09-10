@@ -32,7 +32,7 @@ RECOVER_SUBMIT_DELAY="${RECOVER_SUBMIT_DELAY:-2}"
 # Backspace-burst length when Ctrl-U leaves residue.
 RECOVER_BSPACE="${RECOVER_BSPACE:-64}"
 
-_recover_capture() { tmux capture-pane -pt "$1" -S -8 2>/dev/null || true; }
+_recover_capture() { tmux capture-pane -pt "=$1:" -S -8 2>/dev/null || true; }
 
 # _reflow_inbound <text> — склеить переносы строк в пробелы (см. шапку).
 _reflow_inbound() {
@@ -75,13 +75,13 @@ recover_stuck_input() {
   # («box won't clear») — восстановление сдавалось ровно в том случае, ради
   # которого написано, и звало оператора. Теперь пустоту подтверждает курсор.
   if ! buffer_is_empty "$session"; then
-    tmux send-keys -t "$session" C-u 2>/dev/null || return 1
+    tmux send-keys -t "=$session:" C-u 2>/dev/null || return 1
     sleep "$RECOVER_SETTLE"
     if ! buffer_is_empty "$session"; then
       # Ctrl-U left residue (stuck paste can resist it) → backspace burst.
       local i
       for ((i = 0; i < RECOVER_BSPACE; i++)); do
-        tmux send-keys -t "$session" BSpace 2>/dev/null || break
+        tmux send-keys -t "=$session:" BSpace 2>/dev/null || break
       done
       sleep "$RECOVER_SETTLE"
       buffer_is_empty "$session" || return 1   # still stuck — give up
@@ -94,9 +94,9 @@ recover_stuck_input() {
   # модели). Пауза перед Enter обязательна — на живой сессии отправка сразу
   # после -l не срабатывала, TUI не успевал принять строку.
   if [ -n "$text" ]; then
-    tmux send-keys -t "$session" -l "$text" 2>/dev/null || return 1
+    tmux send-keys -t "=$session:" -l "$text" 2>/dev/null || return 1
     sleep "$RECOVER_SUBMIT_DELAY"
   fi
-  tmux send-keys -t "$session" Enter 2>/dev/null || return 1
+  tmux send-keys -t "=$session:" Enter 2>/dev/null || return 1
   return 0
 }

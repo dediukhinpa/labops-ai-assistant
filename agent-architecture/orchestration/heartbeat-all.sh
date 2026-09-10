@@ -13,7 +13,7 @@ SCRIPT=/home/agent/.claude-lab/second_brain-heartbeat.py
 
 live=()
 for a in "${AGENTS[@]}"; do
-  if tmux has-session -t "labops-$a" 2>/dev/null; then
+  if tmux has-session -t "=labops-$a" 2>/dev/null; then
     live+=("$a")
   fi
 done

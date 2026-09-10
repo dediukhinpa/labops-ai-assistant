@@ -111,7 +111,7 @@ check_unit() {
 
 # ── 3. Сессия ────────────────────────────────────────────────────────────────
 check_session() {
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
+  if tmux has-session -t "=$SESSION" 2>/dev/null; then
     return 0
   fi
   if [ "$FIX" -eq 0 ]; then
@@ -129,10 +129,10 @@ check_session() {
 # ── 4. Панель: отвечает ли TUI ───────────────────────────────────────────────
 # Порядок важен: сначала ошибка доступа (её рестарт не лечит и лечить нечем),
 # потом отсутствие промпта, потом залипший ввод.
-capture() { tmux capture-pane -pt "$SESSION" -S -8 2>/dev/null || true; }
+capture() { tmux capture-pane -pt "=$SESSION:" -S -8 2>/dev/null || true; }
 
 check_pane() {
-  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
     return 0        # сессии нет — об этом уже сказано выше
   fi
   local tail
@@ -146,7 +146,7 @@ check_pane() {
   if ! has_prompt "$tail"; then
     # Полноэкранный вывод слэш-команды выглядит как мёртвый TUI. Escape
     # закрывает оверлей и ничего не делает с реально зависшим — он и различает.
-    tmux send-keys -t "$SESSION" Escape 2>/dev/null || true
+    tmux send-keys -t "=$SESSION:" Escape 2>/dev/null || true
     sleep 2
     tail="$(capture)"
     if ! has_prompt "$tail"; then
@@ -189,7 +189,7 @@ check_pane() {
 # ── 5. Обвязка сессии ────────────────────────────────────────────────────────
 # Молча, если всё на месте: оператору интересен итог, а не инвентаризация.
 check_plumbing() {
-  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
     return 0
   fi
 

@@ -866,6 +866,25 @@ else
   bad "decay-sweep: юнит-тест провален (agent-template/scripts/decay-sweep.test.sh)"
 fi
 
+echo "── 22. Цели tmux только точные ──"
+# Без «=» tmux ищет сессию по НАЧАЛУ имени, если точной нет. 10.09.2026 watchdog
+# labops-app принял сессию labops-app-124546645 за свою и не поднял агента, а
+# stop-agent.sh снял бы чужую сессию. Сессия — «=имя», панель — «=имя:».
+# Тесты не считаем: они заводят свои сессии на своём сокете или под уникальным именем.
+tmux_cmds='has-session|kill-session|attach(-session)?|send-keys|capture-pane|display|list-panes'
+loose_re="tmux[[:space:]]+($tmux_cmds)[^|;]*[[:space:]]-p?t[[:space:]]+\"[^=]"
+loose_tmux="$(
+  { grep -rnE "$loose_re" . --include='*.sh' --exclude='*.test.sh' 2>/dev/null
+    grep -rnE '"-p?t", self\._session\b' . --include='*.py' --exclude='*.test.py' 2>/dev/null
+  } | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true
+)"
+if [ -z "$loose_tmux" ]; then
+  ok "tmux: все цели точные (=имя / =имя:)"
+else
+  bad "tmux: цель без «=» промахнётся в сессию с более длинным именем:"
+  printf '%s\n' "$loose_tmux" | sed -n '1,5s/^/      /p'
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

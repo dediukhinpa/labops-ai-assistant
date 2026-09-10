@@ -29,8 +29,8 @@ echo "[stop-agent] останавливаю '$AGENT'"
 
 # 1. Сессия tmux. Именно kill-session, а не kill-server: сервер общий, снос
 #    сервера уронил бы сессии всех остальных агентов.
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+if tmux has-session -t "=$SESSION" 2>/dev/null; then
+  tmux kill-session -t "=$SESSION" 2>/dev/null || true
   echo "[stop-agent] сессия $SESSION снята"
 else
   echo "[stop-agent] сессии $SESSION не было"

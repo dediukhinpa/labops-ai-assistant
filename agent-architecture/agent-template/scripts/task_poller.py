@@ -155,6 +155,10 @@ class TmuxPane:
             input_col0: Колонка курсора на пустом поле ввода.
         """
         self._session = session
+        # Цели только точные: без «=» tmux ищет сессию по началу имени, и поллер
+        # labops-app печатал бы в сессию labops-app-124546645 (10.09.2026).
+        self._session_target = f"={session}"
+        self._pane_target = f"={session}:"
         self._input_col0 = input_col0
 
     def _tmux(self, *args: str) -> tuple[int, str]:
@@ -169,7 +173,7 @@ class TmuxPane:
 
     def has_session(self) -> bool:
         """Жива ли сессия агента."""
-        rc, _ = self._tmux("has-session", "-t", self._session)
+        rc, _ = self._tmux("has-session", "-t", self._session_target)
         return rc == 0
 
     def clean_idle(self) -> bool:
@@ -180,7 +184,7 @@ class TmuxPane:
         подсказку следующего промпта, буфер при этом пуст. По тексту это
         неотличимо от занятого поля, поэтому решает позиция курсора.
         """
-        rc, tail = self._tmux("capture-pane", "-pt", self._session, "-S", f"-{PANE_TAIL_LINES}")
+        rc, tail = self._tmux("capture-pane", "-pt", self._pane_target, "-S", f"-{PANE_TAIL_LINES}")
         if rc != 0 or not tail:
             return False
         if "❯" not in tail:
@@ -199,17 +203,17 @@ class TmuxPane:
             return True
         if re.fullmatch(r'Try".*"', typed):
             return True
-        rc, cursor = self._tmux("display", "-pt", self._session, "#{cursor_x}")
+        rc, cursor = self._tmux("display", "-pt", self._pane_target, "#{cursor_x}")
         if rc != 0 or not cursor.strip().isdigit():
             return False
         return int(cursor.strip()) <= self._input_col0
 
     def send_line(self, text: str) -> bool:
         """Напечатать строку в сессию и отправить её."""
-        rc, _ = self._tmux("send-keys", "-t", self._session, "-l", text)
+        rc, _ = self._tmux("send-keys", "-t", self._pane_target, "-l", text)
         if rc != 0:
             return False
-        rc, _ = self._tmux("send-keys", "-t", self._session, "Enter")
+        rc, _ = self._tmux("send-keys", "-t", self._pane_target, "Enter")
         return rc == 0
 
 
