@@ -755,10 +755,15 @@ named="$(
   # таблица скиллов в TOOLS.md — жирным в строках таблицы
   grep -hE '^\|' agent-template/templates/tools.md.template 2>/dev/null \
     | grep -oE '\*\*[a-z][a-z0-9_-]*\*\*' | tr -d '*'
-  # раздел Skills в rules.md — в обратных кавычках. Именно awk, а не sed-диапазон:
-  # следующий заголовок «## Security» тоже начинается с S, и диапазон уезжал в него,
-  # затягивая `sudo` из правил безопасности.
-  awk '/^## Skills/{f=1; next} f && /^## /{exit} f' agent-template/templates/rules.md.template 2>/dev/null \
+  # таблицы скиллов в документации — в обратных кавычках, только строки таблиц внутри
+  # разделов о скиллах. Шаблоны гейт держал, а README и AGENT-LAWS нет: там жили
+  # twitter, perplexity-research, gws и ещё полдюжины скиллов, которых в комплекте
+  # не было никогда. Флаг, а не sed-диапазон: соседний заголовок тоже может
+  # начинаться с той же буквы, и диапазон уезжает в чужой раздел.
+  awk '/^## (Skills in this bundle|Bundled skills|Скиллы в комплекте|Скиллы)$/ {f=1; next}
+       /^## / {f=0}
+       f && /^\|/' \
+      skills/README.md README.md README.ru.md agent-template/docs/AGENT-LAWS.md 2>/dev/null \
     | grep -oE '`[a-z][a-z0-9_-]*`' | tr -d '`'
 )"
 if [ -z "$named" ]; then
@@ -782,6 +787,34 @@ if grep -rlE '[a-z][a-z0-9_-]*:[a-z][a-z0-9-]+' agent-template/templates/*.templ
   bad "шаблоны снова ссылаются на скиллы внешнего плагина, который не устанавливается"
 else
   ok "нет ссылок на скиллы неустановленных плагинов"
+fi
+
+echo "── 21. Шаблоны: одно правило — одно место ──"
+# Общие правила агентов живут только в глобальном ~/.claude/CLAUDE.md, поэтому
+# install.sh не вправе молча пропустить его, если у пользователя уже есть свой.
+if bash agent-template/install-global-rules.test.sh >/dev/null 2>&1; then
+  ok "общие правила агентов не теряются при своём ~/.claude/CLAUDE.md"
+else
+  bad "install.sh теряет общие правила агентов (agent-template/install-global-rules.test.sh)"
+fi
+
+# Дословные повторы между шаблонами. Одни и те же правила лежали в двух-трёх файлах
+# сразу — 9 принципов в глобальном и агентском CLAUDE.md, git и безопасность в
+# глобальном и rules.md, зоны в CLAUDE.md и rules.md — и копии уже разошлись:
+# зелёная зона одного файла разрешала деплой, красная зона другого его запрещала.
+# Гейт ловит только дословный повтор строки; перефразированный дубль он не увидит.
+dups="$(
+  for f in agent-template/templates/*.md.template; do
+    sed -E 's/^[[:space:]]*([-*|]|[0-9]+\.)[[:space:]]*//; s/[*`_|]//g; s/[[:space:]]+/ /g; s/^ //; s/ $//' "$f" \
+      | tr '[:upper:]' '[:lower:]' \
+      | awk -v f="$(basename "$f" .template)" 'length($0) >= 25 && $0 !~ /^[- ]+$/ { print f "\t" $0 }'
+  done | awk -F'\t' '{ n[$2]++; w[$2] = w[$2] " " $1 } END { for (k in n) if (n[k] > 1) print w[k] " :: " k }'
+)"
+if [ -z "$dups" ]; then
+  ok "в шаблонах нет дословно повторённых правил"
+else
+  bad "одно и то же правило лежит в нескольких шаблонах:"
+  printf '%s\n' "$dups" | sed -n '1,5s/^/      /p'
 fi
 
 echo

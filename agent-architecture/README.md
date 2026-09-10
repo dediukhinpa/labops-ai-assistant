@@ -401,16 +401,18 @@ Delivery uses no headless `claude -p`: the poller types into the live subscripti
 
 ## Bundled skills
 
-The bundle in [`skills/`](skills/) is installed by symlink into `~/.claude/skills/<name>` or per-agent. The skills are independent and don't depend on second_brain.
+`install.sh` symlinks the whole [`skills/`](skills/) directory into every agent workspace
+(`.claude/skills`), so an update to a skill reaches all agents at once.
 
 | Skill | What it does | Needs |
 |---|---|---|
+| `create-agent` | rolls out a new agent end to end: identity, bot, voice, autostart, smoke test | — |
+| `memory-consolidate` | distils raw episodic memory into durable insights on a reflection nudge | — |
 | `groq-voice` | transcribes voice `.ogg` via Groq Whisper (required on `<media:audio>`) | `GROQ_API_KEY` |
 | `second_brain-doctor` | agent-side diagnostics of second_brain: connect, identity, memory_router, agent_router, hooks-parity, webhooks, repo, MCP-URL safety; output is redacted (secrets masked) | — |
 | `mcp-builder` | a guide (from Anthropic) to building new MCP servers (FastMCP / TS SDK) | — |
-| `markdown-new` | clean Markdown from any URL via `markdown.new` (a replacement for the noisy web_fetch, ~80% token savings) | — |
-| `transcript` | YouTube transcripts via TranscriptAPI.com | `TRANSCRIPT_API_KEY` |
-| `agent-browser` | browser automation via CDP (navigation, forms, screenshots) | the `agent-browser` binary |
+| `markdown-new` | clean Markdown from any URL via the external `markdown.new` service — the URL is sent to a third party | — |
+| `agent-browser` | browser automation via CDP (navigation, forms, screenshots) | the `agent-browser` binary + Chrome — `install.sh` does not install them |
 
 ---
 

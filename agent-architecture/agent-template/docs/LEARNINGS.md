@@ -74,7 +74,8 @@ Not all files can be self-modified. Zones prevent agents from accidentally break
 |------|-------|------------|
 | **RED (read-only)** | CLAUDE.md, rules.md | Operator only |
 | **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, passive/decisions.md, active/episodic.md | Agent on trigger |
-| **GREEN (full autonomy)** | LEARNINGS.md, MEMORY.md, skills/*, agents/*.md, feedback_*.md | Agent freely |
+| **GREEN (full autonomy)** | LEARNINGS.md, MEMORY.md, agents/*.md, feedback_*.md | Agent freely |
+| **SHARED** | skills/* | Operator -- the directory is shared by every agent |
 
 **Key principle:** Agent never modifies its own SOUL (CLAUDE.md). Operator iterates high-level instructions, agent optimizes within those constraints -- like Karpathy's `prepare.py` (read-only) vs `train.py` (agent-modifiable).
 
@@ -167,7 +168,8 @@ Local-only learning system. No external databases.
 |------|-------|------------|
 | **RED (read-only)** | CLAUDE.md, rules.md | Operator only |
 | **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, passive/, active/ | Agent on trigger |
-| **GREEN (autonomy)** | LEARNINGS.md, MEMORY.md, skills/*, feedback_*.md | Agent freely |
+| **GREEN (autonomy)** | LEARNINGS.md, MEMORY.md, feedback_*.md | Agent freely |
+| **SHARED** | skills/* | Operator -- the directory is shared by every agent |
 
 ### Flow
 

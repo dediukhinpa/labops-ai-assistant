@@ -280,8 +280,22 @@ fill_template "${TEMPLATES_DIR}/LEARNINGS.md.template" "${WORKSPACE}/core/LEARNI
 fill_template "${TEMPLATES_DIR}/mcp.json.template"     "${WORKSPACE}/.mcp.json"
 fill_template "${TEMPLATES_DIR}/settings.json.template" "${WORKSPACE}/settings.json"
 
-# Global ~/.claude/CLAUDE.md only if missing
-fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_DIR}/CLAUDE.md"
+# Общие правила всех агентов (git, безопасность, смена модели, принципы) живут
+# ТОЛЬКО в ~/.claude/CLAUDE.md -- из агентских файлов их убрали, чтобы одно правило
+# не лежало в трёх местах и не расходилось. Поэтому чужой глобальный файл
+# (пользователь пришёл уже настроенным) больше нельзя молча пропустить: агент
+# остался бы без этих правил вовсе. Свой файл владельца не трогаем -- кладём наши
+# правила рядом и прямо говорим, что их нужно перенести.
+GLOBAL_MD="${GLOBAL_DIR}/CLAUDE.md"
+GLOBAL_MARKER='# Global Rules -- All Agents'
+if [ -f "$GLOBAL_MD" ] && ! grep -qxF "$GLOBAL_MARKER" "$GLOBAL_MD"; then
+    fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_MD}.labops-new"
+    warn "В ${GLOBAL_MD} уже лежат чужие правила -- общие правила агентов НЕ подключены."
+    warn "Перенесите ${GLOBAL_MD}.labops-new в ${GLOBAL_MD}, иначе агент останется без"
+    warn "правил git, безопасности и смены модели."
+else
+    fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "$GLOBAL_MD"
+fi
 
 # ============================================================
 # Step 6: Copy scripts and hooks (not symlinked, so each agent owns them)
@@ -444,6 +458,10 @@ echo ""
 FILE_COUNT=$(find "${WORKSPACE}" -type f | wc -l | tr -d ' ')
 echo "  ${FILE_COUNT} files in workspace"
 echo ""
+if [ -f "${GLOBAL_MD}.labops-new" ]; then
+    warn "Общие правила агентов ждут переноса: ${GLOBAL_MD}.labops-new -> ${GLOBAL_MD}"
+    echo ""
+fi
 echo "  Next steps:"
 echo ""
 echo "    1. Review and customize identity files:"

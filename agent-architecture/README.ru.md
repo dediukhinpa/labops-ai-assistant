@@ -402,16 +402,18 @@ task_claim   →  task_review  →  task_done
 
 ## Скиллы в комплекте
 
-Бандл в [`skills/`](skills/) ставится симлинком в `~/.claude/skills/<name>` или пер-агентно. Скиллы независимы и не зависят от second_brain.
+`install.sh` ставит каталог [`skills/`](skills/) целиком симлинком в воркспейс каждого агента
+(`.claude/skills`), поэтому правка скилла сразу доезжает до всех агентов.
 
 | Скилл | Что делает | Нужно |
 |---|---|---|
+| `create-agent` | заводит нового агента под ключ: личность, бот, голос, автозапуск, смоук-тест | — |
+| `memory-consolidate` | сворачивает сырую эпизодическую память в устойчивые выводы по сигналу рефлексии | — |
 | `groq-voice` | транскрипция голосовых `.ogg` через Groq Whisper (обязательно при `<media:audio>`) | `GROQ_API_KEY` |
 | `second_brain-doctor` | агент-сайд-диагностика second_brain: коннект, identity, memory_router, agent_router, hooks-parity, webhooks, repo, безопасность MCP-URL; вывод редактируется (секреты маскируются) | — |
 | `mcp-builder` | гайд (от Anthropic) по созданию новых MCP-серверов (FastMCP / TS SDK) | — |
-| `markdown-new` | чистый Markdown из любого URL через `markdown.new` (замена шумному web_fetch, ~80 % экономии токенов) | — |
-| `transcript` | транскрипты YouTube через TranscriptAPI.com | `TRANSCRIPT_API_KEY` |
-| `agent-browser` | браузерная автоматизация через CDP (навигация, формы, скриншоты) | бинарь `agent-browser` |
+| `markdown-new` | чистый Markdown из любого URL через внешний сервис `markdown.new` — адрес уходит третьей стороне | — |
+| `agent-browser` | браузерная автоматизация через CDP (навигация, формы, скриншоты) | бинарь `agent-browser` + Chrome — `install.sh` их не ставит |
 
 ---
 

@@ -3,45 +3,42 @@
 ## My Workspace
 
 - **CLAUDE.md**: `~/.claude-lab/{{AGENT_ID}}/.claude/CLAUDE.md` (identity)
-- **Core**: `~/.claude-lab/{{AGENT_ID}}/.claude/core/` (AGENTS, USER, rules, passive, active, MEMORY)
-- **Skills**: `~/.claude-lab/{{AGENT_ID}}/.claude/skills/` (symlink to shared)
-- **Secrets**: `~/.claude-lab/shared/secrets/` (chmod 700, shared)
+- **Core**: `~/.claude-lab/{{AGENT_ID}}/.claude/core/` (AGENTS, USER, rules, LEARNINGS, MEMORY, passive, active)
+- **Skills**: `~/.claude-lab/{{AGENT_ID}}/.claude/skills/` (symlink to `agent-architecture/skills`, shared by every agent)
 
-## Memory 4-Layer
+## Memory Layers and Access Zones
 
-| Layer | File | Mutability |
-|-------|------|------------|
-| IDENTITY | CLAUDE.md, rules.md | manual only |
-| YELLOW | USER.md, AGENTS.md, TOOLS.md | agent on trigger |
-| PASSIVE 14d | core/passive/decisions.md | auto-rotate |
-| ACTIVE 24h | core/active/episodic.md | gateway auto |
-| ARCHIVE | core/MEMORY.md | on-demand Read |
-| L4 | second_brain shared semantic memory | curl on-demand |
+| Layer | Files | Who changes |
+|-------|-------|-------------|
+| IDENTITY (red) | CLAUDE.md, core/rules.md | operator only |
+| PROFILE (yellow) | core/USER.md, core/AGENTS.md, tools/TOOLS.md | agent, on a trigger |
+| PASSIVE (yellow) | core/passive/decisions.md | agent; aged entries rotate out via decay-sweep.sh |
+| ACTIVE (yellow) | core/active/episodic.md | Stop hook, automatically; rolled by size via archive-roll.sh |
+| LEARNING (green) | core/LEARNINGS.md, core/MEMORY.md, feedback_*.md | agent freely |
+| SKILLS | skills/* | operator -- the directory is shared by every agent |
+| L4 | second_brain shared semantic memory | agents, via MCP |
 
 ## Skills
 
-Rendered from the shared set in `agent-architecture/skills`, symlinked into the
-workspace -- so this table is the whole list, and an update to a skill reaches
-every agent at once.
+The whole list. An update to a skill reaches every agent at once.
 
-| # | Skill | What it does | API key needed |
-|---|-------|-------------|----------------|
-| 1 | **agent-browser** | Browser automation: navigate, fill, click, screenshot | none |
+| # | Skill | What it does | Needs |
+|---|-------|-------------|-------|
+| 1 | **agent-browser** | Browser automation: navigate, fill forms, click, screenshot | `agent-browser` binary + Chrome (not installed by the installer) |
 | 2 | **create-agent** | Roll out a new agent end to end | none |
-| 3 | **groq-voice** | Voice transcription (Groq Whisper) | groq.com (free) |
-| 4 | **markdown-new** | Create markdown documents | none |
-| 5 | **mcp-builder** | Build an MCP server | none |
+| 3 | **groq-voice** | Voice transcription (Groq Whisper) | `GROQ_API_KEY` (groq.com, free) |
+| 4 | **markdown-new** | Clean Markdown from any URL via the external markdown.new service | none -- but the URL goes to a third party |
+| 5 | **mcp-builder** | Guide to building an MCP server | none |
 | 6 | **memory-consolidate** | Distil episodic memory into durable insights | none |
 | 7 | **second_brain-doctor** | Diagnose the shared brain end to end | none |
-| 8 | **transcript** | Work with transcripts | none |
 
-## Secrets
+## Secrets (paths only, never values)
 
 | What | Path | How to get |
 |------|------|-----------|
-| Telegram bot | channel.env (`TELEGRAM_BOT_TOKEN`) | @BotFather |
-| Groq API | shared/secrets/groq-api-key | groq.com -- free |
-| Agent bearer | agent.env (`AGENT_BEARER`) | issue-agent-token.py on the brain host |
+| Telegram bot | `~/.claude-lab/shared/state/{{AGENT_ID}}/telegram/channel.env` (`TELEGRAM_BOT_TOKEN`) | @BotFather |
+| Groq API | `~/.claude-lab/shared/secrets/groq-api-key` | groq.com -- free |
+| Agent bearer | `~/.claude-lab/{{AGENT_ID}}/.claude/agent.env` (`AGENT_BEARER`) | issue-agent-token.py on the brain host |
 
 ## Servers
 
@@ -52,21 +49,13 @@ every agent at once.
 
 ## Services
 
+second_brain endpoints and MCP tools are in `core/AGENTS.md`.
+
 | Service | Endpoint | Description |
 |---------|----------|-------------|
-| second_brain memory MCP | `${SECOND_BRAIN_MEMORY_URL}` | Write decisions, error-patterns, external notes |
-| second_brain memory_router MCP | `${SECOND_BRAIN_MEMORY_ROUTER_URL}` | Read shared semantic memory |
-| second_brain agent_router MCP  | `${SECOND_BRAIN_AGENT_ROUTER_URL}`  | Inter-agent notify / broadcast |
-| gateway | -- | Telegram gateway (optional) |
 | {{SERVICE_1_NAME}} | {{SERVICE_1_PORT}} | {{SERVICE_1_DESC}} |
 
 ## GitHub
 
 - Account: {{GITHUB_USERNAME}}
 - CLI: `gh` (authorized)
-- Workflow: branches + PR, NEVER push to main
-
-## Secrets (paths only, never values)
-
-- `~/.claude-lab/shared/secrets/` -- all secrets here
-- Do NOT output, commit, or copy between servers

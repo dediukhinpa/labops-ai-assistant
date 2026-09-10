@@ -132,7 +132,7 @@ Callable skills. NOT loaded at session start. Loaded on-demand when Skill tool i
 | **skills/{name}/*.sh** | Shell scripts used by skill | on-demand (skill execution) | developer (manual) | agent executes |
 | **skills/{name}/*.py** | Python scripts used by skill | on-demand (skill execution) | developer (manual) | agent executes |
 
-**Skills:** agent-browser, create-agent, groq-voice, markdown-new, mcp-builder, memory-consolidate, second_brain-doctor, transcript
+**Skills:** agent-browser, create-agent, groq-voice, markdown-new, mcp-builder, memory-consolidate, second_brain-doctor
 
 **Who can touch:** Developer/operator creates skills. Agent can use but not modify.
 

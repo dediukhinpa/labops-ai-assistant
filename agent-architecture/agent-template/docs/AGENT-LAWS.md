@@ -120,24 +120,6 @@ Claude Code загружает оба уровня. Глобальный все�
 
 ---
 
-## 10 базовых скиллов
-
-Устанавливаются через install.sh:
-
-| # | Скилл | Что даёт |
-|---|-------|----------|
-| 1 | **groq-voice** | Транскрипция голосовых (Groq Whisper API) |
-| 3 | **gws** | Google Workspace: Gmail, Calendar, Drive |
-| 4 | **youtube-transcript** | Транскрипция YouTube видео |
-| 5 | **twitter** | Чтение твитов, профилей, поиск |
-| 6 | **quick-reminders** | Напоминания через nohup sleep |
-| 7 | **markdown-new** | Создание markdown документов |
-| 8 | **excalidraw** | Диаграммы и схемы |
-| 9 | **datawrapper** | Графики и таблицы |
-| 10 | **perplexity-research** | Веб-ресёрч через Perplexity API |
-
----
-
 ## Память (4 слоя)
 
 Тиры `active/passive/archive` означают **роль**, а не возраст.

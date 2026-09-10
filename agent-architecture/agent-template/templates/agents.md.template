@@ -3,21 +3,11 @@
 ## Models
 
 - **Primary:** {{PRIMARY_MODEL}} (alias — resolves to the latest model of its tier; a full model name pins a version)
-- **Subagents:** Native Claude Code Agent tool (inherit parent model or override in agents/*.md)
-- **Research:** {{RESEARCH_MODEL}} (e.g. Perplexity Sonar -- web search only, no code)
+- **Subagents:** only the native Claude Code Agent tool (inherit the parent model or
+  override in agents/*.md), at most {{MAX_SUBAGENTS}} at once
+- **Research:** {{RESEARCH_MODEL}}
 
-**Rules:**
-- Subagents: ONLY native Claude Code Agent tool
-- Maximum {{MAX_SUBAGENTS}} subagents simultaneously
-- Heavy work -> subagents. Architecture and review -> main agent.
-
-## Message Bus
-
-| Operation | How |
-|-----------|-----|
-| My inbox | `{{INBOX_READ_CMD}}` |
-| Send message | `{{MSG_SEND_CMD}}` |
-| Update status | `{{STATUS_UPDATE_CMD}}` |
+Heavy work -> subagents. Architecture and review -> main agent.
 
 ## Task Acceptance
 
@@ -60,23 +50,11 @@ Do NOT assume. Do NOT redirect without operator.
 
 ## Self-Learning
 
-Local-only learning system. See [LEARNINGS.md](../LEARNINGS.md) for full documentation.
-
-### Access Zones
-
-| Zone | Files | Who changes |
-|------|-------|------------|
-| **RED (read-only)** | CLAUDE.md, rules.md | Operator only |
-| **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, passive/, active/ | Agent on trigger |
-| **GREEN (autonomy)** | LEARNINGS.md, MEMORY.md, skills/*, feedback_*.md | Agent freely |
-
-### Flow
+Local-only learning log: `core/LEARNINGS.md` (triggers and the Repeats metric are
+described there). Who may change which file -- the access zones table in
+`tools/TOOLS.md`.
 
 1. Event -> classify type (tool / behavior / workflow / architecture)
 2. Record in core/LEARNINGS.md (structured log)
 3. Record in auto-memory feedback_*.md if behavioral
-4. If stable pattern -> update YELLOW zone
-
-### Metric
-
-Repeats column in LEARNINGS.md -- recurrence counter. >0 = rule not working, strengthen.
+4. If stable pattern -> update a yellow-zone file
