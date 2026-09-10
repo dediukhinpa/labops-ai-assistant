@@ -489,8 +489,8 @@ fi
 # CHANGE_ME. `systemctl restart` тут не помощник -- сессия лежит в общем
 # tmux-сервере вне cgroup юнита; снимаем сессию, watchdog поднимет заново.
 SESSION="labops-$AGENT_ID"
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-  _pane_pid="$(tmux list-panes -t "$SESSION" -F '#{pane_pid}' 2>/dev/null | head -1)"
+if tmux has-session -t "=$SESSION" 2>/dev/null; then
+  _pane_pid="$(tmux list-panes -t "=$SESSION:" -F '#{pane_pid}' 2>/dev/null | head -1)"
   _sess_age="$(ps -o etimes= -p "${_pane_pid:-0}" 2>/dev/null | tr -d ' ')"
   _stale=0
   for f in "$WORKSPACE/.mcp.json" "$WORKSPACE/settings.json" "$WORKSPACE/CLAUDE.md"; do
@@ -501,13 +501,13 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   done
   if [ "$_stale" = "1" ]; then
     say "6.5. Перечитывание конфига живой сессией"
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    tmux kill-session -t "=$SESSION" 2>/dev/null || true
     _w=0
     while [ "$_w" -lt 90 ]; do
       sleep 5; _w=$((_w + 5))
-      tmux has-session -t "$SESSION" 2>/dev/null && break
+      tmux has-session -t "=$SESSION" 2>/dev/null && break
     done
-    if tmux has-session -t "$SESSION" 2>/dev/null; then
+    if tmux has-session -t "=$SESSION" 2>/dev/null; then
       ok "сессия пересоздана за ${_w}с -- конфиг перечитан"
       sleep 15
     else
@@ -566,8 +566,8 @@ fi
 # 7c-bis. Сессия не должна быть СТАРШЕ своего .mcp.json. Разница между «токен
 # верный» и «агент верный»: остальные пробы бьют токеном из памяти скрипта, а
 # живая сессия могла стартовать до того, как этот токен лёг в файл.
-if tmux has-session -t "labops-$AGENT_ID" 2>/dev/null && [ -f "$WORKSPACE/.mcp.json" ]; then
-  _pp="$(tmux list-panes -t "labops-$AGENT_ID" -F '#{pane_pid}' 2>/dev/null | head -1)"
+if tmux has-session -t "=labops-$AGENT_ID" 2>/dev/null && [ -f "$WORKSPACE/.mcp.json" ]; then
+  _pp="$(tmux list-panes -t "=labops-$AGENT_ID:" -F '#{pane_pid}' 2>/dev/null | head -1)"
   _sa="$(ps -o etimes= -p "${_pp:-0}" 2>/dev/null | tr -d ' ')"
   _fa=$(( $(date +%s) - $(stat -c %Y "$WORKSPACE/.mcp.json") ))
   if [ -n "${_sa:-}" ] && [ "$_fa" -lt "$_sa" ]; then

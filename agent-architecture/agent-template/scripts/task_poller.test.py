@@ -516,6 +516,31 @@ class TmuxPaneTest(unittest.TestCase):
 
         return _Pane("labops-test")
 
+    def test_tmux_targets_are_exact(self) -> None:
+        """Сессия — «=имя», панель — «=имя:»: без «=» tmux ищет по началу имени.
+
+        10.09.2026 сессии labops-app не было, и обращения к ней уходили в
+        labops-app-124546645 — поллер печатал бы задачи чужому агенту.
+        """
+        calls: list[tuple[str, ...]] = []
+
+        class _Pane(TmuxPane):
+            def _tmux(self, *args: str) -> tuple[int, str]:
+                calls.append(args)
+                return 0, "❯ x" if args[0] == "capture-pane" else "2"
+
+        pane = _Pane("labops-app")
+        pane.has_session()
+        pane.clean_idle()
+        pane.send_line("задача")
+        targets: dict[str, set[str]] = {}
+        for args in calls:
+            flag = "-t" if "-t" in args else "-pt"
+            targets.setdefault(args[0], set()).add(args[args.index(flag) + 1])
+        self.assertEqual(targets["has-session"], {"=labops-app"})
+        for command in ("capture-pane", "display", "send-keys"):
+            self.assertEqual(targets[command], {"=labops-app:"}, command)
+
     def test_clean_idle_prompt(self) -> None:
         """Пустое поле после неразрывного пробела — это простой.
 

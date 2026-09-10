@@ -38,7 +38,7 @@ _cli_version_pane_pid() {   # <session>
     "$CLI_VERSION_PANE_PID_CMD" "$session" 2>/dev/null || true
     return 0
   fi
-  tmux list-panes -t "$session" -F '#{pane_pid}' 2>/dev/null | head -1 || true
+  tmux list-panes -t "=$session:" -F '#{pane_pid}' 2>/dev/null | head -1 || true
 }
 
 # Печатает путь бинаря, который РЕАЛЬНО исполняет процесс. Пусто, если /proc

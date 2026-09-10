@@ -524,7 +524,7 @@ else
     LOGIN_TIMEOUT=300
     LOGIN_WAITED=0
     while ! creds_valid; do
-      if ! tmux has-session -t "$LOGIN_SESSION" 2>/dev/null; then
+      if ! tmux has-session -t "=$LOGIN_SESSION" 2>/dev/null; then
         exit 0
       fi
       if [ "$LOGIN_WAITED" -ge "$LOGIN_TIMEOUT" ]; then
@@ -533,17 +533,17 @@ else
       sleep 3
       LOGIN_WAITED=$((LOGIN_WAITED + 3))
     done
-    tmux send-keys -t "$LOGIN_SESSION" "/exit" Enter
+    tmux send-keys -t "=$LOGIN_SESSION:" "/exit" Enter
     sleep 2
-    tmux kill-session -t "$LOGIN_SESSION" 2>/dev/null || true
+    tmux kill-session -t "=$LOGIN_SESSION" 2>/dev/null || true
   ) &
   LOGIN_WATCHER_PID=$!
 
-  tmux attach -t "$LOGIN_SESSION" 2>/dev/null || true
+  tmux attach -t "=$LOGIN_SESSION" 2>/dev/null || true
   wait "$LOGIN_WATCHER_PID" 2>/dev/null || true
 
   if creds_valid; then
-    tmux kill-session -t "$LOGIN_SESSION" 2>/dev/null || true
+    tmux kill-session -t "=$LOGIN_SESSION" 2>/dev/null || true
     ok "Claude Code авторизован (\$HOME/.claude/.credentials.json)"
   else
     die "вход не завершён (валидный accessToken в \$HOME/.claude/.credentials.json так и не появился) — перезапустите ./install.sh, когда будете готовы войти."

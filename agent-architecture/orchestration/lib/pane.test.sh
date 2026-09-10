@@ -365,6 +365,36 @@ if command -v tmux >/dev/null 2>&1; then
   fi
 fi
 
+# ---- real tmux: сосед с более длинным именем не получает клавиш -------------
+# РЕГРЕССИЯ 10.09.2026: без точной сессии tmux ищет цель по НАЧАЛУ имени. Сессии
+# labops-app не было, и её обращения уходили в labops-app-124546645: watchdog
+# «нашёл» свою сессию и не поднял агента. Функции pane.sh бьют только в сессию
+# с точным именем.
+if command -v tmux >/dev/null 2>&1; then
+  S="panetest-nb-$$"
+  tmux kill-session -t "=$S-long" 2>/dev/null || true
+  # Тот же вопрос, что выше: после Enter он сменится промптом — так видно нажатие.
+  nb_tui="bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; "
+  nb_tui+="read -r _; printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'"
+  if tmux new-session -d -s "$S-long" -x 80 -y 20 "$nb_tui" 2>/dev/null; then
+    wait_pane "$S-long" looks_like_dev_channels_prompt || true
+    if answer_dev_channels_prompt "$S" "$t"; then
+      bad "tmux: Enter ушёл в сессию с другим именем ($S-long вместо $S)"
+    else
+      ok "tmux: несуществующая сессия не подменяется соседом с более длинным именем"
+    fi
+    sleep 0.5
+    t="$(tmux capture-pane -pt "=$S-long:" -S -8 2>/dev/null)"
+    looks_like_dev_channels_prompt "$t" && ok "tmux: панель соседа не тронута" \
+                                        || bad "tmux: панель соседа получила Enter"
+    [ -z "$(pane_cursor_x "$S")" ] && ok "tmux: курсор соседа не читается под чужим именем" \
+                                   || bad "tmux: pane_cursor_x прочитал соседа"
+    tmux kill-session -t "=$S-long" 2>/dev/null || true
+  else
+    echo "· tmux session could not start — skipping neighbour check"
+  fi
+fi
+
 # ---- проводка: вопрос о каналах разработки ---------------------------------
 # Вопрос похож и на промпт, и на застрявший ввод, поэтому ветка обязана стоять
 # выше обеих — иначе он снова уедет в «здоровый простой».
