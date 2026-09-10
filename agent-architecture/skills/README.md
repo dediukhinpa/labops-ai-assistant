@@ -29,13 +29,11 @@ it when the description matches.
 | `memory-consolidate` | Distil raw episodic memory into durable insights on a reflection nudge. | the agent memory layout |
 | `second_brain-doctor` | Diagnose the agent's second_brain setup end to end; output is redacted. | second_brain |
 | `groq-voice` | Transcribe voice messages (`.ogg`) via Groq Whisper. | `GROQ_API_KEY` |
-| `markdown-new` | Clean Markdown extraction from any URL via the external `markdown.new` service (the URL is sent to a third party). | none |
-| `mcp-builder` | Anthropic-authored guide to building new MCP servers from scratch. | none |
 | `agent-browser` | Browser automation CLI (Chrome/Chromium via CDP). Navigate, click, fill forms, screenshot. | `agent-browser` binary + Chrome, not installed by `install.sh` |
 
 ## Skill independence
 
-`groq-voice`, `markdown-new`, `mcp-builder` and `agent-browser` do not depend on each other
+`groq-voice` and `agent-browser` do not depend on each other
 or on second_brain and run in a vanilla Claude Code workspace. `create-agent`,
 `memory-consolidate` and `second_brain-doctor` are part of this distro and expect its
 workspace layout.

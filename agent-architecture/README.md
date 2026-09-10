@@ -237,7 +237,7 @@ flowchart LR
 
 | Layer | Files / source | In context | Who writes |
 |---|---|---|---|
-| **L1 Identity** | `CLAUDE.md`, `rules.md`, `USER.md` | always (`@import`) | Operator only (RED zone) |
+| **L1 Identity** | `CLAUDE.md`, `rules.md`, `USER.md` | always (`@import`) | Operator; the agent only when asked (RED zone) |
 | **L2 Active** | `active/episodic.md` (raw diary, salience-tagged), `active/working-set.md` (materialised recall), `active/handoff.md` | yes (working-set + handoff) | `active-writer.sh` (Stop hook) writes episodic; `working-set-build.sh` rebuilds the working set |
 | **L3 Passive** (semantic) | `passive/insights.md · decisions.md · errors.md · preferences.md` (distilled insights + decay frontmatter) | yes | the **live session** during reflection (skill `memory-consolidate`); `decay-sweep.sh` prunes |
 | **ARCHIVE** | `archived/episodic/YYYY-MM.md`, `archived/superseded/`, `MEMORY.md`, `LEARNINGS.md` | no — on demand (Read) | `archive-roll.sh` / `decay-sweep.sh` (pure bash) |
@@ -298,7 +298,7 @@ flowchart LR
   subgraph c1["Define · scaffold"]
     direction TB
     S1["1. Conversation: role and name<br/>(what the agent does, what it's called)"]
-    S2["2. Identity: walk through CLAUDE.md / rules.md<br/>(character, zones, principles)"]
+    S2["2. Identity: walk through CLAUDE.md / USER.md<br/>(character, zones, operator profile)"]
     S3["3. Scaffold the workspace<br/>agent-template → ~/.claude-lab/&lt;agent&gt;/.claude"]
     S4["4. Telegram bot<br/>@BotFather → token → channel.env"]
     S1 --> S2 --> S3 --> S4
@@ -410,8 +410,6 @@ Delivery uses no headless `claude -p`: the poller types into the live subscripti
 | `memory-consolidate` | distils raw episodic memory into durable insights on a reflection nudge | — |
 | `groq-voice` | transcribes voice `.ogg` via Groq Whisper (required on `<media:audio>`) | `GROQ_API_KEY` |
 | `second_brain-doctor` | agent-side diagnostics of second_brain: connect, identity, memory_router, agent_router, hooks-parity, webhooks, repo, MCP-URL safety; output is redacted (secrets masked) | — |
-| `mcp-builder` | a guide (from Anthropic) to building new MCP servers (FastMCP / TS SDK) | — |
-| `markdown-new` | clean Markdown from any URL via the external `markdown.new` service — the URL is sent to a third party | — |
 | `agent-browser` | browser automation via CDP (navigation, forms, screenshots) | the `agent-browser` binary + Chrome — `install.sh` does not install them |
 
 ---

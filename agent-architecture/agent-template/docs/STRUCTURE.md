@@ -44,7 +44,7 @@
     │       ├── core/
     │       │   ├── AGENTS.md          models, subagents config
     │       │   ├── USER.md            operator profile
-    │       │   ├── rules.md           boundaries, permissions
+    │       │   ├── rules.md           rules learned from mistakes
     │       │   ├── passive/          semantic insights (consolidated)
     │       │   │   ├── insights.md    reflection insights (YAML frontmatter)
     │       │   │   ├── decisions.md   architectural/operational decisions
@@ -90,7 +90,7 @@
 | Isolated (per agent) | Shared |
 |---------------------|--------|
 | CLAUDE.md (SOUL) | ~/.claude/CLAUDE.md (global) |
-| rules.md (boundaries) | ~/.claude/rules/*.md |
+| rules.md (learned rules) | ~/.claude/rules/*.md |
 | TOOLS.md (servers) | shared/skills/ |
 | ACTIVE episodic.md (journal) | shared/gateway/ |
 | PASSIVE decisions.md | shared/secrets/ |

@@ -15,7 +15,7 @@
             +-- CLAUDE.md                  <-- SOUL: identity, роль, характер
             +-- core/AGENTS.md             <-- модели, субагенты, память
             +-- core/USER.md               <-- профиль владельца
-            +-- core/rules.md              <-- границы этого агента
+            +-- core/rules.md              <-- правила, заработанные на ошибках
             +-- core/passive/*.md             <-- семантические инсайты (decisions/errors/...)
             +-- core/active/episodic.md         <-- сырой дневник ходов (append-only)
             +-- core/MEMORY.md             <-- архив (не в контексте)
@@ -127,7 +127,7 @@ Claude Code загружает оба уровня. Глобальный все�
 | Слой | Файл | Что хранит | Обновление |
 |------|------|-----------|------------|
 | **IDENTITY** | CLAUDE.md, AGENTS.md, USER.md | Кто ты, кто владелец | Вручную |
-| **RULES** | core/rules.md | Границы и запреты | Вручную |
+| **RULES** | core/rules.md | Правила, заработанные на ошибках | Оператор или агент по его просьбе |
 | **ACTIVE (episodic)** | core/active/episodic.md | Сырой append-only дневник ходов (salience-тег) | Stop-хук (active-writer.sh), НИКОГДА не сжимается моделью |
 | **ACTIVE (working-set)** | core/active/working-set.md | Материализованный recall под текущую задачу | working-set-build.sh (SessionStart + значимые промпты) |
 | **PASSIVE** | core/passive/*.md | Семантические инсайты (insights/decisions/errors/preferences) | Живая сессия при рефлексии (скилл memory-consolidate), событийно |

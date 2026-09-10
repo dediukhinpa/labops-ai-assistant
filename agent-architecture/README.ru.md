@@ -238,7 +238,7 @@ flowchart LR
 
 | Слой | Файлы / источник | В контексте | Кто правит |
 |---|---|---|---|
-| **L1 Идентичность** | `CLAUDE.md`, `rules.md`, `USER.md` | всегда (`@import`) | только оператор (RED-зона) |
+| **L1 Идентичность** | `CLAUDE.md`, `rules.md`, `USER.md` | всегда (`@import`) | оператор; агент — только по его просьбе (RED-зона) |
 | **L2 Active** | `active/episodic.md` (сырой дневник, с salience-тегами), `active/working-set.md` (материализованный recall), `active/handoff.md` | да (working-set + handoff) | `active-writer.sh` (Stop-хук) пишет episodic; `working-set-build.sh` пересобирает working-set |
 | **L3 Passive** (semantic) | `passive/insights.md · decisions.md · errors.md · preferences.md` (инсайты + decay-frontmatter) | да | **живая сессия** на рефлексии (скилл `memory-consolidate`); `decay-sweep.sh` вычищает |
 | **ARCHIVE** | `archived/episodic/YYYY-MM.md`, `archived/superseded/`, `MEMORY.md`, `LEARNINGS.md` | нет — по запросу (Read) | `archive-roll.sh` / `decay-sweep.sh` (чистый bash) |
@@ -299,7 +299,7 @@ flowchart LR
   subgraph c1["Определить · скаффолд"]
     direction TB
     S1["1. Диалог: роль и имя<br/>(чем агент занимается, как зовётся)"]
-    S2["2. Идентичность: провести по CLAUDE.md / rules.md<br/>(характер, зоны, принципы)"]
+    S2["2. Идентичность: провести по CLAUDE.md / USER.md<br/>(характер, зоны, профиль оператора)"]
     S3["3. Скаффолд воркспейса<br/>agent-template → ~/.claude-lab/&lt;agent&gt;/.claude"]
     S4["4. Telegram-бот<br/>@BotFather → токен → channel.env"]
     S1 --> S2 --> S3 --> S4
@@ -411,8 +411,6 @@ task_claim   →  task_review  →  task_done
 | `memory-consolidate` | сворачивает сырую эпизодическую память в устойчивые выводы по сигналу рефлексии | — |
 | `groq-voice` | транскрипция голосовых `.ogg` через Groq Whisper (обязательно при `<media:audio>`) | `GROQ_API_KEY` |
 | `second_brain-doctor` | агент-сайд-диагностика second_brain: коннект, identity, memory_router, agent_router, hooks-parity, webhooks, repo, безопасность MCP-URL; вывод редактируется (секреты маскируются) | — |
-| `mcp-builder` | гайд (от Anthropic) по созданию новых MCP-серверов (FastMCP / TS SDK) | — |
-| `markdown-new` | чистый Markdown из любого URL через внешний сервис `markdown.new` — адрес уходит третьей стороне | — |
 | `agent-browser` | браузерная автоматизация через CDP (навигация, формы, скриншоты) | бинарь `agent-browser` + Chrome — `install.sh` их не ставит |
 
 ---

@@ -817,6 +817,21 @@ else
   printf '%s\n' "$dups" | sed -n '1,5s/^/      /p'
 fi
 
+# Раскладка правил по файлам — та же, что в курсе «Своя ИИ-команда» (занятия 6–7):
+# язык оператора только в USER.md, зоны — в личном CLAUDE.md, rules.md копит правила,
+# заработанные на ошибках. Разойдётся шаблон с уроком — клиент по курсу будет искать
+# правило не в том файле, где оно лежит.
+T=agent-template/templates
+if grep -q '{{LANGUAGE}}' "$T/USER.md.template" \
+   && ! grep -q '{{LANGUAGE}}' "$T/global-CLAUDE.md.template" "$T/CLAUDE.md.template" "$T/rules.md.template" \
+   && grep -q '^\*\*Green zone' "$T/CLAUDE.md.template" \
+   && grep -q '^\*\*Red zone' "$T/CLAUDE.md.template" \
+   && ! grep -qiE 'green zone|red zone' "$T/rules.md.template"; then
+  ok "раскладка правил совпадает с курсом: язык — USER.md, зоны — CLAUDE.md"
+else
+  bad "шаблоны разошлись с курсом: язык должен жить в USER.md, зоны — в личном CLAUDE.md"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

@@ -27,7 +27,7 @@ Claude Code launch
 │
 └── {agent}/.claude/CLAUDE.md     agent SOUL
     ├── @core/USER.md             operator profile
-    ├── @core/rules.md            boundaries
+    ├── @core/rules.md            learned rules
     ├── @core/passive/*.md          semantic insights (decisions/errors/preferences)
     ├── @core/active/handoff.md      compact extract (last 10 entries)
     └── @core/active/working-set.md  materialised recall for the current task

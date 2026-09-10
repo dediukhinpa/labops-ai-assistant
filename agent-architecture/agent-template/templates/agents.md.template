@@ -9,14 +9,6 @@
 
 Heavy work -> subagents. Architecture and review -> main agent.
 
-## Task Acceptance
-
-1. Task unclear? -> ask clarifying questions
-2. Task not mine? -> reject with reasoning, suggest who
-3. Task clear? -> execute or delegate to subagent
-
-Do NOT assume. Do NOT redirect without operator.
-
 ## Pipelines
 
 | Pipeline | Steps |
@@ -57,4 +49,4 @@ described there). Who may change which file -- the access zones table in
 1. Event -> classify type (tool / behavior / workflow / architecture)
 2. Record in core/LEARNINGS.md (structured log)
 3. Record in auto-memory feedback_*.md if behavioral
-4. If stable pattern -> update a yellow-zone file
+4. If stable pattern -> propose a rule for core/rules.md; add it once the operator agrees

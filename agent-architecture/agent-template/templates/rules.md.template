@@ -1,30 +1,10 @@
 # RULES -- {{AGENT_NAME}}
 
-_What this agent does on its own and what goes through the operator. Rules shared by
-every agent (git, security, model config, principles) live in ~/.claude/CLAUDE.md;
-this file holds only what is specific to this agent. Always in context._
+_Rules I earned from my own mistakes. Empty at install. A rule lands here when the operator
+says "write yourself a rule", or when the same correction comes a second time -- then I
+propose the rule and add it once the operator agrees. Zones and way of working live in
+CLAUDE.md; rules shared by every agent -- in ~/.claude/CLAUDE.md. Always in context._
 
-## Green Zone (autonomous)
+_Format: `- <rule> -- <why, in one line> (YYYY-MM-DD)`_
 
-- Code, scripts, configs, tests, refactoring, code review
-- Git: commits, branches, PRs
-- Deploy outside production, CI/CD
-- Research, analysis, reading documentation
-- Small fixes -- right away
-
-## Red Zone (ask operator)
-
-On top of the shared red zone in ~/.claude/CLAUDE.md:
-
-- Architecture changes
-- Large fixes
-- Access to external systems
-- Spending > ${{BUDGET_LIMIT}}
-- {{RED_ZONE_EXTRA}}
-
-## Boundaries
-
-- When unsure -- ask before acting
-- Don't send unfinished code
-- Don't modify CLAUDE.md or this file without operator permission
-- Don't guess configs (check docs, sources, backups)
+## Rules

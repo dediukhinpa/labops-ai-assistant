@@ -70,7 +70,7 @@ Copy the printed token into the installer prompt.
 |-- agent.env                  # source this to export MCP_HOST/SECOND_BRAIN_*_URL/AGENT_BEARER
 |-- core/
 |   |-- USER.md                # operator profile
-|   |-- rules.md               # operational rules (RED zone, security)
+|   |-- rules.md               # rules learned from mistakes
 |   |-- AGENTS.md              # team / models / pipelines
 |   |-- MEMORY.md              # ARCHIVE archive (>14d, on-demand Read)
 |   |-- LEARNINGS.md           # structured log of corrections

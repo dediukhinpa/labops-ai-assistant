@@ -40,7 +40,7 @@ forbidden repo-wide). The only cron is optional nightly pure-bash housekeeping.
 | CLAUDE.md | SOUL, character, workflow | Manual only |
 | AGENTS.md | Models, subagents, pipelines | Manual only |
 | USER.md | Operator profile | Agent on trigger (YELLOW) |
-| rules.md | Boundaries, permissions | Manual only |
+| rules.md | Rules learned from mistakes | Operator, or the agent when asked |
 | TOOLS.md | Servers, Docker, services | Manual only |
 
 ### ACTIVE (current-task working memory)

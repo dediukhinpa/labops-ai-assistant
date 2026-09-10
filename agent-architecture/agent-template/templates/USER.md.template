@@ -3,6 +3,7 @@
 **Name:** {{OPERATOR_NAME}}
 **Address as:** {{OPERATOR_ADDRESS}}
 **Timezone:** {{TIMEZONE}}
+**Language:** {{LANGUAGE}} -- talk to me in it
 
 ## Profile
 

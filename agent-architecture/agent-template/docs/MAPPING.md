@@ -11,7 +11,7 @@ How three systems name and use the same concepts. Use this to understand where e
 | Operating rules, models, subagents | `AGENTS.md` | _(inside CLAUDE.md)_ | `core/AGENTS.md` (on-demand Read) | on-demand |
 | Operator profile | `USER.md` | _(inside CLAUDE.md or rules/)_ | `core/USER.md` (@include) | always |
 | Infrastructure, servers, services | `TOOLS.md` | _(inside CLAUDE.md)_ | `tools/TOOLS.md` (on-demand Read) | on-demand |
-| Boundaries, permissions, red zones | _(inside AGENTS.md)_ | `.claude/rules/*.md` | `core/rules.md` (@include) | always |
+| Boundaries, permissions, red zones | _(inside AGENTS.md)_ | `.claude/rules/*.md` | `CLAUDE.md` (SOUL) | always |
 | First-run setup ritual | `BOOTSTRAP.md` (deleted after) | _(none)_ | _(none -- install.sh replaces this)_ | once |
 | Periodic heartbeat checklist | `HEARTBEAT.md` | _(none)_ | _(hooks + event-driven consolidation instead)_ | always |
 
@@ -28,7 +28,7 @@ We use **1 CLAUDE.md + @include** -- best of both:
 ```
 CLAUDE.md                    # SOUL: personality, principles (entry point)
   @core/USER.md              # operator profile
-  @core/rules.md             # boundaries, security
+  @core/rules.md             # learned rules
   @core/passive/*.md            # semantic insights (decisions/errors/preferences)
   @core/active/handoff.md       # compact extract (last 10 entries)
   @core/active/working-set.md   # materialised recall for the current task

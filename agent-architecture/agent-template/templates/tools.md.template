@@ -10,7 +10,7 @@
 
 | Layer | Files | Who changes |
 |-------|-------|-------------|
-| IDENTITY (red) | CLAUDE.md, core/rules.md | operator only |
+| IDENTITY (red) | CLAUDE.md, core/rules.md | operator, or the agent when the operator asks |
 | PROFILE (yellow) | core/USER.md, core/AGENTS.md, tools/TOOLS.md | agent, on a trigger |
 | PASSIVE (yellow) | core/passive/decisions.md | agent; aged entries rotate out via decay-sweep.sh |
 | ACTIVE (yellow) | core/active/episodic.md | Stop hook, automatically; rolled by size via archive-roll.sh |
@@ -27,10 +27,8 @@ The whole list. An update to a skill reaches every agent at once.
 | 1 | **agent-browser** | Browser automation: navigate, fill forms, click, screenshot | `agent-browser` binary + Chrome (not installed by the installer) |
 | 2 | **create-agent** | Roll out a new agent end to end | none |
 | 3 | **groq-voice** | Voice transcription (Groq Whisper) | `GROQ_API_KEY` (groq.com, free) |
-| 4 | **markdown-new** | Clean Markdown from any URL via the external markdown.new service | none -- but the URL goes to a third party |
-| 5 | **mcp-builder** | Guide to building an MCP server | none |
-| 6 | **memory-consolidate** | Distil episodic memory into durable insights | none |
-| 7 | **second_brain-doctor** | Diagnose the shared brain end to end | none |
+| 4 | **memory-consolidate** | Distil episodic memory into durable insights | none |
+| 5 | **second_brain-doctor** | Diagnose the shared brain end to end | none |
 
 ## Secrets (paths only, never values)
 
