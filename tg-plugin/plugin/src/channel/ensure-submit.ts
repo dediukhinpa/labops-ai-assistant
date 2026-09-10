@@ -20,6 +20,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { Logger } from '../log.js'
+import { paneTarget } from '../tmux/index.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -31,7 +32,10 @@ export interface TmuxRunner {
 }
 
 export interface EnsureSubmitDeps {
-  /** tmux session, e.g. `labops-carmella`. Empty ⇒ feature off (returns 'skip'). */
+  /**
+   * Bare tmux session name, e.g. `labops-carmella` — the runner builds the
+   * exact pane target itself. Empty ⇒ feature off (returns 'skip').
+   */
   session: string
   /** The exact inbound text we delivered — retyped verbatim on recovery. */
   content: string
@@ -76,39 +80,56 @@ export function paneInputStuck(pane: string): boolean {
   return true
 }
 
-const realRunner: TmuxRunner = {
-  capturePane: async (session) => {
-    const { stdout } = await execFileAsync('tmux', [
-      'capture-pane',
-      '-pt',
-      session,
-      '-S',
-      '-8',
-    ])
-    return stdout
-  },
-  clearInput: async (session) => {
-    // Ctrl-U kills the input line; the stuck paste yields to it (verified live).
-    await execFileAsync('tmux', ['send-keys', '-t', session, 'C-u'])
-  },
-  submitText: async (session, text) => {
-    if (text.includes('\n')) {
-      // Multi-line: wrap in a well-formed bracketed paste so newlines are kept
-      // and do not submit early, then commit with Enter.
-      await execFileAsync('tmux', [
-        'send-keys',
-        '-t',
-        session,
-        '-l',
-        `${PASTE_START}${text}${PASTE_END}`,
-      ])
-    } else {
-      // Single-line: literal keystrokes — the proven-reliable path.
-      await execFileAsync('tmux', ['send-keys', '-t', session, '-l', text])
-    }
-    await execFileAsync('tmux', ['send-keys', '-t', session, 'Enter'])
-  },
+/**
+ * Runs `tmux` with a ready argv and resolves with its stdout. Injectable so a
+ * test can assert the exact targets without a real tmux server.
+ */
+export type TmuxExec = (args: readonly string[]) => Promise<string>
+
+const execTmux: TmuxExec = async (args) => {
+  const { stdout } = await execFileAsync('tmux', [...args])
+  return stdout
 }
+
+/**
+ * Build the tmux-backed {@link TmuxRunner}.
+ *
+ * Every call targets the pane via {@link paneTarget}, never the bare session
+ * name. Why: without `=` tmux falls back to the first session whose name merely
+ * STARTS with ours, so with an orphaned bun or an AGENT_ID that drifted from the
+ * session name the operator's text was typed into a neighbouring agent (e.g.
+ * `labops-app` → `labops-app-124546645`). And `=name:` would be the CURRENT
+ * window — a second window opened by the operator would receive the keys.
+ * With the exact target a missing session makes tmux fail, which the caller
+ * already treats as a fail-open skip.
+ *
+ * @param exec - tmux launcher; defaults to `execFile('tmux', …)`.
+ * @returns A runner whose methods take a bare session name.
+ */
+export function createTmuxRunner(exec: TmuxExec = execTmux): TmuxRunner {
+  return {
+    capturePane: async (session) =>
+      exec(['capture-pane', '-p', '-t', paneTarget(session), '-S', '-8']),
+    clearInput: async (session) => {
+      // Ctrl-U kills the input line; the stuck paste yields to it (verified live).
+      await exec(['send-keys', '-t', paneTarget(session), 'C-u'])
+    },
+    submitText: async (session, text) => {
+      const target = paneTarget(session)
+      if (text.includes('\n')) {
+        // Multi-line: wrap in a well-formed bracketed paste so newlines are kept
+        // and do not submit early, then commit with Enter.
+        await exec(['send-keys', '-t', target, '-l', `${PASTE_START}${text}${PASTE_END}`])
+      } else {
+        // Single-line: literal keystrokes — the proven-reliable path.
+        await exec(['send-keys', '-t', target, '-l', text])
+      }
+      await exec(['send-keys', '-t', target, 'Enter'])
+    },
+  }
+}
+
+const realRunner: TmuxRunner = createTmuxRunner()
 
 export type EnsureSubmitResult = 'skip' | 'noop' | 'recovered'
 
