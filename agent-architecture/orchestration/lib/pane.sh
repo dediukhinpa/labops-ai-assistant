@@ -86,18 +86,32 @@ DEV_CHANNELS_RE='I am using this for local development'
 _last_marker_line() { printf '%s' "${1:-}" | grep -a '❯' | tail -1; }
 
 # looks_like_dev_channels_prompt <pane-text> — вопрос на экране и ждёт ответа?
-# Считается и при выбранном «2. Exit»: на него не жмём, но эпизод учитываем.
+# Считается и при выбранном «2. Exit»: ответ сперва вернёт выбор на первый пункт.
 looks_like_dev_channels_prompt() {
   printf '%s' "${1:-}" | grep -qa "$DEV_CHANNELS_RE" || return 1
   _last_marker_line "${1:-}" | grep -qaE "1\. $DEV_CHANNELS_RE|2\. Exit"
 }
 
+# Пауза после стрелки перед повторным чтением экрана: меню перерисовывается не сразу.
+DEV_CHANNELS_SETTLE="${DEV_CHANNELS_SETTLE:-0.5}"
+
 # answer_dev_channels_prompt <session> <pane-text> — подтвердить первый пункт.
-# 0 — Enter отправлен; 1 — вопроса нет или выбран «2. Exit» (Enter закрыл бы claude).
+# 0 — Enter отправлен на первом пункте; 1 — вопроса нет или выбрать первый пункт
+# не удалось. На выбранном «2. Exit» Enter закрыл бы claude, а просто не жать —
+# значит оставить сессию стоять до прихода человека: выбор сам с Exit не уйдёт.
+# Поэтому сперва стрелка вверх, затем экран перечитывается, и Enter уходит,
+# только если выбранным стал первый пункт.
 answer_dev_channels_prompt() {
-  looks_like_dev_channels_prompt "${2:-}" || return 1
-  _last_marker_line "${2:-}" | grep -qa "1\. $DEV_CHANNELS_RE" || return 1
-  tmux send-keys -t "=${1:-}:^.{top-left}" Enter 2>/dev/null || return 1
+  local session="${1:-}" pane="${2:-}"
+  looks_like_dev_channels_prompt "$pane" || return 1
+  if ! _last_marker_line "$pane" | grep -qa "1\. $DEV_CHANNELS_RE"; then
+    tmux send-keys -t "=$session:^.{top-left}" Up 2>/dev/null || return 1
+    sleep "$DEV_CHANNELS_SETTLE"
+    pane="$(tmux capture-pane -pt "=$session:^.{top-left}" -S -8 2>/dev/null || true)"
+    looks_like_dev_channels_prompt "$pane" || return 1
+    _last_marker_line "$pane" | grep -qa "1\. $DEV_CHANNELS_RE" || return 1
+  fi
+  tmux send-keys -t "=$session:^.{top-left}" Enter 2>/dev/null || return 1
   return 0
 }
 

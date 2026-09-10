@@ -153,30 +153,57 @@ has_prompt "$DEV_CHANNELS"     && ok "вопрос о каналах рисуе�
 is_stuck_input "$DEV_CHANNELS" && ok "вопрос похож и на застрявший ввод (вторая причина)" \
                                || bad "вопрос уже не похож на застрявший ввод — проверьте ветку (B)"
 
-# Ответ: Enter — только на первом пункте. Мок tmux записывает нажатия.
-KEYS="$(mktemp)"
+# Ответ: Enter — только на первом пункте. Мок tmux записывает нажатия, а экран
+# отдаёт MOCK_PANE_NOW — или MOCK_PANE_AFTER_UP, если стрелка уже нажата.
+KEYS="$TEST_TMP/keys"; : > "$KEYS"
+MOCK_PANE_NOW=""; MOCK_PANE_AFTER_UP=""
+DEV_CHANNELS_SETTLE=0
 tmux() {
-  if [ "${1:-}" = send-keys ]; then
-    shift; [ "${1:-}" = -t ] && shift 2
-    printf '%s\n' "${1:-}" >> "$KEYS"
-  fi
+  case "${1:-}" in
+    send-keys)
+      shift; [ "${1:-}" = -t ] && shift 2
+      printf '%s\n' "${1:-}" >> "$KEYS" ;;
+    capture-pane)
+      if [ -n "$MOCK_PANE_AFTER_UP" ] && grep -qx Up "$KEYS"; then
+        printf '%s' "$MOCK_PANE_AFTER_UP"
+      else
+        printf '%s' "$MOCK_PANE_NOW"
+      fi ;;
+  esac
   return 0
 }
-if answer_dev_channels_prompt fake "$DEV_CHANNELS" && [ "$(cat "$KEYS")" = Enter ]; then
+pressed() { tr '\n' ' ' < "$KEYS" | sed 's/ $//'; }
+if answer_dev_channels_prompt fake "$DEV_CHANNELS" && [ "$(pressed)" = Enter ]; then
   ok "первый пункт подтверждён одним Enter"
 else
-  bad "первый пункт не подтверждён (нажато: $(tr '\n' ' ' < "$KEYS"))"
+  bad "первый пункт не подтверждён (нажато: $(pressed))"
 fi
-for pane in "$DEV_CHANNELS_EXIT" "$DEV_ANSWERED" "$IDLE"; do
+# Выбран «2. Exit». Enter на нём закрыл бы claude, а без стрелки выбор с Exit
+# не сдвинул бы никто: watchdog только считал бы попытки и в конце звал
+# оператора. Стрелка возвращает выбор; Enter — лишь когда экран это подтвердил.
+: > "$KEYS"; MOCK_PANE_NOW="$DEV_CHANNELS_EXIT"; MOCK_PANE_AFTER_UP="$DEV_CHANNELS"
+if answer_dev_channels_prompt fake "$DEV_CHANNELS_EXIT" && [ "$(pressed)" = "Up Enter" ]; then
+  ok "на «2. Exit» выбор возвращён стрелкой на первый пункт, затем Enter"
+else
+  bad "на «2. Exit» ответ неверен (нажато: $(pressed))"
+fi
+: > "$KEYS"; MOCK_PANE_AFTER_UP=""
+if ! answer_dev_channels_prompt fake "$DEV_CHANNELS_EXIT" && [ "$(pressed)" = Up ]; then
+  ok "стрелка не сдвинула выбор с «Exit» — Enter не нажат"
+else
+  bad "Enter нажат на «Exit» или стрелки не было (нажато: $(pressed))"
+fi
+MOCK_PANE_NOW=""
+for pane in "$DEV_ANSWERED" "$IDLE"; do
   : > "$KEYS"
   if answer_dev_channels_prompt fake "$pane" || [ -s "$KEYS" ]; then
-    bad "Enter нажат там, где нельзя: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
+    bad "клавиша нажата там, где нельзя: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
   else
-    ok "Enter не нажат: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
+    ok "ни одной клавиши: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
   fi
 done
-rm -f "$KEYS"
 unset -f tmux
+DEV_CHANNELS_SETTLE=0.5
 
 # ---- stuck-input detection (pure) ------------------------------------------
 STUCK='────────────────────
@@ -450,6 +477,92 @@ if command -v tmux >/dev/null 2>&1; then
   fi
 fi
 
+# ---- real tmux: на «2. Exit» стрелка возвращает выбор, claude не выходит ----
+# Имитация меню claude: стрелки двигают выбор, Enter на первом пункте ведёт к
+# промпту, Enter на «Exit» пишет флаг-файл и завершает «claude».
+cat > "$TEST_TMP/dev-menu.sh" <<'TUI'
+sel=2
+draw() {
+  printf '\033[2J\033[H Channels: server:labops-channel\n\n'
+  if [ "$sel" = 1 ]; then
+    printf ' ❯ 1. I am using this for local development\n   2. Exit\n'
+  else
+    printf '   1. I am using this for local development\n ❯ 2. Exit\n'
+  fi
+}
+draw
+while IFS= read -rsn1 k; do
+  if [ "$k" = $'\e' ]; then
+    read -rsn2 -t 1 k2 || k2=""
+    [ "$k2" = "[A" ] && sel=1
+    [ "$k2" = "[B" ] && sel=2
+    draw
+  elif [ -z "$k" ]; then
+    if [ "$sel" = 1 ]; then
+      printf '\033[2J\033[H\n❯ \n  ⏵⏵ bypass permissions on\n'; sleep 30; exit 0
+    fi
+    echo EXITED > "$1"; exit 0
+  fi
+done
+TUI
+if command -v tmux >/dev/null 2>&1; then
+  S="panetest-up-$$"
+  EXIT_FLAG="$TEST_TMP/dev-menu-exited"
+  if tmux new-session -d -s "$S" -x 80 -y 20 bash "$TEST_TMP/dev-menu.sh" "$EXIT_FLAG" 2>/dev/null
+  then
+    exit_selected() {
+      looks_like_dev_channels_prompt "$1" && _last_marker_line "$1" | grep -qa '2\. Exit'
+    }
+    wait_pane "$S" exit_selected && ok "tmux: живое меню стоит на «2. Exit»" \
+                                 || bad "tmux: меню не отрисовалось на «2. Exit»"
+    answer_dev_channels_prompt "$S" "$t" && ok "tmux: с «2. Exit» ответ дошёл (стрелка, Enter)" \
+                                         || bad "tmux: с «2. Exit» ответ не отправлен"
+    up_passed() { has_prompt "$1" && ! looks_like_dev_channels_prompt "$1"; }
+    wait_pane "$S" up_passed && ok "tmux: после ответа — промпт" \
+                             || bad "tmux: вопрос остался после ответа с «2. Exit»"
+    [ ! -e "$EXIT_FLAG" ] && ok "tmux: «Exit» не выбран — claude не закрыт" \
+                          || bad "tmux: Enter ушёл на «Exit» — claude закрылся бы"
+    tmux kill-session -t "=$S" 2>/dev/null || true
+  else
+    echo "· tmux session could not start — skipping live Up check"
+  fi
+fi
+
+# ---- real tmux: после ответа ждём, пока вопрос уйдёт (start-agent.sh) ------
+# Медленная перерисовка: вопрос держится на экране ещё 1.5с после Enter. Кто
+# проверит экран сразу, увидит «неотвеченный» вопрос и ответит второй раз.
+if command -v tmux >/dev/null 2>&1; then
+  S="panetest-slow-$$"
+  slow_tui="bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; "
+  slow_tui+="read -r _; sleep 1.5; printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'"
+  if tmux new-session -d -s "$S" -x 80 -y 20 "$slow_tui" 2>/dev/null; then
+    wait_pane "$S" looks_like_dev_channels_prompt || true
+    answer_dev_channels_prompt "$S" "$t" || bad "tmux: ответ медленному меню не отправлен"
+    now="$(tmux capture-pane -pt "=$S:^.{top-left}" -S -8 2>/dev/null)"
+    looks_like_dev_channels_prompt "$now" \
+      && ok "tmux: сразу после Enter вопрос ещё на экране (медленная перерисовка)" \
+      || bad "tmux: перерисовка не медленная — случай ничего не проверяет"
+    dev_channels_prompt_wait_gone "$S" 10 && ok "tmux: ожидание дождалось ухода вопроса" \
+                                         || bad "tmux: ожидание не дождалось ухода вопроса"
+    tmux kill-session -t "=$S" 2>/dev/null || true
+  fi
+  S="panetest-stuck-$$"
+  stuck_tui="bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; "
+  stuck_tui+="sleep 30'"
+  if tmux new-session -d -s "$S" -x 80 -y 20 "$stuck_tui" 2>/dev/null; then
+    wait_pane "$S" looks_like_dev_channels_prompt || true
+    started="$(date +%s)"
+    if dev_channels_prompt_wait_gone "$S" 1; then
+      bad "tmux: неуходящий вопрос принят за ушедший"
+    elif [ $(( $(date +%s) - started )) -le 5 ]; then
+      ok "tmux: ожидание ограничено таймаутом (вопрос не ушёл — код 1)"
+    else
+      bad "tmux: ожидание вышло за таймаут"
+    fi
+    tmux kill-session -t "=$S" 2>/dev/null || true
+  fi
+fi
+
 # ---- проводка: вопрос о каналах разработки ---------------------------------
 # Вопрос похож и на промпт, и на застрявший ввод, поэтому ветка обязана стоять
 # выше обеих — иначе он снова уедет в «здоровый простой».
@@ -468,6 +581,26 @@ if grep -q 'report_down "вопрос о каналах разработки' "$
   ok "неуходящий вопрос о каналах эскалируется оператору"
 else
   bad "неуходящий вопрос о каналах никому не сообщается"
+fi
+# После лимита ответов — один рестарт на эпизод и только потом оператор. Раньше
+# рестарта не было вовсе: сессия стояла на вопросе до прихода человека.
+a0_from='/^  if looks_like_dev_channels_prompt "\$TAIL"; then/'
+a0_to='/^  DEV_CHANNELS_ANSWERS=0$/'
+a0_block="$(awk "$a0_from,$a0_to" "$WD")"
+a0_line() { printf '%s\n' "$a0_block" | grep -n "$1" | head -1 | cut -d: -f1; }
+a0_restart="$(a0_line 'restart_session "вопрос о каналах')"
+a0_report="$(a0_line 'report_down "вопрос о каналах')"
+if [ -n "$a0_restart" ] && [ -n "$a0_report" ] && [ "$a0_restart" -lt "$a0_report" ] \
+   && printf '%s' "$a0_block" | grep -q 'DEV_CHANNELS_RESTARTED=1' \
+   && grep -q 'DEV_CHANNELS_RESTARTED=0' "$WD"; then
+  ok "неуходящий вопрос о каналах: один рестарт на эпизод, затем оператор"
+else
+  bad "ветка A0 без рестарта на эпизод (restart=$a0_restart report=$a0_report)"
+fi
+if grep -q 'dev_channels_prompt_wait_gone "\$SESSION"' "$SA"; then
+  ok "start-agent.sh после ответа ждёт ухода вопроса — второй Enter не уйдёт в чужой экран"
+else
+  bad "start-agent.sh отвечает без ожидания перерисовки — второй Enter уйдёт в следующий экран"
 fi
 if grep -q 'lib/pane.sh' "$SA" && grep -q 'answer_dev_channels_prompt' "$SA"; then
   ok "start-agent.sh отвечает тем же детектором из lib/pane.sh"

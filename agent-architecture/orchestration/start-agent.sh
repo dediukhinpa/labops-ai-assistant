@@ -180,6 +180,8 @@ session_ready() {
 # ждём дольше. watchdog зовёт этот скрипт синхронно, юнит Type=simple, поэтому
 # лимит запуска systemd на это ожидание не распространяется.
 START_READY_TIMEOUT="${START_READY_TIMEOUT:-90}"
+# Сколько секунд после ответа ждать, пока вопрос о каналах уйдёт с экрана.
+START_DEV_ANSWER_WAIT="${START_DEV_ANSWER_WAIT:-15}"
 DEADLINE=$(( $(date +%s) + START_READY_TIMEOUT ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   # Агент с каналом готов, когда его webhook-порт слушается (строгое доказательство,
@@ -208,7 +210,13 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   # Тот же детектор и тот же ответ, что в watchdog.sh (ветка A0): Enter только
   # на первом пункте, иначе claude бы вышел.
   if looks_like_dev_channels_prompt "$PANE"; then
-    answer_dev_channels_prompt "$SESSION" "$PANE" || true
+    # После ответа ждём, пока вопрос уйдёт с экрана (не дольше
+    # START_DEV_ANSWER_WAIT). При медленной перерисовке следующий проход через
+    # секунду увидел бы тот же вопрос и ответил бы снова — и второй Enter ушёл
+    # бы уже в следующий экран: в поле ввода или в следующий вопрос claude.
+    if answer_dev_channels_prompt "$SESSION" "$PANE"; then
+      dev_channels_prompt_wait_gone "$SESSION" "$START_DEV_ANSWER_WAIT" || true
+    fi
   fi
   sleep 1
 done
