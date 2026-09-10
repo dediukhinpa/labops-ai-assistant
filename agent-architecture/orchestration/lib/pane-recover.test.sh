@@ -3,14 +3,18 @@
 #
 # Живой tmux нужен по существу: recover_stuck_input работает клавишами и
 # курсором, а не строками, и все прошлые баги были именно в этом стыке.
-# Сервер поднимается на СВОЁМ сокете (TMUX_TMPDIR), чтобы не трогать сессии
-# агентов. Роль TUI играет `bash -c 'printf "❯ "; cat > файл'`: панель выглядит
-# как поле ввода, а всё отправленное Enter'ом падает в файл — то есть тест
-# проверяет не «что нарисовано», а что РЕАЛЬНО ушло агенту.
+# Сервер свой (lib/tmux-test-isolation.sh): одного TMUX_TMPDIR было мало — при
+# заданной $TMUX (а в панелях агентов она задана всегда) tmux шёл в сервер роя, и
+# `kill-server` из уборки снёс бы всех агентов разом. Роль TUI играет
+# `bash -c 'printf "❯ "; cat > файл'`: панель выглядит как поле ввода, а всё
+# отправленное Enter'ом падает в файл — то есть тест проверяет не «что
+# нарисовано», а что РЕАЛЬНО ушло агенту.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP="$(mktemp -d)"
-export TMUX_TMPDIR="$TMP/tmux"; mkdir -p "$TMUX_TMPDIR"
+# shellcheck source=lib/tmux-test-isolation.sh
+. "$HERE/tmux-test-isolation.sh"
+tmux_test_isolate "$TMP"
 SESSION_BASE="pane-recover-test-$$"
 SESSION="$SESSION_BASE-0"
 OUT="$TMP/submitted-0.txt"
@@ -18,7 +22,7 @@ export TELEGRAM_STATE_DIR="$TMP/state"; mkdir -p "$TELEGRAM_STATE_DIR"
 MARKER="$TELEGRAM_STATE_DIR/last-inbound"
 
 cleanup() {
-  tmux kill-server 2>/dev/null || true
+  tmux_test_kill_server   # только свой сервер — сокет задан явно
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -49,7 +53,7 @@ start_pane() {   # <текст-в-поле>
   tmux new-session -d -s "$SESSION" -x 80 -y 20 \
     "bash -c 'printf \"❯ \"; cat > \"$OUT\"'"
   sleep 0.4
-  [ -n "${1:-}" ] && tmux send-keys -t "$SESSION" -l "$1"
+  [ -n "${1:-}" ] && tmux send-keys -t "=$SESSION:^.{top-left}" -l "$1"
   sleep 0.3
 }
 

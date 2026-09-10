@@ -9,6 +9,16 @@ set -uo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
+# Страховка изоляции от роя. Агенты гоняют этот гейт из своих tmux-панелей, где
+# задана $TMUX, — а она перекрывает TMUX_TMPDIR, и любой тест с настоящим tmux
+# попал бы в общий сервер живых агентов. Каждый такой тест сам заводит свой
+# сервер (lib/tmux-test-isolation.sh); здесь снимаем $TMUX на случай, если
+# кто-то это забудет, и уводим сервер по умолчанию во временный каталог.
+unset TMUX TMUX_PANE
+GATE_TMP="$(mktemp -d)"
+export TMUX_TMPDIR="$GATE_TMP"
+trap 'command tmux -S "$GATE_TMP/tmux-$(id -u)/default" kill-server 2>/dev/null; rm -rf "$GATE_TMP"' EXIT
+
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[1;33m'; N='\033[0m'
 pass=0; fail=0
 ok()  { printf "${G}✓${N} %s\n" "$*"; pass=$((pass+1)); }
@@ -179,6 +189,15 @@ if bash orchestration/lib/pane-recover.test.sh >/dev/null 2>&1; then
   ok "pane-recover.sh: перепечатывается полный текст из метки доставки"
 else
   bad "pane-recover.sh: юнит-тест провален (orchestration/lib/pane-recover.test.sh)"
+fi
+
+echo "── 9b3. Тесты с живым tmux не трогают сервер роя ──"
+# Агент гоняет гейт из своей панели, где $TMUX указывает на общий сервер роя.
+# Прогон под $TMUX на сервер-приманку: приманка должна остаться нетронутой.
+if bash orchestration/lib/tmux-test-isolation.test.sh >/dev/null 2>&1; then
+  ok "тесты с живым tmux работают в своём сервере, чужой не трогают"
+else
+  bad "тест с живым tmux трогает чужой сервер (orchestration/lib/tmux-test-isolation.test.sh)"
 fi
 
 echo "── 9c. Контракт канала: ответ через reply (CLAUDE.md.template) ──"

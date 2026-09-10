@@ -6,6 +6,15 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/pane.sh"
+# Живые секции ниже заводят настоящие сессии. Раньше они шли в ОБЩИЙ сервер, где
+# сидят агенты, — а при заданной $TMUX (у панелей агентов она есть всегда) и
+# вовсе в сервер той сессии, из которой запущен тест. Теперь сервер свой.
+TEST_TMP="$(mktemp -d)"
+# shellcheck source=lib/tmux-test-isolation.sh
+. "$HERE/tmux-test-isolation.sh"
+tmux_test_isolate "$TEST_TMP"
+cleanup() { tmux_test_kill_server; rm -rf "$TEST_TMP"; }
+trap cleanup EXIT
 pass=0; fail=0
 ok()  { echo "✓ $*"; pass=$((pass+1)); }
 bad() { echo "✗ $*"; fail=$((fail+1)); }
@@ -282,7 +291,7 @@ PANE_WAIT_TRIES="${PANE_WAIT_TRIES:-40}"   # 40 x 0.25с = до 10с
 wait_pane() {
   local s="$1" pred="$2" i
   for ((i = 0; i < PANE_WAIT_TRIES; i++)); do
-    t="$(tmux capture-pane -pt "$s" -S -8 2>/dev/null)"
+    t="$(tmux capture-pane -pt "=$s:^.{top-left}" -S -8 2>/dev/null)"
     if "$pred" "$t"; then return 0; fi
     sleep 0.25
   done
@@ -298,7 +307,7 @@ pane_not_empty() { [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]; }
 # prove nothing. Skips cleanly where tmux is unavailable (CI containers).
 if command -v tmux >/dev/null 2>&1; then
   S="panetest-$$"
-  tmux kill-session -t "$S" 2>/dev/null || true
+  tmux kill-session -t "=$S" 2>/dev/null || true
   # A tiny fake TUI: prints a prompt, and on Escape redraws it. `less` stands in
   # for the overlay — it hides the prompt and exits on Escape via its keymap.
   if tmux new-session -d -s "$S" -x 80 -y 20 \
@@ -307,12 +316,12 @@ if command -v tmux >/dev/null 2>&1; then
     has_prompt "$t" && ok "tmux: prompt visible before overlay" || bad "tmux: no prompt at start"
 
     # Cover the prompt the way a slash-command overlay does.
-    tmux send-keys -t "$S" C-l 2>/dev/null
-    tmux run-shell -t "$S" "printf '%s' ''" 2>/dev/null || true
-    tmux send-keys -t "$S" "" 2>/dev/null
-    tmux clear-history -t "$S" 2>/dev/null || true
+    tmux send-keys -t "=$S:^.{top-left}" C-l 2>/dev/null
+    tmux run-shell -t "=$S:^.{top-left}" "printf '%s' ''" 2>/dev/null || true
+    tmux send-keys -t "=$S:^.{top-left}" "" 2>/dev/null
+    tmux clear-history -t "=$S:^.{top-left}" 2>/dev/null || true
     # Paint overlay text over the pane
-    tmux respawn-pane -k -t "$S" \
+    tmux respawn-pane -k -t "=$S:^.{top-left}" \
       "bash -c 'printf \"  Context Usage\\n  Auto-compact window: 400k tokens\\n  /context all to expand\\n\"; sleep 30'" 2>/dev/null
     # Ждём сам оверлей, а не «промпта нет»: сразу после respawn панель пуста, а
     # пустая панель тоже без промпта. Под нагрузкой хоста захват успевал раньше
@@ -327,12 +336,12 @@ if command -v tmux >/dev/null 2>&1; then
     fi
 
     # Restore a prompt-bearing pane — stands for Escape dismissing the overlay.
-    tmux respawn-pane -k -t "$S" \
+    tmux respawn-pane -k -t "=$S:^.{top-left}" \
       "bash -c 'printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'" 2>/dev/null
     wait_pane "$S" has_prompt || true
     has_prompt "$t" && ok "tmux: prompt returns once the overlay is dismissed" \
                     || bad "tmux: prompt did not return"
-    tmux kill-session -t "$S" 2>/dev/null || true
+    tmux kill-session -t "=$S" 2>/dev/null || true
   else
     echo "· tmux session could not start — skipping live pane checks"
   fi
@@ -346,7 +355,7 @@ fi
 # принимается за живой.
 if command -v tmux >/dev/null 2>&1; then
   S="panetest-dev-$$"
-  tmux kill-session -t "$S" 2>/dev/null || true
+  tmux kill-session -t "=$S" 2>/dev/null || true
   if tmux new-session -d -s "$S" -x 80 -y 20 \
        "bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; read -r _; printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'" 2>/dev/null; then
     wait_pane "$S" looks_like_dev_channels_prompt || true
@@ -359,7 +368,7 @@ if command -v tmux >/dev/null 2>&1; then
     else
       bad "tmux: вопрос о каналах не распознан на живой панели"
     fi
-    tmux kill-session -t "$S" 2>/dev/null || true
+    tmux kill-session -t "=$S" 2>/dev/null || true
   else
     echo "· tmux session could not start — skipping live dev-channels check"
   fi
@@ -384,7 +393,7 @@ if command -v tmux >/dev/null 2>&1; then
       ok "tmux: несуществующая сессия не подменяется соседом с более длинным именем"
     fi
     sleep 0.5
-    t="$(tmux capture-pane -pt "=$S-long:" -S -8 2>/dev/null)"
+    t="$(tmux capture-pane -pt "=$S-long:^.{top-left}" -S -8 2>/dev/null)"
     looks_like_dev_channels_prompt "$t" && ok "tmux: панель соседа не тронута" \
                                         || bad "tmux: панель соседа получила Enter"
     [ -z "$(pane_cursor_x "$S")" ] && ok "tmux: курсор соседа не читается под чужим именем" \
@@ -483,8 +492,8 @@ fi
 # Регрессия 2026-09-01: watchdog отправлял агенту любой нарисованный в поле
 # текст, агент его выполнял, и рой уходил в цикл самоуказаний. Досылать можно
 # только подтверждённое меткой доставки.
-MARKER_DIR="$(mktemp -d)"
-trap 'rm -rf "$MARKER_DIR"' EXIT
+# Каталог внутри TEST_TMP: отдельный trap затёр бы уборку своего tmux-сервера.
+MARKER_DIR="$TEST_TMP/marker"; mkdir -p "$MARKER_DIR"
 TELEGRAM_STATE_DIR="$MARKER_DIR"
 MARKER="$MARKER_DIR/last-inbound"
 
