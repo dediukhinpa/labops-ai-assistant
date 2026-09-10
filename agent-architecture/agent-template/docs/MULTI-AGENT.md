@@ -150,7 +150,7 @@ Telegram
 │       ├── core/
 │       │   ├── AGENTS.md              # Models, routing rules, agent registry
 │       │   ├── USER.md               # Operator profile
-│       │   ├── rules.md              # Boundaries, permissions
+│       │   ├── rules.md              # Rules learned from mistakes
 │       │   ├── passive/                  # semantic insights (decisions/errors/...)
 │       │   ├── active/episodic.md         # raw append-only diary + working-set.md
 │       │   └── MEMORY.md             # ARCHIVE archive

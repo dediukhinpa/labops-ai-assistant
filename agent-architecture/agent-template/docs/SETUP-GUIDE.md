@@ -45,7 +45,7 @@ bash install.sh
 The script asks for:
 
 1. Agent identity (name, role, character, language, primary model, max subagents)
-2. Operator profile (name, address, timezone, budget cap)
+2. Operator profile (name, address, timezone, language)
 3. **second_brain connection** (MCP host — host/IP only, Bearer token, comma-separated scopes)
 
 Default scopes: `decisions,external,knowledge,inbox`. Issue the token
@@ -70,7 +70,7 @@ Copy the printed token into the installer prompt.
 |-- agent.env                  # source this to export MCP_HOST/SECOND_BRAIN_*_URL/AGENT_BEARER
 |-- core/
 |   |-- USER.md                # operator profile
-|   |-- rules.md               # operational rules (RED zone, security)
+|   |-- rules.md               # rules learned from mistakes
 |   |-- AGENTS.md              # team / models / pipelines
 |   |-- MEMORY.md              # ARCHIVE archive (>14d, on-demand Read)
 |   |-- LEARNINGS.md           # structured log of corrections

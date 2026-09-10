@@ -31,7 +31,7 @@ echo "# LEARNINGS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/LEARNINGS.md
 | `.claude/CLAUDE.md` | SOUL: role, character, style, @includes |
 | `core/AGENTS.md` | Models, subagents config, pipelines |
 | `core/USER.md` | Operator profile, preferences |
-| `core/rules.md` | Boundaries, permissions, red lines |
+| `core/rules.md` | Rules learned from mistakes; zones live in CLAUDE.md |
 | `tools/TOOLS.md` | Available servers, Docker, services |
 
 ## 3. Create Telegram Bot

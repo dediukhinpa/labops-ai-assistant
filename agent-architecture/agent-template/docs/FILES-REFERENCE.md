@@ -34,7 +34,7 @@ Per-agent identity. Loaded every session via `@include` directives in CLAUDE.md.
 | **CLAUDE.md** | SOUL -- agent character, personality, principles, priorities, workflow rules. Contains `@include` directives that pull in other files | always | operator (manual) | agent reads, only operator edits |
 | **core/AGENTS.md** | Operating rules: models, message bus paths, subagent config, cross-review rules, pipelines, analytics | on-demand (Read tool) | operator (manual) | agent reads, only operator edits |
 | **core/USER.md** | Operator profile: name, timezone, channels, products, communication style | always (@include) | operator + agent (YELLOW) | agent updates with justification as operator evolves |
-| **core/rules.md** | Boundaries: what agent can/cannot do, red zones, security, git policy, Telegram rules | always (@include) | operator (manual) | agent reads, only operator edits |
+| **core/rules.md** | Rules the agent earned from its mistakes; empty at install (zones live in CLAUDE.md) | always (@include) | operator (manual) | agent reads, only operator edits |
 | **tools/TOOLS.md** | Infrastructure map: servers, SSH, Docker, systemd, ports, GitHub, secrets paths | on-demand (Read tool) | operator (manual) or agent with permission | agent reads, agent can suggest edits |
 
 **Note:** AGENTS.md and TOOLS.md are NOT included at startup to save tokens (~18KB). Agents load them on-demand via Read tool when needed.
@@ -132,7 +132,7 @@ Callable skills. NOT loaded at session start. Loaded on-demand when Skill tool i
 | **skills/{name}/*.sh** | Shell scripts used by skill | on-demand (skill execution) | developer (manual) | agent executes |
 | **skills/{name}/*.py** | Python scripts used by skill | on-demand (skill execution) | developer (manual) | agent executes |
 
-**Skills:** agent-browser, create-agent, groq-voice, markdown-new, mcp-builder, memory-consolidate, second_brain-doctor, transcript
+**Skills:** agent-browser, create-agent, groq-voice, memory-consolidate, second_brain-doctor
 
 **Who can touch:** Developer/operator creates skills. Agent can use but not modify.
 

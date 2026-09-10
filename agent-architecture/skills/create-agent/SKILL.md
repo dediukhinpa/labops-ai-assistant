@@ -1,6 +1,6 @@
 ---
 name: create-agent
-description: Use when the operator wants to create/add a NEW agent (a new Telegram agent with its own role). Walks the operator through identity, role, key config (CLAUDE.md/rules.md), registers a Telegram bot, wires voice, sets up autostart, and verifies with a smoke test — end to end to a working agent.
+description: Use when the operator wants to create/add a NEW agent (a new Telegram agent with its own role). Walks the operator through identity, role, key config (CLAUDE.md/USER.md), registers a Telegram bot, wires voice, sets up autostart, and verifies with a smoke test — end to end to a working agent.
 ---
 
 # Создание нового агента (create-agent)
@@ -37,8 +37,8 @@ description: Use when the operator wants to create/add a NEW agent (a new Telegr
 ## Ключевые документы — объясни и помоги заполнить
 Скаффолдер создаёт воркспейс `~/.claude-lab/<agent-id>/.claude/`. Главные файлы, по которым
 стоит пройтись с оператором ПОСЛЕ создания:
-- **`CLAUDE.md`** — идентичность агента (роль, характер, язык, как обращаться). Самый важный.
-- **`core/rules.md`** — правила поведения и красные зоны (что нельзя без подтверждения).
+- **`CLAUDE.md`** — идентичность агента: роль, характер, стиль, зелёная и красная зоны, порядок работы. Самый важный.
+- **`core/rules.md`** — правила, заработанные на ошибках. При создании пустой, дописывается по ходу работы.
 - **`core/USER.md`** — профиль оператора (чтобы агент знал, на кого работает).
 - **`core/AGENTS.md`** — модели и состав команды.
 - **`SECONDBRAIN_WRITE_RULES.md`** — политика записи в общий мозг (красная зона).
@@ -87,7 +87,7 @@ bash skills/create-agent/new-agent.sh
 watchdog; smoke проверяет, что он встал.
 
 ## После создания
-1. Открой с оператором `CLAUDE.md` и `rules.md` нового агента — отредактируйте под роль
+1. Открой с оператором `CLAUDE.md` и `core/USER.md` нового агента — отредактируйте под роль
    (характер, тон, что агент делает и чего не делает). Это важнее всего остального.
 2. Убедись, что smoke-тест зелёный. Если Telegram `getMe` или мозг не прошли — почини
    (токен/хост/`AGENT_BEARER`), не оставляй «полурабочего» агента.

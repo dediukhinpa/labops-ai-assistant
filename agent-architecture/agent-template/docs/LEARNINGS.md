@@ -72,9 +72,10 @@ Not all files can be self-modified. Zones prevent agents from accidentally break
 
 | Zone | Files | Who changes |
 |------|-------|------------|
-| **RED (read-only)** | CLAUDE.md, rules.md | Operator only |
+| **RED (read-only)** | CLAUDE.md, rules.md | Operator, or the agent when asked |
 | **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, passive/decisions.md, active/episodic.md | Agent on trigger |
-| **GREEN (full autonomy)** | LEARNINGS.md, MEMORY.md, skills/*, agents/*.md, feedback_*.md | Agent freely |
+| **GREEN (full autonomy)** | LEARNINGS.md, MEMORY.md, agents/*.md, feedback_*.md | Agent freely |
+| **SHARED** | skills/* | Operator -- the directory is shared by every agent |
 
 **Key principle:** Agent never modifies its own SOUL (CLAUDE.md). Operator iterates high-level instructions, agent optimizes within those constraints -- like Karpathy's `prepare.py` (read-only) vs `train.py` (agent-modifiable).
 
@@ -148,7 +149,7 @@ Add this to the agent's Workflow Orchestration section:
 - If pattern (2+ repeats) -- strengthen rule in AGENTS.md
 - At session start -- review core/LEARNINGS.md (last 10 entries)
 - Metric: Repeats column. >0 = rule not working, strengthen
-- RED zone (CLAUDE.md, rules.md) -- only operator changes
+- RED zone (CLAUDE.md, rules.md) -- the operator, or the agent when the operator asks
 - YELLOW zone (USER.md, AGENTS.md, TOOLS.md, passive/, active/) -- agent on trigger
 ```
 
@@ -165,9 +166,10 @@ Local-only learning system. No external databases.
 
 | Zone | Files | Who changes |
 |------|-------|------------|
-| **RED (read-only)** | CLAUDE.md, rules.md | Operator only |
+| **RED (read-only)** | CLAUDE.md, rules.md | Operator, or the agent when asked |
 | **YELLOW (self-edit)** | USER.md, AGENTS.md, TOOLS.md, passive/, active/ | Agent on trigger |
-| **GREEN (autonomy)** | LEARNINGS.md, MEMORY.md, skills/*, feedback_*.md | Agent freely |
+| **GREEN (autonomy)** | LEARNINGS.md, MEMORY.md, feedback_*.md | Agent freely |
+| **SHARED** | skills/* | Operator -- the directory is shared by every agent |
 
 ### Flow
 
@@ -228,7 +230,7 @@ Each learning is stored as a JSON line in `episodes.jsonl`:
 | 1 | Session memory | Lost on compact/reset | Agent |
 | 2 | episodes.jsonl | Scored top-5 injected at startup, fades after 30 days | Agent |
 | 3 | TOOLS.md / SKILL.md | Found by local-recall grep on request | Agent (GREEN zone) |
-| 4 | CLAUDE.md / rules.md | Always in context | Operator only (RED zone) |
+| 4 | CLAUDE.md / rules.md | Always in context | Operator, or the agent when asked (RED zone) |
 | 5 | Scripts / Hooks | Runs automatically, no agent involvement needed | Operator or agent (with approval) |
 
 The more critical the mistake, the higher up the pyramid it should be promoted. Critical production issues go straight to hooks/scripts.

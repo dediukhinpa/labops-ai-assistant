@@ -118,7 +118,10 @@ prompt OPERATOR_ADDRESS       "How agent should address you (e.g. Boss, Chief)" 
 prompt TIMEZONE               "Your timezone (e.g. UTC+3, America/New_York)" "UTC"
 prompt LANGUAGE               "Response language (e.g. English, Russian)" "English"
 prompt COMMIT_LANGUAGE        "Commit language (e.g. English, Russian)" "English"
-prompt BUDGET_LIMIT           "Red zone budget limit in USD [50]" "50"
+# Порога трат нет: любые траты агента -- через владельца (общая красная зона).
+# Раньше здесь спрашивали лимит, но в обычной установке (через new-agent.sh, без
+# вопросов) он не показывался, и в красную зону молча уезжали $50, которые никто
+# не выбирал.
 prompt GITHUB_USERNAME        "GitHub username (or skip)" "your-username"
 
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "--- second_brain MCP server ---"; }
@@ -224,7 +227,6 @@ fill_template() {
     sed_i "s|{{TIMEZONE}}|${TIMEZONE}|g" "$dst"
     sed_i "s|{{LANGUAGE}}|${LANGUAGE}|g" "$dst"
     sed_i "s|{{COMMIT_LANGUAGE}}|${COMMIT_LANGUAGE}|g" "$dst"
-    sed_i "s|{{BUDGET_LIMIT}}|${BUDGET_LIMIT}|g" "$dst"
     sed_i "s|{{GITHUB_USERNAME}}|${GITHUB_USERNAME}|g" "$dst"
     sed_i "s|{{INSTALL_DATE}}|$(date -u +%Y-%m-%d)|g" "$dst"
 
@@ -280,8 +282,22 @@ fill_template "${TEMPLATES_DIR}/LEARNINGS.md.template" "${WORKSPACE}/core/LEARNI
 fill_template "${TEMPLATES_DIR}/mcp.json.template"     "${WORKSPACE}/.mcp.json"
 fill_template "${TEMPLATES_DIR}/settings.json.template" "${WORKSPACE}/settings.json"
 
-# Global ~/.claude/CLAUDE.md only if missing
-fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_DIR}/CLAUDE.md"
+# Общие правила всех агентов (git, безопасность, смена модели, принципы) живут
+# ТОЛЬКО в ~/.claude/CLAUDE.md -- из агентских файлов их убрали, чтобы одно правило
+# не лежало в трёх местах и не расходилось. Поэтому чужой глобальный файл
+# (пользователь пришёл уже настроенным) больше нельзя молча пропустить: агент
+# остался бы без этих правил вовсе. Свой файл владельца не трогаем -- кладём наши
+# правила рядом и прямо говорим, что их нужно перенести.
+GLOBAL_MD="${GLOBAL_DIR}/CLAUDE.md"
+GLOBAL_MARKER='# Global Rules -- All Agents'
+if [ -f "$GLOBAL_MD" ] && ! grep -qxF "$GLOBAL_MARKER" "$GLOBAL_MD"; then
+    fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${GLOBAL_MD}.labops-new"
+    warn "В ${GLOBAL_MD} уже лежат чужие правила -- общие правила агентов НЕ подключены."
+    warn "Перенесите ${GLOBAL_MD}.labops-new в ${GLOBAL_MD}, иначе агент останется без"
+    warn "правил git, безопасности и смены модели."
+else
+    fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "$GLOBAL_MD"
+fi
 
 # ============================================================
 # Step 6: Copy scripts and hooks (not symlinked, so each agent owns them)
@@ -444,6 +460,10 @@ echo ""
 FILE_COUNT=$(find "${WORKSPACE}" -type f | wc -l | tr -d ' ')
 echo "  ${FILE_COUNT} files in workspace"
 echo ""
+if [ -f "${GLOBAL_MD}.labops-new" ]; then
+    warn "Общие правила агентов ждут переноса: ${GLOBAL_MD}.labops-new -> ${GLOBAL_MD}"
+    echo ""
+fi
 echo "  Next steps:"
 echo ""
 echo "    1. Review and customize identity files:"
