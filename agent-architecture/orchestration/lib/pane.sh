@@ -16,10 +16,17 @@
 # the overlay, which is what distinguishes it from a real freeze.
 #
 # ЦЕЛИ TMUX — ТОЛЬКО ТОЧНЫЕ. Функции принимают голое имя сессии и сами строят
-# цель: «=имя» для команд над сессией, «=имя:» для команд над панелью. Без «=»
-# tmux, не найдя точной сессии, берёт первую, чьё имя НАЧИНАЕТСЯ так же: у
-# labops-app это labops-app-124546645 — чужой агент получил бы наши клавиши.
-# `=имя` без двоеточия панель не находит (capture-pane/send-keys падают).
+# цель: «=имя» для команд над сессией, «=имя:^.{top-left}» для команд над
+# панелью. Без «=» tmux, не найдя точной сессии, берёт первую, чьё имя
+# НАЧИНАЕТСЯ так же: у labops-app это labops-app-124546645 — чужой агент получил
+# бы наши клавиши. `=имя` без двоеточия панель не находит (capture-pane и
+# send-keys падают), а `=имя:` — это ТЕКУЩЕЕ окно сессии: откроет оператор в
+# сессии агента второе окно, и клавиши уйдут в его bash, а pid его bash
+# watchdog примет за сменившуюся версию claude (ложный рестарт). `^` — окно с
+# наименьшим номером: окно агента создаётся первым и получает base-index, новые
+# окна tmux нумерует выше. `{top-left}` — его верхняя левая панель при любых
+# base-index и pane-base-index (номер `.0` от pane-base-index зависит).
+# Страж формы — scripts/check_tmux_targets.py (test.sh, секция 22).
 
 PROMPT_RE='❯|bypass permissions'
 ACTIVE_RE='esc to interrupt'
@@ -90,7 +97,7 @@ looks_like_dev_channels_prompt() {
 answer_dev_channels_prompt() {
   looks_like_dev_channels_prompt "${2:-}" || return 1
   _last_marker_line "${2:-}" | grep -qa "1\. $DEV_CHANNELS_RE" || return 1
-  tmux send-keys -t "=${1:-}:" Enter 2>/dev/null || return 1
+  tmux send-keys -t "=${1:-}:^.{top-left}" Enter 2>/dev/null || return 1
   return 0
 }
 
@@ -155,7 +162,7 @@ pane_input_raw() {
 PANE_INPUT_COL0="${PANE_INPUT_COL0:-2}"   # колонка курсора в пустом поле («❯ »)
 
 # pane_cursor_x <session> — колонка курсора (пусто, если tmux недоступен).
-pane_cursor_x() { tmux display -pt "=$1:" '#{cursor_x}' 2>/dev/null || true; }
+pane_cursor_x() { tmux display -pt "=$1:^.{top-left}" '#{cursor_x}' 2>/dev/null || true; }
 
 # buffer_is_empty <session> — в БУФЕРЕ ввода ничего нет (что бы ни рисовалось).
 # Неизвестный курсор трактуем как «не пусто»: тогда логика откатывается к

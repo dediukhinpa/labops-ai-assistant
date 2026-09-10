@@ -129,7 +129,7 @@ check_session() {
 # ── 4. Панель: отвечает ли TUI ───────────────────────────────────────────────
 # Порядок важен: сначала ошибка доступа (её рестарт не лечит и лечить нечем),
 # потом отсутствие промпта, потом залипший ввод.
-capture() { tmux capture-pane -pt "=$SESSION:" -S -8 2>/dev/null || true; }
+capture() { tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -8 2>/dev/null || true; }
 
 check_pane() {
   if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
@@ -146,7 +146,7 @@ check_pane() {
   if ! has_prompt "$tail"; then
     # Полноэкранный вывод слэш-команды выглядит как мёртвый TUI. Escape
     # закрывает оверлей и ничего не делает с реально зависшим — он и различает.
-    tmux send-keys -t "=$SESSION:" Escape 2>/dev/null || true
+    tmux send-keys -t "=$SESSION:^.{top-left}" Escape 2>/dev/null || true
     sleep 2
     tail="$(capture)"
     if ! has_prompt "$tail"; then

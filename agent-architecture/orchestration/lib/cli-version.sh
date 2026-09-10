@@ -38,7 +38,11 @@ _cli_version_pane_pid() {   # <session>
     "$CLI_VERSION_PANE_PID_CMD" "$session" 2>/dev/null || true
     return 0
   fi
-  tmux list-panes -t "=$session:" -F '#{pane_pid}' 2>/dev/null | head -1 || true
+  # display по одной панели, а не `list-panes | head -1`: list-panes отдаёт все
+  # панели окна, и по «=имя:» — окна ТЕКУЩЕГО. Открой оператор в сессии второе
+  # окно, сюда пришёл бы pid его bash, дрейф «нашёлся» бы на любом простое, и
+  # агент ушёл бы в рестарт. Цель — первое окно, его верхняя левая панель.
+  tmux display -p -t "=$session:^.{top-left}" '#{pane_pid}' 2>/dev/null || true
 }
 
 # Печатает путь бинаря, который РЕАЛЬНО исполняет процесс. Пусто, если /proc

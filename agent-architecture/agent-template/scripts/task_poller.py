@@ -158,7 +158,10 @@ class TmuxPane:
         # Цели только точные: без «=» tmux ищет сессию по началу имени, и поллер
         # labops-app печатал бы в сессию labops-app-124546645 (10.09.2026).
         self._session_target = f"={session}"
-        self._pane_target = f"={session}:"
+        # Панель — первое окно, верхняя левая: «=имя:» — это ТЕКУЩЕЕ окно, и
+        # открой оператор второе окно в сессии агента, задача ушла бы в его bash.
+        # {top-left}, а не .0: номер первой панели зависит от pane-base-index.
+        self._pane_target = f"={session}:^.{{top-left}}"
         self._input_col0 = input_col0
 
     def _tmux(self, *args: str) -> tuple[int, str]:

@@ -327,7 +327,7 @@ while true; do
     log "task-poller был мёртв при живой сессии — поднял заново (supervise)"
   fi
 
-  TAIL=$(tmux capture-pane -pt "=$SESSION:" -S -8 2>/dev/null || true)
+  TAIL=$(tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -8 2>/dev/null || true)
 
   # (A0) Вопрос о каналах для разработки на старте сессии. Отвечаем сразу, не
   # дожидаясь статичной панели: вопрос однозначен, а пока он на экране, сессия
@@ -437,9 +437,9 @@ while true; do
     # Escape dismisses an overlay but does nothing to a dead TUI, so it is the
     # discriminator. Try it once before destroying the session.
     log "no prompt rendered — trying Escape (may be a slash-command overlay)"
-    tmux send-keys -t "=$SESSION:" Escape 2>/dev/null || true
+    tmux send-keys -t "=$SESSION:^.{top-left}" Escape 2>/dev/null || true
     sleep 2
-    TAIL="$(tmux capture-pane -pt "=$SESSION:" -S -8 2>/dev/null || true)"
+    TAIL="$(tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -8 2>/dev/null || true)"
     if has_prompt "$TAIL"; then
       log "prompt returned after Escape — overlay, not a freeze; session left ALIVE"
       PREV_TAIL="$TAIL"
@@ -533,7 +533,7 @@ while true; do
              log "нарисованный ввод не подтверждён доставкой — чищу поле, не отправляю"
              LAST_PHANTOM="$PHANTOM"
            fi
-           tmux send-keys -t "=$SESSION:" C-u 2>/dev/null || true
+           tmux send-keys -t "=$SESSION:^.{top-left}" C-u 2>/dev/null || true
            NUDGE_STAGE=0
            # Буфер пуст, текст доставкой не подтверждён -- агент простаивает,
            # а не залип. Без этой строки призрак навсегда прятал ветку простоя
@@ -543,7 +543,7 @@ while true; do
        else
          # Молча: это первая ступень автоматики, а не событие для оператора.
          log "stuck input detected — Enter"
-         tmux send-keys -t "=$SESSION:" Enter 2>/dev/null || true
+         tmux send-keys -t "=$SESSION:^.{top-left}" Enter 2>/dev/null || true
          NUDGE_STAGE=1
        fi ;;
     1) # A plain Enter cannot finalise a stuck bracketed-paste (verified: Enter,

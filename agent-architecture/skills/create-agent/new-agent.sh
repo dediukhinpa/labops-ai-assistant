@@ -490,7 +490,9 @@ fi
 # tmux-сервере вне cgroup юнита; снимаем сессию, watchdog поднимет заново.
 SESSION="labops-$AGENT_ID"
 if tmux has-session -t "=$SESSION" 2>/dev/null; then
-  _pane_pid="$(tmux list-panes -t "=$SESSION:" -F '#{pane_pid}' 2>/dev/null | head -1)"
+  # Панель агента — первое окно, верхняя левая (см. шапку lib/pane.sh): по
+  # текущему окну возраст считался бы по второму окну оператора, если оно есть.
+  _pane_pid="$(tmux display -p -t "=$SESSION:^.{top-left}" '#{pane_pid}' 2>/dev/null)"
   _sess_age="$(ps -o etimes= -p "${_pane_pid:-0}" 2>/dev/null | tr -d ' ')"
   _stale=0
   for f in "$WORKSPACE/.mcp.json" "$WORKSPACE/settings.json" "$WORKSPACE/CLAUDE.md"; do
@@ -567,7 +569,7 @@ fi
 # верный» и «агент верный»: остальные пробы бьют токеном из памяти скрипта, а
 # живая сессия могла стартовать до того, как этот токен лёг в файл.
 if tmux has-session -t "=labops-$AGENT_ID" 2>/dev/null && [ -f "$WORKSPACE/.mcp.json" ]; then
-  _pp="$(tmux list-panes -t "=labops-$AGENT_ID:" -F '#{pane_pid}' 2>/dev/null | head -1)"
+  _pp="$(tmux display -p -t "=labops-$AGENT_ID:^.{top-left}" '#{pane_pid}' 2>/dev/null)"
   _sa="$(ps -o etimes= -p "${_pp:-0}" 2>/dev/null | tr -d ' ')"
   _fa=$(( $(date +%s) - $(stat -c %Y "$WORKSPACE/.mcp.json") ))
   if [ -n "${_sa:-}" ] && [ "$_fa" -lt "$_sa" ]; then

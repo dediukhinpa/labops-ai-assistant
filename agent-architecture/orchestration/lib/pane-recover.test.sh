@@ -140,6 +140,26 @@ sleep 0.3
 got="$(head -1 "$OUT" 2>/dev/null || true)"
 [ "$got" = "$UNI" ] && ok "unicode и эмодзи не искажены" || bad "unicode искажён: $got"
 
+# 8. Оператор открыл в сессии агента второе окно — оно стало текущим. По «=имя:»
+#    перепечатка ушла бы в его bash; обязана уйти в панель агента (первое окно).
+write_marker "$LONG"
+start_pane "$FIRST_LINE"
+OP_OUT="$TMP/operator-window.txt"; : > "$OP_OUT"
+tmux new-window -t "=$SESSION:" "bash -c 'cat > \"$OP_OUT\"'"
+sleep 0.4
+if [ "$(tmux display -p -t "=$SESSION:" '#{window_index}')" != 0 ]; then
+  ok "второе окно стало текущим (условие воспроизведено)"
+else
+  bad "второе окно не стало текущим — случай ничего не проверяет"
+fi
+rc=0; recover_stuck_input "$SESSION" developer || rc=$?
+sleep 0.3
+got="$(head -1 "$OUT" 2>/dev/null || true)"
+[ "$rc" -eq 0 ] && [ "$got" = "$LONG" ] && ok "перепечатка ушла в панель агента" \
+  || bad "перепечатка не дошла до агента (rc=$rc, ${#got} симв.)"
+[ ! -s "$OP_OUT" ] && ok "окно оператора не получило ни клавиши" \
+  || bad "клавиши ушли в окно оператора: $(head -c 80 "$OP_OUT")"
+
 echo
 echo "passed=$pass failed=$fail"
 [ $fail -eq 0 ]

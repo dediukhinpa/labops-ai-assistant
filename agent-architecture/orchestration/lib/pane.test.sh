@@ -404,6 +404,52 @@ if command -v tmux >/dev/null 2>&1; then
   fi
 fi
 
+# ---- real tmux: второе окно оператора не перехватывает клавиши агента -------
+# «=имя:» — это ТЕКУЩЕЕ окно сессии. Открой оператор в сессии агента второе окно
+# (оно становится текущим), и watchdog читал бы его bash и слал бы туда Enter.
+# Функции pane.sh обязаны работать с первым окном и его верхней левой панелью —
+# в том числе при base-index и pane-base-index 1, где номера начинаются не с 0.
+if command -v tmux >/dev/null 2>&1; then
+  S="panetest-win-$$"
+  OP_OUT="$TEST_TMP/operator-window.txt"; : > "$OP_OUT"
+  win_tui="bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; "
+  win_tui+="read -r _; printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'"
+  if tmux new-session -d -s "$S" -x 80 -y 20 "$win_tui" 2>/dev/null; then
+    # Нумерация с единицы: окно агента переезжает на 1, панели считаются с 1.
+    # set-option ждёт цель-панель — «=имя» без двоеточия он не находит.
+    tmux set-option -t "=$S:" base-index 1 2>/dev/null
+    tmux move-window -s "=$S:0" -t "=$S:1" 2>/dev/null
+    tmux set-option -w -t "=$S:1" pane-base-index 1 2>/dev/null
+    # Окно оператора: всё, что в него придёт, падает в файл.
+    tmux new-window -t "=$S:" "bash -c 'cat > \"$OP_OUT\"'" 2>/dev/null
+    cur="$(tmux display -p -t "=$S:" '#{window_index}' 2>/dev/null)"
+    first="$(tmux display -p -t "=$S:^.{top-left}" '#{window_index}.#{pane_index}' 2>/dev/null)"
+    if [ "$cur" = 2 ] && [ "$first" = 1.1 ]; then
+      ok "tmux: текущим стало окно оператора, панель агента — 1.1 (условие воспроизведено)"
+    else
+      bad "tmux: окружение не воспроизведено (текущее окно=$cur, панель агента=$first)"
+    fi
+    wait_pane "$S" looks_like_dev_channels_prompt || true
+    looks_like_dev_channels_prompt "$t" \
+      && ok "tmux: читается панель агента, а не текущее окно оператора" \
+      || bad "tmux: панель агента не прочитана при втором окне"
+    case "$(pane_cursor_x "$S")" in
+      ''|*[!0-9]*) bad "tmux: курсор панели агента не читается при втором окне" ;;
+      *)           ok "tmux: курсор читается у панели агента" ;;
+    esac
+    answer_dev_channels_prompt "$S" "$t" || bad "tmux: ответ на вопрос не отправлен"
+    win_passed() { has_prompt "$1" && ! looks_like_dev_channels_prompt "$1"; }
+    wait_pane "$S" win_passed && ok "tmux: Enter дошёл до панели агента" \
+                              || bad "tmux: Enter не дошёл до панели агента"
+    sleep 0.3
+    [ ! -s "$OP_OUT" ] && ok "tmux: окно оператора не получило ни клавиши" \
+                       || bad "tmux: клавиши ушли в окно оператора: $(od -c "$OP_OUT" | head -2)"
+    tmux kill-session -t "=$S" 2>/dev/null || true
+  else
+    echo "· tmux session could not start — skipping second-window check"
+  fi
+fi
+
 # ---- проводка: вопрос о каналах разработки ---------------------------------
 # Вопрос похож и на промпт, и на застрявший ввод, поэтому ветка обязана стоять
 # выше обеих — иначе он снова уедет в «здоровый простой».

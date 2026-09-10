@@ -193,7 +193,7 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     echo "[start-agent] $AGENT ready (session up)"
     exit 0
   fi
-  PANE=$(tmux capture-pane -pt "=$SESSION:" -S -30 2>/dev/null || true)
+  PANE=$(tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -30 2>/dev/null || true)
   # Стоит на экране логина — ~/.claude/.credentials.json нет/просрочен. Токен
   # из окружения тут не поможет (TUI его не проверяет, см. install.sh), и
   # таймаут ниже дал бы неинформативный WARNING — watchdog.sh тихо крутил
