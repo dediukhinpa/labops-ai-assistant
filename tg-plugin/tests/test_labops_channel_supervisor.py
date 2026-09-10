@@ -71,7 +71,7 @@ class SupervisorTestCase(unittest.TestCase):
     def test_status_canary_initializes_runtime_without_secret_output(self):
         runner = FakeRunner(
             {
-                ("tmux", "has-session", "-t", "labops-canary"): FakeCompleted(1, stderr="missing")
+                ("tmux", "has-session", "-t", "=labops-canary"): FakeCompleted(1, stderr="missing")
             }
         )
 
@@ -135,7 +135,7 @@ class SupervisorTestCase(unittest.TestCase):
     def test_attach_refuses_missing_session_without_creating_it(self):
         runner = FakeRunner(
             {
-                ("tmux", "has-session", "-t", "labops-canary"): FakeCompleted(1, stderr="missing")
+                ("tmux", "has-session", "-t", "=labops-canary"): FakeCompleted(1, stderr="missing")
             }
         )
 
@@ -144,13 +144,13 @@ class SupervisorTestCase(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("does not exist", err)
         self.assertNotIn("Ctrl-b d", out)
-        self.assertEqual(runner.command_names(), ["tmux has-session -t labops-canary"])
+        self.assertEqual(runner.command_names(), ["tmux has-session -t =labops-canary"])
 
     def test_attach_existing_session_prints_detach_instruction_before_attach(self):
         runner = FakeRunner(
             {
-                ("tmux", "has-session", "-t", "labops-canary"): FakeCompleted(0),
-                ("tmux", "attach-session", "-t", "labops-canary"): FakeCompleted(0),
+                ("tmux", "has-session", "-t", "=labops-canary"): FakeCompleted(0),
+                ("tmux", "attach-session", "-t", "=labops-canary"): FakeCompleted(0),
             }
         )
 
@@ -161,8 +161,8 @@ class SupervisorTestCase(unittest.TestCase):
         self.assertEqual(
             runner.command_names(),
             [
-                "tmux has-session -t labops-canary",
-                "tmux attach-session -t labops-canary",
+                "tmux has-session -t =labops-canary",
+                "tmux attach-session -t =labops-canary",
             ],
         )
         self.assertNotIn(self.secret_value, out + err)
