@@ -101,6 +101,27 @@ answer_dev_channels_prompt() {
   return 0
 }
 
+# Сколько ждать смены экрана после ответа (секунды) и шаг опроса панели.
+DEV_CHANNELS_GONE_TIMEOUT="${DEV_CHANNELS_GONE_TIMEOUT:-10}"
+DEV_CHANNELS_POLL_SEC="${DEV_CHANNELS_POLL_SEC:-0.25}"
+
+# dev_channels_prompt_wait_gone <session> [таймаут-сек] — дождаться, пока вопрос
+# уйдёт с экрана после ответа. 0 — ушёл; 1 — к концу таймаута всё ещё на экране.
+# Зачем ждать: claude перерисовывает экран не сразу, и до перерисовки вопрос
+# выглядит неотвеченным. Кто проверит его раньше, ответит второй раз — и этот
+# Enter уйдёт уже в следующий экран; а доктор записал бы «не уходит» на пустом
+# месте. Таймаут 0 — проверить один раз, без ожидания.
+dev_channels_prompt_wait_gone() {
+  local session="${1:-}" timeout="${2:-$DEV_CHANNELS_GONE_TIMEOUT}" deadline pane
+  deadline=$(( $(date +%s) + ${timeout%.*} ))
+  while :; do
+    pane="$(tmux capture-pane -pt "=$session:^.{top-left}" -S -8 2>/dev/null || true)"
+    looks_like_dev_channels_prompt "$pane" || return 0
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    sleep "$DEV_CHANNELS_POLL_SEC"
+  done
+}
+
 # ── Мёртвая авторизация ──────────────────────────────────────────────────────
 # Самый коварный отказ: сессия ЖИВА (TUI рисует ❯, tmux цел, процесс на месте),
 # но каждый ход мгновенно падает на авторизации — Claude Code печатает ошибку и
