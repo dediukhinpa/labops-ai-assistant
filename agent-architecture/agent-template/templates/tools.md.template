@@ -3,7 +3,7 @@
 ## My Workspace
 
 - **CLAUDE.md**: `~/.claude-lab/{{AGENT_ID}}/.claude/CLAUDE.md` (identity)
-- **Core**: `~/.claude-lab/{{AGENT_ID}}/.claude/core/` (AGENTS, USER, rules, LEARNINGS, MEMORY, passive, active)
+- **Core**: `~/.claude-lab/{{AGENT_ID}}/.claude/core/` (AGENTS, USER, rules, passive, active, archived)
 - **Skills**: `~/.claude-lab/{{AGENT_ID}}/.claude/skills/` (symlink to `agent-architecture/skills`, shared by every agent)
 
 ## Memory Layers and Access Zones
@@ -12,9 +12,8 @@
 |-------|-------|-------------|
 | IDENTITY (red) | CLAUDE.md, core/rules.md | operator, or the agent when the operator asks |
 | PROFILE (yellow) | core/USER.md, core/AGENTS.md, tools/TOOLS.md | agent, on a trigger |
-| PASSIVE (yellow) | core/passive/decisions.md | agent; aged entries rotate out via decay-sweep.sh |
-| ACTIVE (yellow) | core/active/episodic.md | Stop hook, automatically; rolled by size via archive-roll.sh |
-| LEARNING (green) | core/LEARNINGS.md, core/MEMORY.md, feedback_*.md | agent freely |
+| PASSIVE (yellow) | core/passive/ -- decisions, preferences, errors, insights | memory-consolidate; aged entries move to core/archived/ via decay-sweep.sh, preferences stay |
+| ACTIVE (yellow) | core/active/episodic.md, core/active/handoff.md | Stop hook, automatically; rolled by size via archive-roll.sh |
 | SKILLS | skills/* | operator -- the directory is shared by every agent |
 | L4 | second_brain shared semantic memory | agents, via MCP |
 

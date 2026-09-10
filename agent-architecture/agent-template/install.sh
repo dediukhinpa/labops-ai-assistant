@@ -277,8 +277,9 @@ fill_template "${TEMPLATES_DIR}/rules.md.template"     "${WORKSPACE}/core/rules.
 fill_template "${TEMPLATES_DIR}/tools.md.template"     "${WORKSPACE}/tools/TOOLS.md"
 fill_template "${TEMPLATES_DIR}/decisions.md.template" "${WORKSPACE}/core/passive/decisions.md"
 fill_template "${TEMPLATES_DIR}/episodic.md.template"    "${WORKSPACE}/core/active/episodic.md"
-fill_template "${TEMPLATES_DIR}/MEMORY.md.template"    "${WORKSPACE}/core/MEMORY.md"
-fill_template "${TEMPLATES_DIR}/LEARNINGS.md.template" "${WORKSPACE}/core/LEARNINGS.md"
+# preferences.md создаём сразу, хотя пишет в него только memory-consolidate: файл
+# импортирован в CLAUDE.md, и у свежего агента импорт должен на что-то указывать.
+fill_template "${TEMPLATES_DIR}/preferences.md.template" "${WORKSPACE}/core/passive/preferences.md"
 fill_template "${TEMPLATES_DIR}/mcp.json.template"     "${WORKSPACE}/.mcp.json"
 fill_template "${TEMPLATES_DIR}/settings.json.template" "${WORKSPACE}/settings.json"
 
@@ -306,7 +307,7 @@ fi
 log "Copying memory-management scripts..."
 # task_poller.py -- тело поллера рядом с обёрткой task-poller.sh: обёртка ищет
 # его в своём каталоге и без него молча выходит, а доставка задач умирает.
-for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep.sh archive-roll.sh brain-flush.sh task-poller.sh task_poller.py mcp-call.sh; do
+for script in active-writer.sh reflect-nudge.sh decay-sweep.sh archive-roll.sh brain-flush.sh task-poller.sh task_poller.py mcp-call.sh; do
     if [ -f "${SCRIPTS_DIR}/${script}" ]; then
         if [ ! -f "${WORKSPACE}/scripts/${script}" ]; then
             cp "${SCRIPTS_DIR}/${script}" "${WORKSPACE}/scripts/${script}"
@@ -321,7 +322,7 @@ for script in active-writer.sh working-set-build.sh reflect-nudge.sh decay-sweep
 done
 
 log "Copying hooks..."
-for hook in heartbeat-hook.sh session-start-hook.sh stop-hook.sh precompact-hook.sh user-prompt-submit-hook.sh; do
+for hook in heartbeat-hook.sh session-start-hook.sh stop-hook.sh precompact-hook.sh; do
     if [ -f "${HOOKS_DIR}/${hook}" ]; then
         if [ ! -f "${WORKSPACE}/hooks/${hook}" ]; then
             cp "${HOOKS_DIR}/${hook}" "${WORKSPACE}/hooks/${hook}"

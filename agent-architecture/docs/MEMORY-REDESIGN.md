@@ -13,6 +13,13 @@
 > housekeeping, replacing the 4 model crons); watchdog idle trigger + Stop-hook
 > checkpoint counter + `user-prompt-submit-hook.sh`. Verified by 50 bash unit tests
 > + the tg-plugin memory suite.
+>
+> **Update 2026-09-10:** `working-set-build.sh`, `user-prompt-submit-hook.sh`, the
+> `recall-events.jsonl` reinforcement, `MEMORY.md` and `LEARNINGS.md` were removed.
+> The working set was never loaded into the agent's context, and in two months no
+> agent touched the archive or the lessons log. The agent now recalls from
+> second_brain itself before a task; operator corrections live in
+> `passive/preferences.md` (always in context, never decays).
 
 Заменяет старую возрастную ротацию `hot → warm → cold` (4 модельных крона) на
 событийную модель памяти по **ценности**, с разделением на *эпизодическую* и

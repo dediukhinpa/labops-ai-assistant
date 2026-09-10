@@ -52,14 +52,10 @@
     │       │   │   └── preferences.md operator preferences
     │       │   ├── active/
     │       │   │   ├── episodic.md      raw append-only diary of turns
-    │       │   │   ├── working-set.md   materialised recall for current task (rebuilt)
     │       │   │   └── handoff.md    compact extract (last 10 entries, @include)
-    │       │   ├── archived/
-    │       │   │   ├── episodic/YYYY-MM.md  size-rolled episodic slices
-    │       │   │   └── superseded/    decayed insights
-    │       │   ├── recall-events.jsonl  recall log (reinforcement signal)
-    │       │   ├── MEMORY.md          ARCHIVE archive
-    │       │   └── LEARNINGS.md       lessons from mistakes
+    │       │   └── archived/
+    │       │       ├── episodic/YYYY-MM.md  size-rolled episodic slices
+    │       │       └── superseded/    decayed insights
     │       │
     │       ├── tools/
     │       │   └── TOOLS.md           servers, Docker, services
@@ -68,7 +64,6 @@
     │       ├── agents/                subagent .md definitions
     │       └── scripts/
     │           ├── active-writer.sh      Stop hook: append salience-tagged episodic entry
-    │           ├── working-set-build.sh  recall -> working-set.md (second_brain + passive/)
     │           ├── reflect-nudge.sh      nudge live session to consolidate (no model in bg)
     │           ├── decay-sweep.sh        nightly bash: decay passive/ -> archived/superseded/
     │           └── archive-roll.sh       nightly bash: size-roll episodic -> archived/episodic/
@@ -94,6 +89,6 @@
 | TOOLS.md (servers) | shared/skills/ |
 | ACTIVE episodic.md (journal) | shared/gateway/ |
 | PASSIVE decisions.md | shared/secrets/ |
-| ARCHIVE MEMORY.md | second_brain (namespaced) |
+| ARCHIVE core/archived/ | second_brain (namespaced) |
 | Subagents | |
 | Scripts (per-agent cron) | |

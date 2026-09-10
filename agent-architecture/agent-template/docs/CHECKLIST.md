@@ -20,8 +20,7 @@ ln -s ~/.claude-lab/shared/skills ~/.claude-lab/${AGENT_NAME}/.claude/skills
 echo "# PASSIVE -- semantic insights" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/insights.md
 echo "# PASSIVE DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/decisions.md
 echo "# Active memory -- raw append-only episodic diary" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/episodic.md
-echo "# MEMORY -- Archive Archive" > ~/.claude-lab/${AGENT_NAME}/.claude/core/MEMORY.md
-echo "# LEARNINGS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/LEARNINGS.md
+echo "# PREFERENCES" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/preferences.md
 ```
 
 ## 2. Write Identity Files
@@ -107,5 +106,5 @@ cron is optional nightly **pure-bash** housekeeping (no model):
 1. Send message to Telegram bot
 2. Verify response arrives
 3. Check `core/active/episodic.md` has the salience-tagged entry
-4. Check `core/active/working-set.md` was rebuilt on session start (recall)
+4. Check `core/passive/preferences.md` exists (CLAUDE.md imports it)
 5. Verify other agent can message via inbox

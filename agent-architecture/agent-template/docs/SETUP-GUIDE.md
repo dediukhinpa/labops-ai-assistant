@@ -18,11 +18,10 @@ files. A `.mcp.json` points Claude Code at three remote MCP servers --
 **memory** (write decisions / knowledge / external notes, default port 5001),
 **memory_router** (read shared semantic memory, default port 5002),
 **agent_router** (notify other agents, default port 5000) -- each on its own
-port, all Bearer-authenticated. Four local hooks
-(`session-start`, `user-prompt-submit`, `stop`, `precompact`) keep the local
-memory fresh; `working-set-build.sh` rebuilds `core/active/working-set.md` by
-fusing shared-brain recall with local `passive/` recall on each session start and
-on substantive prompts.
+port, all Bearer-authenticated. Local hooks
+(`session-start`, `stop`, `precompact`) keep the local memory fresh; recall
+under a task is the agent's own job -- `CLAUDE.md` tells it to query the shared
+brain before non-trivial work.
 
 ## Prerequisites
 
@@ -72,21 +71,18 @@ Copy the printed token into the installer prompt.
 |   |-- USER.md                # operator profile
 |   |-- rules.md               # rules learned from mistakes
 |   |-- AGENTS.md              # team / models / pipelines
-|   |-- MEMORY.md              # ARCHIVE archive (>14d, on-demand Read)
-|   |-- LEARNINGS.md           # structured log of corrections
-|   |-- passive/                # semantic insights (insights/decisions/errors/preferences.md)
+|   |-- passive/                # decisions + preferences (in context), errors, insights
 |   |-- active/
 |   |   |-- episodic.md          # raw append-only diary (Stop hook appends, salience-tagged)
-|   |   |-- working-set.md       # materialised recall for current task (rebuilt)
 |   |   |-- handoff.md         # last-N entries used by SessionStart
 |   |   `-- pre-compact/       # PreCompact snapshots (rotated)
 |   `-- archived/
 |       |-- episodic/          # size-rolled old episodic slices (YYYY-MM.md)
 |       `-- superseded/        # decayed passive insights
 |-- tools/TOOLS.md             # infra map
-|-- scripts/                   # active-writer, working-set-build, reflect-nudge,
+|-- scripts/                   # active-writer, reflect-nudge,
 |                              # decay-sweep, archive-roll
-|-- hooks/                     # session-start, user-prompt-submit, stop, precompact
+|-- hooks/                     # session-start, stop, precompact, heartbeat
 |-- logs/                      # hooks.log, verbose-YYYY-MM-DD.jsonl
 `-- skills/                    # symlink to ../skills/ (shared bundle)
 ```
@@ -116,13 +112,10 @@ source ~/.claude-lab/<agent-id>/.claude/agent.env
 claude --project ~/.claude-lab/<agent-id>/.claude
 ```
 
-On session start, the `SessionStart` hook reads `core/active/handoff.md` and runs
-`scripts/working-set-build.sh`: it fuses shared second_brain recall (a JSON-RPC
-`tools/call recall` to `${SECOND_BRAIN_MEMORY_ROUTER_URL}`, hard-timeout so it
-never blocks) with local `core/passive/*.md` lexical recall and writes the result
-to `core/active/working-set.md`, logging hits to `core/recall-events.jsonl`. It
-never edits `episodic.md`. `UserPromptSubmit` runs the same builder behind a
-worthiness gate (skips acknowledgements like "ok").
+On session start, the `SessionStart` hook logs the start and whether
+`core/active/handoff.md` has content. There is no recall hook: before a
+non-trivial task the agent queries the shared brain itself (`CLAUDE.md` says so),
+keyed on the real task.
 
 On each turn end, `Stop` hook appends a salience-tagged entry to `episodic.md`
 (via `active-writer.sh`) and a full JSON envelope to
@@ -145,8 +138,8 @@ housekeeping:
 5 3 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/archive-roll.sh
 ```
 
-`decay-sweep.sh` replays `recall-events.jsonl` to reinforce recalled insights and
-moves never-recalled decayed ones to `archived/superseded/`; `archive-roll.sh`
+`decay-sweep.sh` moves never-reinforced decayed insights to `archived/superseded/`
+(`preferences.md` never decays); `archive-roll.sh`
 size-rolls `episodic.md` into `archived/episodic/YYYY-MM.md`. Both are pure bash +
 Python arithmetic -- no model call, so episodic text is never summarised, only
 relocated.
@@ -178,7 +171,6 @@ in `Authorization` header, JSON-RPC 2.0 in the body.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `working-set-build.sh` logs "SECOND_BRAIN_MEMORY_ROUTER_URL or AGENT_BEARER unset" | shell didn't `source agent.env` | `source ~/.claude-lab/<agent-id>/.claude/agent.env` before `claude` (recall still runs file-only against `passive/`) |
 | recall returns `403` | token has no `inbox` (or relevant) scope, or wrong agent | re-issue with `issue-agent-token.py --scopes ...` |
 | recall returns empty results | second_brain DB has no notes yet | use `create_decision_note` first, or backfill from existing decisions.md |
 | `Stop` hook never fires | `settings.json` not picked up | confirm `claude --project` points at the workspace dir that contains `settings.json` |

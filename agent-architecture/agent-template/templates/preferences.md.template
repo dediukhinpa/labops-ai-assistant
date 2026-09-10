@@ -1,0 +1,5 @@
+# PREFERENCES -- {{AGENT_NAME}}
+
+_How the operator wants things done -- distilled from their corrections by
+memory-consolidate. Always in context. Entries stay until the operator changes
+them: decay-sweep.sh never archives this file._

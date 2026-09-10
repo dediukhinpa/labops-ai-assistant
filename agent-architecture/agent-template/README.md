@@ -60,18 +60,15 @@ and never block the harness on failure.
 |   |-- USER.md
 |   |-- rules.md
 |   |-- AGENTS.md
-|   |-- MEMORY.md              # ARCHIVE archive
-|   |-- LEARNINGS.md
-|   |-- passive/                  # semantic insights (insights/decisions/errors/preferences)
+|   |-- passive/                  # semantic insights: decisions + preferences (in context), errors, insights
 |   |-- active/
 |   |   |-- episodic.md          # raw append-only diary
-|   |   |-- working-set.md       # materialised recall (rebuilt)
 |   |   `-- handoff.md
 |   `-- archived/               # episodic/ (size-rolled) + superseded/ (decayed insights)
 |-- tools/TOOLS.md
-|-- scripts/                   # memory engine + board delivery: active-writer, working-set-build, reflect-nudge,
+|-- scripts/                   # memory engine + board delivery: active-writer, reflect-nudge,
 |                              #   decay-sweep, archive-roll, brain-flush, mcp-call, task-poller.sh, task_poller.py
-|-- hooks/                     # session-start, user-prompt-submit, stop, precompact, heartbeat
+|-- hooks/                     # session-start, stop, precompact, heartbeat
 |-- logs/
 `-- skills/                    # symlink to ../skills/ shared bundle
 ```
@@ -91,15 +88,13 @@ agent-template/
 |   |-- USER.md.template
 |   |-- decisions.md.template
 |   |-- episodic.md.template
-|   |-- MEMORY.md.template
-|   |-- LEARNINGS.md.template
+|   |-- preferences.md.template        passive/preferences.md (always in context, never decays)
 |   |-- mcp.json.template              .mcp.json with 4 second_brain servers (incl. the task board)
 |   `-- settings.json.template         hooks wiring
 |-- scripts/
 |   |-- active-writer.sh              episodic writer (Stop hook), salience-tagged, no model
-|   |-- working-set-build.sh          rebuild working-set.md: second_brain recall + local passive/ (non-blocking)
 |   |-- reflect-nudge.sh              nudge the LIVE session to consolidate (agent_router.notify; no `claude -p`)
-|   |-- decay-sweep.sh                housekeeping (Stop hook, <=1/day): reinforce + decay passive/ -> archived/superseded/
+|   |-- decay-sweep.sh                housekeeping (Stop hook, <=1/day): decay passive/ (not preferences.md) -> archived/superseded/
 |   |-- archive-roll.sh               housekeeping (Stop hook, <=1/day): size-roll episodic.md -> archived/episodic/YYYY-MM.md
 |   |-- brain-flush.sh                safety-net dual-write before compaction / at session end
 |   |-- mcp-call.sh                   MCP handshake helper: initialize -> call -> DELETE (a bare POST gets 400)
@@ -107,7 +102,6 @@ agent-template/
 |   `-- task_poller.py                long-lived daemon: one MCP session, polls the board every 5s
 |-- hooks/
 |   |-- session-start-hook.sh
-|   |-- user-prompt-submit-hook.sh
 |   |-- stop-hook.sh
 |   |-- precompact-hook.sh
 |   |-- heartbeat-hook.sh
@@ -128,7 +122,6 @@ agent-template/
     |-- FILES-REFERENCE.md
     |-- FIRST-AGENT.md
     |-- MAPPING.md
-    |-- LEARNINGS.md
     `-- CHECKLIST.md
 ```
 
@@ -138,7 +131,7 @@ agent-template/
 |---|---|
 | Upstream semantic-memory backend (HTTP REST `/api/v1/...`) | second_brain MCPs (HTTP MCP transport, JSON-RPC 2.0, Bearer auth) |
 | Bearer/API key under `~/.claude-lab/shared/secrets/` (file on disk) | Bearer in `.mcp.json` `Authorization: Bearer ${AGENT_BEARER}` (chmod 600) |
-| Upstream session-sync script (uploads ACTIVE+PASSIVE to the memory server) | `scripts/working-set-build.sh` (fuses second_brain recall + local `passive/` into `active/working-set.md`, non-blocking) |
+| Upstream session-sync script (uploads ACTIVE+PASSIVE to the memory server) | No sync script: the agent queries second_brain itself before a task, and `memory-consolidate` dual-writes what it distils |
 | Standalone install | Lives inside the public-second_brain-agentos distro alongside the server, inbox-agent, and skills bundle |
 | Hooks described in docs only | Concrete `hooks/*.sh` shipped, wired via `templates/settings.json.template` |
 

@@ -66,5 +66,8 @@ locally and skip step 5 — note "shared layer off" in your reply. Never block.
 - `passive/*` is YELLOW (self-edit with justification); `episodic.md` is the source
   of truth for provenance — never rewrite or delete episodic entries here
   (archive-roll.sh handles rolling old slices out by size).
-- Keep insights terse and de-duplicated: passive/ is loaded on demand, so churn is
-  cheap but noise is expensive.
+- Keep insights terse and de-duplicated: `decisions.md` and `preferences.md` are
+  loaded into every session, so noise there costs context on every turn;
+  `errors.md` and `insights.md` are read on demand.
+- `preferences.md` never ages out (decay-sweep.sh skips it) -- retire an entry only
+  when the operator changes their mind, and say so in your reply.

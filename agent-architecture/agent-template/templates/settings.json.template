@@ -46,11 +46,6 @@
             "type": "command",
             "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/heartbeat-hook.sh",
             "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash ${HOME}/.claude-lab/{{AGENT_ID}}/.claude/hooks/user-prompt-submit-hook.sh",
-            "timeout": 5
           }
         ]
       }

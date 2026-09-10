@@ -28,9 +28,9 @@ Claude Code launch
 └── {agent}/.claude/CLAUDE.md     agent SOUL
     ├── @core/USER.md             operator profile
     ├── @core/rules.md            learned rules
-    ├── @core/passive/*.md          semantic insights (decisions/errors/preferences)
-    ├── @core/active/handoff.md      compact extract (last 10 entries)
-    └── @core/active/working-set.md  materialised recall for the current task
+    ├── @core/passive/decisions.md   decisions
+    ├── @core/passive/preferences.md how the operator wants things done
+    └── @core/active/handoff.md      compact extract (last 10 entries)
 
 ~10-25K tokens (episodic.md is NOT loaded -- on-demand Read only)
 ```
@@ -43,7 +43,6 @@ Session lifecycle:
   2. Subsequent msgs → claude --resume <session_id> (preserves context)
   3. /reset          → save to ARCHIVE, delete session file, next msg = new session
   4. /reset force    → delete session file immediately, no save
-  5. Post-reset      → first message injects latest MEMORY.md section as context bridge
 ```
 
 Key commands:
@@ -57,7 +56,7 @@ Checkpoints are created on every Claude action and persist across sessions.
 ## On-Demand (NOT in context)
 
 ```
-ARCHIVE memory    → Read tool (MEMORY.md, LEARNINGS.md)
+ARCHIVE memory    → Read tool (core/archived/)
 Skills         → Skill tool (shared/skills/)
 second_brain L4  → curl ${SECOND_BRAIN_MEMORY_ROUTER_URL} (or set MCP_HOST to Tailscale IP for multi-VPS)
 Web search     → Perplexity / DuckDuckGo
@@ -102,9 +101,8 @@ MEMORY WRITE (parallel, after every message)
     |    - Important knowledge dual-written to second_brain (create_decision_note, ...)
     |    - No background model: `claude -p` is forbidden repo-wide
     |
-    | C. RECALL: working-set-build.sh (SessionStart + worthy prompts)
-    |    - second_brain recall (RRF, hard-timeout, non-blocking) + local passive/ lexical
-    |    - Writes active/working-set.md; logs hits to recall-events.jsonl
+    | C. RECALL: the agent itself, before a non-trivial task
+    |    - second_brain memory_router recall, keyed on the real task
     |
     v
 REPLY to operator in Telegram (markdown -> HTML, chunked at 4000 chars)
@@ -115,8 +113,8 @@ This is the critical path. Every message follows this exact sequence. Memory wri
 ## Why Keeping Episodic Out of Context Matters
 
 The episodic diary (`episodic.md`) grows to 80KB+ per day. The redesign never loads
-it into context: what loads is the compact `handoff.md` + `working-set.md` +
-consolidated `passive/` insights. The raw diary stays on-demand (Read tool) and is
+it into context: what loads is the compact `handoff.md` +
+`passive/decisions.md` and `passive/preferences.md`. The raw diary stays on-demand (Read tool) and is
 size-rolled to `archived/episodic/` by `archive-roll.sh`. The problem it avoids:
 80KB of raw conversation logs equals ~36,000 tokens -- roughly 70% of the startup
 context at Opus level.
@@ -134,7 +132,7 @@ insights in `passive/`. Episodic text is never model-compressed -- only role-pro
 | Metric | Loading raw episodic | Consolidated (recall + insights) |
 |--------|--------------------|--------------------|
 | Episodic in context | 80 KB+ | 0 (on-demand only) |
-| Loaded memory (handoff + working-set + passive) | n/a | 5-11 KB |
+| Loaded memory (handoff + decisions + preferences) | n/a | 5-11 KB |
 | Tokens consumed by memory | ~36,000 | ~2,500-5,000 |
 | Startup context used | ~70% | ~10-15% |
 | Background model cost | n/a | $0 (reflection runs in the live session) |
@@ -195,9 +193,9 @@ MCP_HOST = host/IP only (set to Tailscale IP for multi-VPS — check ss -tlnp)
 │   Method: create_decision_note / create_error_pattern_note / ... (recall-before-write)
 │   No background model, no batch upload: `claude -p` is forbidden repo-wide
 │
-└── Recall: working-set-build.sh (SessionStart + worthy prompts)
+└── Recall: the agent itself, before a non-trivial task
     POST ${SECOND_BRAIN_MEMORY_ROUTER_URL} (JSON-RPC tools/call recall)
-    {"query": "topic", "limit": 5}   # RRF, hard-timeout, non-blocking; fused with local passive/
+    {"query": "topic", "limit": 5}   # RRF over embeddings + FTS
 ```
 
 Install: `pip install second_brain --upgrade`
@@ -216,12 +214,8 @@ Stop hook (every turn) -> active-writer.sh -> ACTIVE (episodic.md, salience-tagg
   |     -> reads episodic.md, writes passive/*.md insights (YAML frontmatter),
   |        dual-writes important knowledge to second_brain
   |
-  +-- working-set-build.sh (SessionStart + worthy prompts)
-  |     recall = second_brain (RRF, hard-timeout) + local passive/ lexical
-  |     -> active/working-set.md; logs hits to recall-events.jsonl (reinforcement)
-  |
-  +-- decay-sweep.sh (nightly bash, no model)
-  |     reinforce recalled insights; evict never-recalled decayed ones (score<0.25)
+  +-- decay-sweep.sh (daily bash from the Stop hook, no model)
+  |     evict never-reinforced decayed insights (score<0.25); preferences.md never decays
   |     -> archived/superseded/
   |
   +-- archive-roll.sh (nightly bash, no model)
@@ -255,7 +249,7 @@ the checkpoint counter (every 20 turns) and on watchdog idle (10 min).
 | Command | What it does |
 |---------|-------------|
 | `/compact` | Extract key facts from last 24h ACTIVE → PASSIVE, trim ACTIVE to 24h |
-| `/reset` | Save important context to ARCHIVE (MEMORY.md), start new session |
+| `/reset` | Start a new session with the next message (history stays on disk) |
 | `/reset force` | Delete session immediately, no save |
 | `/status` | Show session age, memory file sizes (rules, passive, active, archive) |
 | `/new` | Save handoff + start new session |

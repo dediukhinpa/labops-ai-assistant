@@ -99,4 +99,5 @@ Concretely, every session:
 @SECONDBRAIN_WRITE_RULES.md
 @AGENT_ROUTER.md
 @core/passive/decisions.md
+@core/passive/preferences.md
 @core/active/handoff.md
