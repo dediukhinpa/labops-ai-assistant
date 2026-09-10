@@ -192,9 +192,11 @@ AUTH_RESTARTED=0
 # То же самое для мастера первого запуска (ветка A1): один рестарт на эпизод.
 ONBOARDING_RESTARTED=0
 # Вопрос о каналах для разработки (ветка A0): сколько раз ответили за эпизод.
-# Не уходит после нескольких ответов — зовём оператора, а не жмём Enter вечно.
+# Не уходит после нескольких ответов — один рестарт сессии (как у мастера, A1);
+# вернулся и после него — зовём оператора, а не жмём Enter вечно.
 DEV_CHANNELS_ANSWERS=0
 DEV_CHANNELS_MAX_ANSWERS="${WATCHDOG_DEV_CHANNELS_MAX_ANSWERS:-3}"
+DEV_CHANNELS_RESTARTED=0
 
 # ── Обслуживание команды /doctor ─────────────────────────────────────────────
 # Исполняет запрос, положенный плагином (или аварийным приёмом), и САМ отвечает
@@ -327,7 +329,7 @@ while true; do
     log "task-poller был мёртв при живой сессии — поднял заново (supervise)"
   fi
 
-  TAIL=$(tmux capture-pane -pt "=$SESSION:" -S -8 2>/dev/null || true)
+  TAIL=$(tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -8 2>/dev/null || true)
 
   # (A0) Вопрос о каналах для разработки на старте сессии. Отвечаем сразу, не
   # дожидаясь статичной панели: вопрос однозначен, а пока он на экране, сессия
@@ -339,14 +341,24 @@ while true; do
   if looks_like_dev_channels_prompt "$TAIL"; then
     if [ "$DEV_CHANNELS_ANSWERS" -lt "$DEV_CHANNELS_MAX_ANSWERS" ]; then
       DEV_CHANNELS_ANSWERS=$((DEV_CHANNELS_ANSWERS + 1))
+      # На выбранном «2. Exit» функция сперва вернёт выбор стрелкой на первый
+      # пункт: Enter прямо на «Exit» закрыл бы claude, а без стрелки выбранный
+      # Exit не сдвинул бы никто.
       if answer_dev_channels_prompt "$SESSION" "$TAIL"; then
         log "вопрос о каналах разработки на экране — подтвердил (попытка $DEV_CHANNELS_ANSWERS)"
       else
-        # Enter на «2. Exit» закрыл бы claude — жмём только на первом пункте.
-        log "вопрос о каналах разработки: выбран не первый пункт — Enter не жму"
+        log "вопрос о каналах разработки: первый пункт выбрать не удалось — Enter не жму"
       fi
+    elif [ "$DEV_CHANNELS_RESTARTED" -eq 0 ]; then
+      # Ответы не помогли — один рестарт на эпизод, как у мастера (A1): свежая
+      # сессия задаёт вопрос заново, и start-agent.sh отвечает на него сам.
+      # Раньше здесь была только тревога, и сессия стояла до прихода человека.
+      DEV_CHANNELS_RESTARTED=1
+      DEV_CHANNELS_ANSWERS=0
+      restart_session "вопрос о каналах не уходит после $DEV_CHANNELS_MAX_ANSWERS ответов"
+      continue
     else
-      report_down "вопрос о каналах разработки не уходит после $DEV_CHANNELS_ANSWERS ответов"
+      report_down "вопрос о каналах разработки не уходит ни ответами, ни рестартом"
     fi
     PREV_TAIL=""
     continue
@@ -369,6 +381,14 @@ while true; do
     if [ "$ONBOARDING_RESTARTED" -eq 1 ] && heartbeat_fresh && ! looks_like_onboarding "$TAIL"; then
       ONBOARDING_RESTARTED=0
       log "мастер первого запуска пройден (ход прошёл) — сброс ладдера онбординга"
+    fi
+    # И эпизод вопроса о каналах — по тому же доказательству. Сброс по одному
+    # лишь «вопроса нет на экране» дал бы цикл рестартов: после рестарта панель
+    # какое-то время пуста, пока claude не нарисует вопрос снова.
+    if [ "$DEV_CHANNELS_RESTARTED" -eq 1 ] && heartbeat_fresh \
+       && ! looks_like_dev_channels_prompt "$TAIL"; then
+      DEV_CHANNELS_RESTARTED=0
+      log "вопрос о каналах разработки пройден (ход прошёл) — сброс ладдера"
     fi
     # Панель движется и в ней нет ошибки доступа — агент работает. Если висела
     # тревога, закрываем её: оператор должен узнать не только о поломке.
@@ -437,9 +457,9 @@ while true; do
     # Escape dismisses an overlay but does nothing to a dead TUI, so it is the
     # discriminator. Try it once before destroying the session.
     log "no prompt rendered — trying Escape (may be a slash-command overlay)"
-    tmux send-keys -t "=$SESSION:" Escape 2>/dev/null || true
+    tmux send-keys -t "=$SESSION:^.{top-left}" Escape 2>/dev/null || true
     sleep 2
-    TAIL="$(tmux capture-pane -pt "=$SESSION:" -S -8 2>/dev/null || true)"
+    TAIL="$(tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -8 2>/dev/null || true)"
     if has_prompt "$TAIL"; then
       log "prompt returned after Escape — overlay, not a freeze; session left ALIVE"
       PREV_TAIL="$TAIL"
@@ -533,7 +553,7 @@ while true; do
              log "нарисованный ввод не подтверждён доставкой — чищу поле, не отправляю"
              LAST_PHANTOM="$PHANTOM"
            fi
-           tmux send-keys -t "=$SESSION:" C-u 2>/dev/null || true
+           tmux send-keys -t "=$SESSION:^.{top-left}" C-u 2>/dev/null || true
            NUDGE_STAGE=0
            # Буфер пуст, текст доставкой не подтверждён -- агент простаивает,
            # а не залип. Без этой строки призрак навсегда прятал ветку простоя
@@ -543,7 +563,7 @@ while true; do
        else
          # Молча: это первая ступень автоматики, а не событие для оператора.
          log "stuck input detected — Enter"
-         tmux send-keys -t "=$SESSION:" Enter 2>/dev/null || true
+         tmux send-keys -t "=$SESSION:^.{top-left}" Enter 2>/dev/null || true
          NUDGE_STAGE=1
        fi ;;
     1) # A plain Enter cannot finalise a stuck bracketed-paste (verified: Enter,

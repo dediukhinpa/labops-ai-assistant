@@ -40,6 +40,8 @@ AGENT_WS="$CLAUDE_LAB/$AGENT/.claude"
 # сессию Claude, в юнит-тесте его подменяют заглушкой.
 START_SCRIPT="${DOCTOR_START_SCRIPT:-$SCRIPT_DIR/start-agent.sh}"
 CREDENTIALS="${CLAUDE_CREDENTIALS_FILE:-$HOME/.claude/.credentials.json}"
+# Сколько секунд ждать, пока вопрос о каналах уйдёт после ответа (тест ставит 0).
+DOCTOR_DEV_CHANNELS_WAIT="${DOCTOR_DEV_CHANNELS_WAIT:-10}"
 
 # shellcheck source=lib/pane.sh
 source "$SCRIPT_DIR/lib/pane.sh"
@@ -129,7 +131,7 @@ check_session() {
 # ── 4. Панель: отвечает ли TUI ───────────────────────────────────────────────
 # Порядок важен: сначала ошибка доступа (её рестарт не лечит и лечить нечем),
 # потом отсутствие промпта, потом залипший ввод.
-capture() { tmux capture-pane -pt "=$SESSION:" -S -8 2>/dev/null || true; }
+capture() { tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -8 2>/dev/null || true; }
 
 check_pane() {
   if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
@@ -143,10 +145,30 @@ check_pane() {
     return 0
   fi
 
+  # Вопрос о каналах разработки на старте claude. Разбираем ДО застрявшего
+  # ввода: выбранный пункт меню начинается с «❯», и экран проходит и has_prompt,
+  # и is_stuck_input — --fix перепечатал бы строку меню с Enter, а на «2. Exit»
+  # это закрыло бы claude. Отвечаем тем же, что и watchdog (lib/pane.sh).
+  if looks_like_dev_channels_prompt "$tail"; then
+    if [ "$FIX" -eq 0 ]; then
+      add_broken "агент ждёт ответа на стартовый вопрос Claude Code — /doctor подтвердит сам"
+      return 0
+    fi
+    # Починкой считаем только ушедший вопрос: отправленный Enter ещё не значит,
+    # что claude его принял.
+    if answer_dev_channels_prompt "$SESSION" "$tail" \
+       && dev_channels_prompt_wait_gone "$SESSION" "$DOCTOR_DEV_CHANNELS_WAIT"; then
+      add_fixed "подтвердил стартовый вопрос Claude Code — агент продолжает запуск"
+    else
+      add_broken "стартовый вопрос Claude Code не принимает ответ — нужна помощь на сервере"
+    fi
+    return 0
+  fi
+
   if ! has_prompt "$tail"; then
     # Полноэкранный вывод слэш-команды выглядит как мёртвый TUI. Escape
     # закрывает оверлей и ничего не делает с реально зависшим — он и различает.
-    tmux send-keys -t "=$SESSION:" Escape 2>/dev/null || true
+    tmux send-keys -t "=$SESSION:^.{top-left}" Escape 2>/dev/null || true
     sleep 2
     tail="$(capture)"
     if ! has_prompt "$tail"; then

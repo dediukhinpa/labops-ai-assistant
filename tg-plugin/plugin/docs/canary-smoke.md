@@ -30,7 +30,7 @@ Telegram delivers each update to exactly one long-poll consumer. Before launchin
 tmux ls | grep channel-canary || echo "no canary tmux session"
 
 # Stop it
-tmux kill-session -t channel-canary 2>/dev/null || true
+tmux kill-session -t =channel-canary 2>/dev/null || true
 
 # Verify no leftover python process holding the token
 pgrep -af labops-telegram-canary-bot || echo "clean"
@@ -133,7 +133,7 @@ If any row fails: stop the plugin, snapshot logs to a dated evidence folder unde
 
 ```bash
 # Stop channel plugin
-tmux kill-session -t channel-canary-test
+tmux kill-session -t =channel-canary-test
 
 # Restart pre-cutover Python ACK canary
 tmux new-session -d -s channel-canary \

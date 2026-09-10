@@ -24,12 +24,19 @@ cat > "$MOCKS/tmux" <<'EOF'
 # Состояние: MOCK_SESSION=1|0, MOCK_PANE=<текст>, MOCK_CURSOR_X=<колонка>.
 case "$1" in
   has-session) [ "${MOCK_SESSION:-1}" = "1" ] ;;
-  capture-pane) printf '%s' "${MOCK_PANE:-}" ;;
+  capture-pane)
+    # После Enter экран сменяется на MOCK_PANE_AFTER_ENTER (если задан): так
+    # тест видит, что ответ на вопрос действительно дошёл.
+    if [ -n "${MOCK_PANE_AFTER_ENTER:-}" ] && grep -qx enter "${MOCK_KEYLOG:-/dev/null}" 2>/dev/null
+    then printf '%s' "$MOCK_PANE_AFTER_ENTER"
+    else printf '%s' "${MOCK_PANE:-}"; fi ;;
   display)      printf '%s' "${MOCK_CURSOR_X:-2}" ;;
   send-keys)
-    # Перепечатка застрявшего ввода: фиксируем факт отправки Enter, чтобы тест
-    # мог отличить реальную досылку от «сделал вид».
-    for a in "$@"; do [ "$a" = "Enter" ] && echo enter >> "${MOCK_KEYLOG:-/dev/null}"; done
+    # Фиксируем, ЧТО ушло в панель: Enter, стрелку и факт перепечатки (-l) —
+    # чтобы тест отличал реальную досылку от «сделал вид» и видел лишние клавиши.
+    for a in "$@"; do
+      case "$a" in Enter) echo enter ;; Up) echo up ;; -l) echo typed ;; esac
+    done >> "${MOCK_KEYLOG:-/dev/null}"
     exit 0 ;;
   *) exit 0 ;;
 esac
@@ -97,13 +104,31 @@ AUTH_DEAD='● Your organization has disabled Claude subscription access for Cla
 
 DEAD_TUI=''
 
+# Вопрос о каналах разработки — хвост панели labops-app 10.09.2026.
+DEV_Q=' Channels: server:labops-channel
+
+ ❯ 1. I am using this for local development
+   2. Exit
+
+ Enter to confirm · Esc to cancel'
+DEV_Q_EXIT=' Channels: server:labops-channel
+
+   1. I am using this for local development
+ ❯ 2. Exit
+
+ Enter to confirm · Esc to cancel'
+
+# Паузы ответа на вопрос о каналах обнулены: мок перерисовывает экран мгновенно.
+DEV_WAITS="DOCTOR_DEV_CHANNELS_WAIT=0 DEV_CHANNELS_SETTLE=0"
+
 # run <описание переменных окружения через env> — печатает вывод, возвращает код.
 run() {
+  # shellcheck disable=SC2086  # DEV_WAITS — список присваиваний для env
   PATH="$MOCKS:$PATH" \
   CLAUDE_LAB="$TMP/lab" \
   DOCTOR_START_SCRIPT="$TMP/start-agent.sh" \
   RECOVER_SETTLE=0 RECOVER_SUBMIT_DELAY=0 \
-  "$@" bash "$DOCTOR" developer 2>&1
+  "$@" $DEV_WAITS bash "$DOCTOR" developer 2>&1
 }
 
 expect() {   # <описание> <ожидаемый код> <подстрока> -- <env...>
@@ -145,11 +170,12 @@ expect "агента нет, без --fix только диагноз" 1 "аге
 
 # ── --fix действительно чинит ────────────────────────────────────────────────
 fix_run() {
+  # shellcheck disable=SC2086  # DEV_WAITS — список присваиваний для env
   PATH="$MOCKS:$PATH" \
   CLAUDE_LAB="$TMP/lab" \
   DOCTOR_START_SCRIPT="$TMP/start-agent.sh" \
   RECOVER_SETTLE=0 RECOVER_SUBMIT_DELAY=0 \
-  "$@" bash "$DOCTOR" developer --fix 2>&1
+  "$@" $DEV_WAITS bash "$DOCTOR" developer --fix 2>&1
 }
 
 out="$(fix_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_SESSION=0 \
@@ -173,6 +199,58 @@ fi
 # Тот же случай без --fix: чинить нельзя, но сказать оператору обязаны.
 expect "застрявшее сообщение видно и без --fix" 1 "сообщение застряло" -- \
   env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$STUCK" MOCK_CURSOR_X=2
+
+# ── Вопрос о каналах разработки ──────────────────────────────────────────────
+# Экран вопроса проходит и has_prompt, и is_stuck_input: до фикса --fix принимал
+# его за застрявшее сообщение и перепечатывал строку меню с Enter — а на
+# «2. Exit» такой Enter закрыл бы claude.
+# keys <лог> — что ушло в панель, одной строкой (для сообщения о провале).
+keys() { tr '\n' ' ' < "$1"; }
+
+: > "$TMP/dev1.log"
+out="$(run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$DEV_Q" \
+  MOCK_KEYLOG="$TMP/dev1.log")" && rc=0 || rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF "стартовый вопрос" \
+   && [ ! -s "$TMP/dev1.log" ]; then
+  ok "вопрос о каналах без --fix: понятная причина и ни одной клавиши"
+else
+  bad "вопрос о каналах без --fix (код $rc, клавиши: $(keys "$TMP/dev1.log"))"
+  echo "    $out"
+fi
+
+: > "$TMP/dev2.log"
+out="$(fix_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$DEV_Q" \
+  MOCK_PANE_AFTER_ENTER="$IDLE" MOCK_KEYLOG="$TMP/dev2.log")" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "подтвердил стартовый вопрос" \
+   && [ "$(cat "$TMP/dev2.log")" = enter ]; then
+  ok "--fix отвечает на вопрос одним Enter, без перепечатки меню"
+else
+  bad "--fix на вопросе о каналах (код $rc, клавиши: $(keys "$TMP/dev2.log"))"
+  echo "    $out"
+fi
+
+# Enter ушёл, а вопрос остался — «починил» писать нельзя.
+: > "$TMP/dev3.log"
+out="$(fix_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$DEV_Q" \
+  MOCK_KEYLOG="$TMP/dev3.log")" && rc=0 || rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF "не принимает ответ" \
+   && ! grep -q typed "$TMP/dev3.log"; then
+  ok "--fix: неушедший вопрос — вердикт оператору, не «починил»"
+else
+  bad "--fix на неуходящем вопросе (код $rc, клавиши: $(keys "$TMP/dev3.log"))"
+  echo "    $out"
+fi
+
+# Выбран «2. Exit»: Enter в этот экран закрыл бы claude — он не должен уйти.
+: > "$TMP/dev4.log"
+out="$(fix_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$DEV_Q_EXIT" \
+  MOCK_KEYLOG="$TMP/dev4.log")" && rc=0 || rc=$?
+if [ "$rc" -eq 1 ] && ! grep -qE 'enter|typed' "$TMP/dev4.log"; then
+  ok "--fix: на выбранном «2. Exit» Enter не нажат"
+else
+  bad "--fix нажал Enter на «2. Exit» (код $rc, клавиши: $(keys "$TMP/dev4.log"))"
+  echo "    $out"
+fi
 
 # Мёртвый TUI: промпта нет даже после Escape → рестарт как последнее средство.
 out="$(fix_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$DEAD_TUI" \

@@ -8,7 +8,16 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TMP="$(mktemp -d)"
 PIDS=()
-cleanup() { for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done; rm -rf "$TMP"; }
+# Случай 15 поднимает настоящую сессию — только в своём tmux-сервере, иначе при
+# заданной $TMUX она легла бы в сервер роя (см. lib/tmux-test-isolation.sh).
+# shellcheck source=lib/tmux-test-isolation.sh
+. "$HERE/tmux-test-isolation.sh"
+tmux_test_isolate "$TMP"
+cleanup() {
+  for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
+  tmux_test_kill_server
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
 
 # Две «версии» одного бинаря. Нужен реальный исполняемый файл: /proc/<pid>/exe
@@ -121,4 +130,31 @@ CLI_VERSION_CLAUDE_BIN="$TMP/bin/nonexistent-claude" cli_version_mark_onboarding
 # 14. Временный файл за собой не оставляем — конфиг общий на все сессии хоста.
 [ ! -e "$CLI_VERSION_CONFIG_JSON.tmp" ] || fail "остался временный файл рядом с конфигом"
 
-echo "OK: cli-version.sh — 14 проверок пройдено"
+# 15. Pid берётся у панели агента — первого окна, а не текущего. Раньше
+#     `list-panes -t =имя:` отдавал панели ТЕКУЩЕГО окна: открой оператор в
+#     сессии второе окно, и сюда пришёл бы pid его bash — /proc/<pid>/exe не тот
+#     бинарь, дрейф «найден», агент на простое ушёл бы в рестарт.
+if command -v tmux >/dev/null 2>&1; then
+  unset CLI_VERSION_PANE_PID_CMD
+  ln -sfn "$TMP/versions/2.0" "$TMP/bin/claude"
+  S="cliver-$$"
+  # Команда отдельными аргументами — tmux исполнит её сам, без обёртки-оболочки,
+  # и pane_pid окажется ровно процессом «версии».
+  if tmux new-session -d -s "$S" "$TMP/versions/2.0" 300 2>/dev/null; then
+    tmux new-window -t "=$S:" bash -c 'sleep 300'
+    agent_pid="$(tmux display -p -t "=$S:^.{top-left}" '#{pane_pid}')"
+    op_pid="$(tmux display -p -t "=$S:" '#{pane_pid}')"
+    [ -n "$agent_pid" ] && [ "$agent_pid" != "$op_pid" ] \
+      || fail "окружение не воспроизведено: второе окно не стало текущим"
+    [ "$(_cli_version_pane_pid "$S")" = "$agent_pid" ] \
+      || fail "pid взят не у панели агента, а у текущего окна оператора"
+    cli_version_drifted "$S" && fail "второе окно оператора принято за дрейф версии"
+    # Сосед с более длинным именем не подменяет несуществующую сессию.
+    [ -z "$(_cli_version_pane_pid "${S%?}")" ] || fail "pid прочитан у сессии с другим именем"
+    tmux kill-session -t "=$S" 2>/dev/null || true
+  else
+    echo "· tmux-сессия не поднялась — случай 15 пропущен"
+  fi
+fi
+
+echo "OK: cli-version.sh — 15 проверок пройдено"

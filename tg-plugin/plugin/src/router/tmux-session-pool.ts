@@ -29,6 +29,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { MultichatPolicy } from '../chats/policy-loader.js'
+import { sessionTarget } from '../tmux/index.js'
 
 // Resolve the spawn-chat-shell.sh wrapper relative to THIS module so
 // it works regardless of cwd. The wrapper lives at
@@ -419,7 +420,10 @@ export class TmuxSessionPool {
     const handle = this.sessions.get(chatId)
     if (handle === undefined) return
     try {
-      await runTmux(['kill-session', '-t', handle.sessionName])
+      // Точная цель: если сессия этого чата уже умерла, голое имя совпало бы
+      // по префиксу с сессией другого чата (multichat-12345 → multichat-1234567)
+      // и мы убили бы чужой разговор. С `=` kill просто падает в warn ниже.
+      await runTmux(['kill-session', '-t', sessionTarget(handle.sessionName)])
     } catch (err) {
       this.logger.warn('tmux kill-session failed', {
         chatId,
@@ -527,10 +531,13 @@ export class TmuxSessionPool {
     // dead-letter/, mismatched/, albums/ deliberately untouched.
   }
 
-  /** True iff `tmux has-session -t {sessionName}` exits 0. */
+  /** True iff `tmux has-session -t ={sessionName}` exits 0. */
   async isAlive(sessionName: string): Promise<boolean> {
     try {
-      await runTmux(['has-session', '-t', sessionName])
+      // Точная цель: без `=` мёртвая multichat-12345 «жива», пока жива
+      // multichat-1234567, — пул не респавнил бы чат и слал бы ему в пустоту.
+      // Невалидное имя из sessions.json бросает здесь же и считается мёртвым.
+      await runTmux(['has-session', '-t', sessionTarget(sessionName)])
       return true
     } catch {
       return false

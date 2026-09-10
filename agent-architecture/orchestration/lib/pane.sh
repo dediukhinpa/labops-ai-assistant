@@ -16,10 +16,17 @@
 # the overlay, which is what distinguishes it from a real freeze.
 #
 # ЦЕЛИ TMUX — ТОЛЬКО ТОЧНЫЕ. Функции принимают голое имя сессии и сами строят
-# цель: «=имя» для команд над сессией, «=имя:» для команд над панелью. Без «=»
-# tmux, не найдя точной сессии, берёт первую, чьё имя НАЧИНАЕТСЯ так же: у
-# labops-app это labops-app-124546645 — чужой агент получил бы наши клавиши.
-# `=имя` без двоеточия панель не находит (capture-pane/send-keys падают).
+# цель: «=имя» для команд над сессией, «=имя:^.{top-left}» для команд над
+# панелью. Без «=» tmux, не найдя точной сессии, берёт первую, чьё имя
+# НАЧИНАЕТСЯ так же: у labops-app это labops-app-124546645 — чужой агент получил
+# бы наши клавиши. `=имя` без двоеточия панель не находит (capture-pane и
+# send-keys падают), а `=имя:` — это ТЕКУЩЕЕ окно сессии: откроет оператор в
+# сессии агента второе окно, и клавиши уйдут в его bash, а pid его bash
+# watchdog примет за сменившуюся версию claude (ложный рестарт). `^` — окно с
+# наименьшим номером: окно агента создаётся первым и получает base-index, новые
+# окна tmux нумерует выше. `{top-left}` — его верхняя левая панель при любых
+# base-index и pane-base-index (номер `.0` от pane-base-index зависит).
+# Страж формы — scripts/check_tmux_targets.py (test.sh, секция 22).
 
 PROMPT_RE='❯|bypass permissions'
 ACTIVE_RE='esc to interrupt'
@@ -79,19 +86,54 @@ DEV_CHANNELS_RE='I am using this for local development'
 _last_marker_line() { printf '%s' "${1:-}" | grep -a '❯' | tail -1; }
 
 # looks_like_dev_channels_prompt <pane-text> — вопрос на экране и ждёт ответа?
-# Считается и при выбранном «2. Exit»: на него не жмём, но эпизод учитываем.
+# Считается и при выбранном «2. Exit»: ответ сперва вернёт выбор на первый пункт.
 looks_like_dev_channels_prompt() {
   printf '%s' "${1:-}" | grep -qa "$DEV_CHANNELS_RE" || return 1
   _last_marker_line "${1:-}" | grep -qaE "1\. $DEV_CHANNELS_RE|2\. Exit"
 }
 
+# Пауза после стрелки перед повторным чтением экрана: меню перерисовывается не сразу.
+DEV_CHANNELS_SETTLE="${DEV_CHANNELS_SETTLE:-0.5}"
+
 # answer_dev_channels_prompt <session> <pane-text> — подтвердить первый пункт.
-# 0 — Enter отправлен; 1 — вопроса нет или выбран «2. Exit» (Enter закрыл бы claude).
+# 0 — Enter отправлен на первом пункте; 1 — вопроса нет или выбрать первый пункт
+# не удалось. На выбранном «2. Exit» Enter закрыл бы claude, а просто не жать —
+# значит оставить сессию стоять до прихода человека: выбор сам с Exit не уйдёт.
+# Поэтому сперва стрелка вверх, затем экран перечитывается, и Enter уходит,
+# только если выбранным стал первый пункт.
 answer_dev_channels_prompt() {
-  looks_like_dev_channels_prompt "${2:-}" || return 1
-  _last_marker_line "${2:-}" | grep -qa "1\. $DEV_CHANNELS_RE" || return 1
-  tmux send-keys -t "=${1:-}:" Enter 2>/dev/null || return 1
+  local session="${1:-}" pane="${2:-}"
+  looks_like_dev_channels_prompt "$pane" || return 1
+  if ! _last_marker_line "$pane" | grep -qa "1\. $DEV_CHANNELS_RE"; then
+    tmux send-keys -t "=$session:^.{top-left}" Up 2>/dev/null || return 1
+    sleep "$DEV_CHANNELS_SETTLE"
+    pane="$(tmux capture-pane -pt "=$session:^.{top-left}" -S -8 2>/dev/null || true)"
+    looks_like_dev_channels_prompt "$pane" || return 1
+    _last_marker_line "$pane" | grep -qa "1\. $DEV_CHANNELS_RE" || return 1
+  fi
+  tmux send-keys -t "=$session:^.{top-left}" Enter 2>/dev/null || return 1
   return 0
+}
+
+# Сколько ждать смены экрана после ответа (секунды) и шаг опроса панели.
+DEV_CHANNELS_GONE_TIMEOUT="${DEV_CHANNELS_GONE_TIMEOUT:-10}"
+DEV_CHANNELS_POLL_SEC="${DEV_CHANNELS_POLL_SEC:-0.25}"
+
+# dev_channels_prompt_wait_gone <session> [таймаут-сек] — дождаться, пока вопрос
+# уйдёт с экрана после ответа. 0 — ушёл; 1 — к концу таймаута всё ещё на экране.
+# Зачем ждать: claude перерисовывает экран не сразу, и до перерисовки вопрос
+# выглядит неотвеченным. Кто проверит его раньше, ответит второй раз — и этот
+# Enter уйдёт уже в следующий экран; а доктор записал бы «не уходит» на пустом
+# месте. Таймаут 0 — проверить один раз, без ожидания.
+dev_channels_prompt_wait_gone() {
+  local session="${1:-}" timeout="${2:-$DEV_CHANNELS_GONE_TIMEOUT}" deadline pane
+  deadline=$(( $(date +%s) + ${timeout%.*} ))
+  while :; do
+    pane="$(tmux capture-pane -pt "=$session:^.{top-left}" -S -8 2>/dev/null || true)"
+    looks_like_dev_channels_prompt "$pane" || return 0
+    [ "$(date +%s)" -lt "$deadline" ] || return 1
+    sleep "$DEV_CHANNELS_POLL_SEC"
+  done
 }
 
 # ── Мёртвая авторизация ──────────────────────────────────────────────────────
@@ -155,7 +197,7 @@ pane_input_raw() {
 PANE_INPUT_COL0="${PANE_INPUT_COL0:-2}"   # колонка курсора в пустом поле («❯ »)
 
 # pane_cursor_x <session> — колонка курсора (пусто, если tmux недоступен).
-pane_cursor_x() { tmux display -pt "=$1:" '#{cursor_x}' 2>/dev/null || true; }
+pane_cursor_x() { tmux display -pt "=$1:^.{top-left}" '#{cursor_x}' 2>/dev/null || true; }
 
 # buffer_is_empty <session> — в БУФЕРЕ ввода ничего нет (что бы ни рисовалось).
 # Неизвестный курсор трактуем как «не пусто»: тогда логика откатывается к

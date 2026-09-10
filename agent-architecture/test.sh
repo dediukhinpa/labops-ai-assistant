@@ -9,6 +9,21 @@ set -uo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
+# Страховка изоляции от роя. Агенты гоняют этот гейт из своих tmux-панелей, где
+# задана $TMUX, — а она перекрывает TMUX_TMPDIR, и любой тест с настоящим tmux
+# попал бы в общий сервер живых агентов. Каждый такой тест сам заводит свой
+# сервер (lib/tmux-test-isolation.sh); здесь снимаем $TMUX на случай, если
+# кто-то это забудет, и уводим сервер по умолчанию во временный каталог.
+unset TMUX TMUX_PANE
+GATE_TMP="$(mktemp -d)"
+export TMUX_TMPDIR="$GATE_TMP"
+gate_cleanup() {
+  # Сокет указан явно: гасим только свой сервер, что бы ни лежало в окружении.
+  command tmux -S "$GATE_TMP/tmux-$(id -u)/default" kill-server 2>/dev/null
+  rm -rf "$GATE_TMP"
+}
+trap gate_cleanup EXIT
+
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[1;33m'; N='\033[0m'
 pass=0; fail=0
 ok()  { printf "${G}✓${N} %s\n" "$*"; pass=$((pass+1)); }
@@ -179,6 +194,15 @@ if bash orchestration/lib/pane-recover.test.sh >/dev/null 2>&1; then
   ok "pane-recover.sh: перепечатывается полный текст из метки доставки"
 else
   bad "pane-recover.sh: юнит-тест провален (orchestration/lib/pane-recover.test.sh)"
+fi
+
+echo "── 9b3. Тесты с живым tmux не трогают сервер роя ──"
+# Агент гоняет гейт из своей панели, где $TMUX указывает на общий сервер роя.
+# Прогон под $TMUX на сервер-приманку: приманка должна остаться нетронутой.
+if bash orchestration/lib/tmux-test-isolation.test.sh >/dev/null 2>&1; then
+  ok "тесты с живым tmux работают в своём сервере, чужой не трогают"
+else
+  bad "тест с живым tmux трогает чужой сервер (orchestration/lib/tmux-test-isolation.test.sh)"
 fi
 
 echo "── 9c. Контракт канала: ответ через reply (CLAUDE.md.template) ──"
@@ -869,20 +893,24 @@ fi
 echo "── 22. Цели tmux только точные ──"
 # Без «=» tmux ищет сессию по НАЧАЛУ имени, если точной нет. 10.09.2026 watchdog
 # labops-app принял сессию labops-app-124546645 за свою и не поднял агента, а
-# stop-agent.sh снял бы чужую сессию. Сессия — «=имя», панель — «=имя:».
-# Тесты не считаем: они заводят свои сессии на своём сокете или под уникальным именем.
-tmux_cmds='has-session|kill-session|attach(-session)?|send-keys|capture-pane|display|list-panes'
-loose_re="tmux[[:space:]]+($tmux_cmds)[^|;]*[[:space:]]-p?t[[:space:]]+\"[^=]"
-loose_tmux="$(
-  { grep -rnE "$loose_re" . --include='*.sh' --exclude='*.test.sh' 2>/dev/null
-    grep -rnE '"-p?t", self\._session\b' . --include='*.py' --exclude='*.test.py' 2>/dev/null
-  } | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true
-)"
-if [ -z "$loose_tmux" ]; then
-  ok "tmux: все цели точные (=имя / =имя:)"
+# stop-agent.sh снял бы чужую сессию. А «=имя:» — ТЕКУЩЕЕ окно: откройся в
+# сессии агента второе окно, клавиши ушли бы в него. Сессия — «=имя», панель —
+# «=имя:^.{top-left}».
+# Прежний grep узнавал одну форму записи и молчал на остальных (без кавычек,
+# -t"$S", tmux -L, "$TMUX_BIN", перенос строки, -pJt, Python, TypeScript).
+# scripts/check_tmux_targets.py разбирает вызов целиком — bash, Python и
+# TypeScript, здесь и в ../tg-plugin. Тесты не проверяются: они нарочно пишут
+# неточные формы и работают в своём tmux-сервере (секция 9b3).
+if python3 scripts/check_tmux_targets.test.py >/dev/null 2>&1; then
+  ok "страж целей tmux ловит все неточные формы и пропускает точные — юнит-тест зелёный"
 else
-  bad "tmux: цель без «=» промахнётся в сессию с более длинным именем:"
-  printf '%s\n' "$loose_tmux" | sed -n '1,5s/^/      /p'
+  bad "страж целей tmux: юнит-тест провален (scripts/check_tmux_targets.test.py)"
+fi
+if tmux_report="$(python3 scripts/check_tmux_targets.py 2>&1)"; then
+  ok "tmux: все цели точные (=имя / =имя:^.{top-left})"
+else
+  bad "tmux: неточная цель промахнётся в чужую сессию или в чужое окно:"
+  printf '%s\n' "$tmux_report" | sed -n '1,16s/^/      /p'
 fi
 
 echo

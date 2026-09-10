@@ -92,7 +92,10 @@ Claude Code при первом запуске показывает **2 инте
 В systemd unit `ExecStartPost`:
 
 ```ini
-ExecStartPost=/bin/sh -c 'sleep 6 && /usr/bin/tmux send-keys -t channel-<agent> Enter && sleep 2 && /usr/bin/tmux send-keys -t channel-<agent> Enter'
+ExecStartPost=/bin/sh -c 'sleep 6 \
+  && /usr/bin/tmux send-keys -t "=channel-<agent>:^.{top-left}" Enter \
+  && sleep 2 \
+  && /usr/bin/tmux send-keys -t "=channel-<agent>:^.{top-left}" Enter'
 ```
 
 (два Enter с паузой — на оба промта)
@@ -441,7 +444,7 @@ Systemd видит «exited 0» (потому что `tmux new-session -d` са�
 Watchdog хелсчек: cron, который раз в минуту проверяет что tmux session живёт.
 
 ```bash
-*/1 * * * * tmux has-session -t channel-<agent> 2>/dev/null || \
+*/1 * * * * tmux has-session -t =channel-<agent> 2>/dev/null || \
   (echo "DEAD $(date)" >> /var/log/channel-watchdog.log; \
    systemctl restart channel-<agent>)
 ```
@@ -618,10 +621,10 @@ Issue: https://github.com/dediukhinpa/labops-ai-assistant/issues (создайт
 sudo -u <service-user> tmux capture-pane -t channel-<agent> -p -S -30 | tail -20
 
 # Нажми Enter если стрелка на нужном варианте
-sudo -u <service-user> tmux send-keys -t channel-<agent> Enter
+sudo -u <service-user> tmux send-keys -t '=channel-<agent>:^.{top-left}' Enter
 
 # Или подвигай стрелку перед Enter
-sudo -u <service-user> tmux send-keys -t channel-<agent> Down Down Enter
+sudo -u <service-user> tmux send-keys -t '=channel-<agent>:^.{top-left}' Down Down Enter
 ```
 
 Это спасает текущую сессию (контекст не теряется), но фикс через deny-list обязателен на следующий рестарт.

@@ -33,6 +33,12 @@ AGENT="<agent>"
 USER_HOME="/Users/<you>"
 ENV_FILE="${USER_HOME}/.claude-lab/${AGENT}/secrets/channel.env"
 TMUX_SESSION="channel-${AGENT}"
+# Цели tmux только точные. Без «=» tmux, не найдя сессию, берёт первую, чьё имя
+# НАЧИНАЕТСЯ так же (channel-<agent>-test): has-session соврёт «жива», kill убьёт
+# чужую. Панель — первое окно и его верхняя левая панель: «=имя:» означает
+# ТЕКУЩЕЕ окно, и Enter ушёл бы туда, куда оператор переключился.
+TMUX_SESSION_TARGET="=${TMUX_SESSION}"
+TMUX_PANE_TARGET="=${TMUX_SESSION}:^.{top-left}"
 
 # Путь к tmux зависит от вашей установки:
 #   Apple Silicon (M1/M2/M3/M4): /opt/homebrew/bin/tmux
@@ -68,9 +74,9 @@ fi
 # Если tmux-сессия с таким именем уже существует — это аномалия (предыдущий запуск
 # не сделал cleanup). Прибиваем её и стартуем заново. Без этого новый
 # new-session -d выдаст «duplicate session: channel-...» и скрипт упадёт в loop.
-if "${TMUX_BIN}" has-session -t "${TMUX_SESSION}" 2>/dev/null; then
+if "${TMUX_BIN}" has-session -t "${TMUX_SESSION_TARGET}" 2>/dev/null; then
   log "stale tmux session '${TMUX_SESSION}' found, killing before restart"
-  "${TMUX_BIN}" kill-session -t "${TMUX_SESSION}" 2>/dev/null || true
+  "${TMUX_BIN}" kill-session -t "${TMUX_SESSION_TARGET}" 2>/dev/null || true
 fi
 
 # EXPECTED_SHUTDOWN: ставится в 1 trap-ом при получении SIGTERM/SIGINT от launchd.
@@ -81,7 +87,7 @@ EXPECTED_SHUTDOWN=0
 cleanup() {
   EXPECTED_SHUTDOWN=1
   log "cleanup: killing tmux session '${TMUX_SESSION}' (operator-initiated)"
-  "${TMUX_BIN}" kill-session -t "${TMUX_SESSION}" 2>/dev/null || true
+  "${TMUX_BIN}" kill-session -t "${TMUX_SESSION_TARGET}" 2>/dev/null || true
   exit 0
 }
 trap cleanup TERM INT
@@ -99,9 +105,9 @@ log "starting tmux session '${TMUX_SESSION}'"
 # Enter-ы безвредны — попадут в input буфер живой Claude Code сессии.
 (
   sleep "${WELCOME_DELAY_1}"
-  "${TMUX_BIN}" send-keys -t "${TMUX_SESSION}" Enter 2>/dev/null || true
+  "${TMUX_BIN}" send-keys -t "${TMUX_PANE_TARGET}" Enter 2>/dev/null || true
   sleep "${WELCOME_DELAY_2}"
-  "${TMUX_BIN}" send-keys -t "${TMUX_SESSION}" Enter 2>/dev/null || true
+  "${TMUX_BIN}" send-keys -t "${TMUX_PANE_TARGET}" Enter 2>/dev/null || true
 ) &
 WELCOME_PID=$!
 
@@ -110,7 +116,7 @@ WELCOME_PID=$!
 # поэтому делаем простой polling-loop. Минимальная нагрузка, max latency 5 сек
 # на детект смерти сессии.
 log "supervising tmux session '${TMUX_SESSION}' (pid wrapper=$$)"
-while "${TMUX_BIN}" has-session -t "${TMUX_SESSION}" 2>/dev/null; do
+while "${TMUX_BIN}" has-session -t "${TMUX_SESSION_TARGET}" 2>/dev/null; do
   sleep 5
 done
 

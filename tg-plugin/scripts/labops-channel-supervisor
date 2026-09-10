@@ -19,6 +19,9 @@ CANARY_AGENT = "canary"
 CANARY_SESSION = "labops-canary"
 CANARY_CHANNEL = "labops-telegram-canary"
 LIVE_START_ENABLED = False
+# Префикс точной цели tmux: без него `-t labops-canary` при отсутствии этой
+# сессии попадает в первую, чьё имя начинается так же (labops-canary-channel).
+TMUX_EXACT_PREFIX = "="
 
 
 @dataclass(frozen=True)
@@ -145,8 +148,20 @@ def log_paths(profile: CanaryProfile) -> dict[str, str]:
     }
 
 
+def tmux_session_target(session: str) -> str:
+    """Точная цель сессии tmux — та же форма, что во всём монорепо.
+
+    Args:
+        session: Голое имя сессии.
+
+    Returns:
+        Цель вида ``=имя``: attach/has-session не подберут сессию по префиксу.
+    """
+    return f"{TMUX_EXACT_PREFIX}{session}"
+
+
 def tmux_session_exists(profile: CanaryProfile, runner: SubprocessRunner) -> tuple[bool, str | None]:
-    result = runner.run(["tmux", "has-session", "-t", profile.session])
+    result = runner.run(["tmux", "has-session", "-t", tmux_session_target(profile.session)])
     if result.returncode == 0:
         return True, None
     if result.returncode == 127:
@@ -243,7 +258,10 @@ def handle_attach(args: argparse.Namespace, env: dict[str, str], runner: Subproc
         return 2
     stdout.write("Detach with Ctrl-b d\n")
     stdout.flush()
-    result = runner.run(["tmux", "attach-session", "-t", profile.session], capture=False)
+    result = runner.run(
+        ["tmux", "attach-session", "-t", tmux_session_target(profile.session)],
+        capture=False,
+    )
     return result.returncode
 
 

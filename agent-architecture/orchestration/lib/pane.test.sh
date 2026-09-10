@@ -6,6 +6,15 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/pane.sh"
+# Живые секции ниже заводят настоящие сессии. Раньше они шли в ОБЩИЙ сервер, где
+# сидят агенты, — а при заданной $TMUX (у панелей агентов она есть всегда) и
+# вовсе в сервер той сессии, из которой запущен тест. Теперь сервер свой.
+TEST_TMP="$(mktemp -d)"
+# shellcheck source=lib/tmux-test-isolation.sh
+. "$HERE/tmux-test-isolation.sh"
+tmux_test_isolate "$TEST_TMP"
+cleanup() { tmux_test_kill_server; rm -rf "$TEST_TMP"; }
+trap cleanup EXIT
 pass=0; fail=0
 ok()  { echo "✓ $*"; pass=$((pass+1)); }
 bad() { echo "✗ $*"; fail=$((fail+1)); }
@@ -144,30 +153,57 @@ has_prompt "$DEV_CHANNELS"     && ok "вопрос о каналах рисуе�
 is_stuck_input "$DEV_CHANNELS" && ok "вопрос похож и на застрявший ввод (вторая причина)" \
                                || bad "вопрос уже не похож на застрявший ввод — проверьте ветку (B)"
 
-# Ответ: Enter — только на первом пункте. Мок tmux записывает нажатия.
-KEYS="$(mktemp)"
+# Ответ: Enter — только на первом пункте. Мок tmux записывает нажатия, а экран
+# отдаёт MOCK_PANE_NOW — или MOCK_PANE_AFTER_UP, если стрелка уже нажата.
+KEYS="$TEST_TMP/keys"; : > "$KEYS"
+MOCK_PANE_NOW=""; MOCK_PANE_AFTER_UP=""
+DEV_CHANNELS_SETTLE=0
 tmux() {
-  if [ "${1:-}" = send-keys ]; then
-    shift; [ "${1:-}" = -t ] && shift 2
-    printf '%s\n' "${1:-}" >> "$KEYS"
-  fi
+  case "${1:-}" in
+    send-keys)
+      shift; [ "${1:-}" = -t ] && shift 2
+      printf '%s\n' "${1:-}" >> "$KEYS" ;;
+    capture-pane)
+      if [ -n "$MOCK_PANE_AFTER_UP" ] && grep -qx Up "$KEYS"; then
+        printf '%s' "$MOCK_PANE_AFTER_UP"
+      else
+        printf '%s' "$MOCK_PANE_NOW"
+      fi ;;
+  esac
   return 0
 }
-if answer_dev_channels_prompt fake "$DEV_CHANNELS" && [ "$(cat "$KEYS")" = Enter ]; then
+pressed() { tr '\n' ' ' < "$KEYS" | sed 's/ $//'; }
+if answer_dev_channels_prompt fake "$DEV_CHANNELS" && [ "$(pressed)" = Enter ]; then
   ok "первый пункт подтверждён одним Enter"
 else
-  bad "первый пункт не подтверждён (нажато: $(tr '\n' ' ' < "$KEYS"))"
+  bad "первый пункт не подтверждён (нажато: $(pressed))"
 fi
-for pane in "$DEV_CHANNELS_EXIT" "$DEV_ANSWERED" "$IDLE"; do
+# Выбран «2. Exit». Enter на нём закрыл бы claude, а без стрелки выбор с Exit
+# не сдвинул бы никто: watchdog только считал бы попытки и в конце звал
+# оператора. Стрелка возвращает выбор; Enter — лишь когда экран это подтвердил.
+: > "$KEYS"; MOCK_PANE_NOW="$DEV_CHANNELS_EXIT"; MOCK_PANE_AFTER_UP="$DEV_CHANNELS"
+if answer_dev_channels_prompt fake "$DEV_CHANNELS_EXIT" && [ "$(pressed)" = "Up Enter" ]; then
+  ok "на «2. Exit» выбор возвращён стрелкой на первый пункт, затем Enter"
+else
+  bad "на «2. Exit» ответ неверен (нажато: $(pressed))"
+fi
+: > "$KEYS"; MOCK_PANE_AFTER_UP=""
+if ! answer_dev_channels_prompt fake "$DEV_CHANNELS_EXIT" && [ "$(pressed)" = Up ]; then
+  ok "стрелка не сдвинула выбор с «Exit» — Enter не нажат"
+else
+  bad "Enter нажат на «Exit» или стрелки не было (нажато: $(pressed))"
+fi
+MOCK_PANE_NOW=""
+for pane in "$DEV_ANSWERED" "$IDLE"; do
   : > "$KEYS"
   if answer_dev_channels_prompt fake "$pane" || [ -s "$KEYS" ]; then
-    bad "Enter нажат там, где нельзя: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
+    bad "клавиша нажата там, где нельзя: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
   else
-    ok "Enter не нажат: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
+    ok "ни одной клавиши: [$(printf '%s' "$pane" | grep -a '❯' | tail -1)]"
   fi
 done
-rm -f "$KEYS"
 unset -f tmux
+DEV_CHANNELS_SETTLE=0.5
 
 # ---- stuck-input detection (pure) ------------------------------------------
 STUCK='────────────────────
@@ -282,7 +318,7 @@ PANE_WAIT_TRIES="${PANE_WAIT_TRIES:-40}"   # 40 x 0.25с = до 10с
 wait_pane() {
   local s="$1" pred="$2" i
   for ((i = 0; i < PANE_WAIT_TRIES; i++)); do
-    t="$(tmux capture-pane -pt "$s" -S -8 2>/dev/null)"
+    t="$(tmux capture-pane -pt "=$s:^.{top-left}" -S -8 2>/dev/null)"
     if "$pred" "$t"; then return 0; fi
     sleep 0.25
   done
@@ -298,7 +334,7 @@ pane_not_empty() { [ -n "$(printf '%s' "$1" | tr -d '[:space:]')" ]; }
 # prove nothing. Skips cleanly where tmux is unavailable (CI containers).
 if command -v tmux >/dev/null 2>&1; then
   S="panetest-$$"
-  tmux kill-session -t "$S" 2>/dev/null || true
+  tmux kill-session -t "=$S" 2>/dev/null || true
   # A tiny fake TUI: prints a prompt, and on Escape redraws it. `less` stands in
   # for the overlay — it hides the prompt and exits on Escape via its keymap.
   if tmux new-session -d -s "$S" -x 80 -y 20 \
@@ -307,12 +343,12 @@ if command -v tmux >/dev/null 2>&1; then
     has_prompt "$t" && ok "tmux: prompt visible before overlay" || bad "tmux: no prompt at start"
 
     # Cover the prompt the way a slash-command overlay does.
-    tmux send-keys -t "$S" C-l 2>/dev/null
-    tmux run-shell -t "$S" "printf '%s' ''" 2>/dev/null || true
-    tmux send-keys -t "$S" "" 2>/dev/null
-    tmux clear-history -t "$S" 2>/dev/null || true
+    tmux send-keys -t "=$S:^.{top-left}" C-l 2>/dev/null
+    tmux run-shell -t "=$S:^.{top-left}" "printf '%s' ''" 2>/dev/null || true
+    tmux send-keys -t "=$S:^.{top-left}" "" 2>/dev/null
+    tmux clear-history -t "=$S:^.{top-left}" 2>/dev/null || true
     # Paint overlay text over the pane
-    tmux respawn-pane -k -t "$S" \
+    tmux respawn-pane -k -t "=$S:^.{top-left}" \
       "bash -c 'printf \"  Context Usage\\n  Auto-compact window: 400k tokens\\n  /context all to expand\\n\"; sleep 30'" 2>/dev/null
     # Ждём сам оверлей, а не «промпта нет»: сразу после respawn панель пуста, а
     # пустая панель тоже без промпта. Под нагрузкой хоста захват успевал раньше
@@ -327,12 +363,12 @@ if command -v tmux >/dev/null 2>&1; then
     fi
 
     # Restore a prompt-bearing pane — stands for Escape dismissing the overlay.
-    tmux respawn-pane -k -t "$S" \
+    tmux respawn-pane -k -t "=$S:^.{top-left}" \
       "bash -c 'printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'" 2>/dev/null
     wait_pane "$S" has_prompt || true
     has_prompt "$t" && ok "tmux: prompt returns once the overlay is dismissed" \
                     || bad "tmux: prompt did not return"
-    tmux kill-session -t "$S" 2>/dev/null || true
+    tmux kill-session -t "=$S" 2>/dev/null || true
   else
     echo "· tmux session could not start — skipping live pane checks"
   fi
@@ -346,7 +382,7 @@ fi
 # принимается за живой.
 if command -v tmux >/dev/null 2>&1; then
   S="panetest-dev-$$"
-  tmux kill-session -t "$S" 2>/dev/null || true
+  tmux kill-session -t "=$S" 2>/dev/null || true
   if tmux new-session -d -s "$S" -x 80 -y 20 \
        "bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; read -r _; printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'" 2>/dev/null; then
     wait_pane "$S" looks_like_dev_channels_prompt || true
@@ -359,7 +395,7 @@ if command -v tmux >/dev/null 2>&1; then
     else
       bad "tmux: вопрос о каналах не распознан на живой панели"
     fi
-    tmux kill-session -t "$S" 2>/dev/null || true
+    tmux kill-session -t "=$S" 2>/dev/null || true
   else
     echo "· tmux session could not start — skipping live dev-channels check"
   fi
@@ -384,7 +420,7 @@ if command -v tmux >/dev/null 2>&1; then
       ok "tmux: несуществующая сессия не подменяется соседом с более длинным именем"
     fi
     sleep 0.5
-    t="$(tmux capture-pane -pt "=$S-long:" -S -8 2>/dev/null)"
+    t="$(tmux capture-pane -pt "=$S-long:^.{top-left}" -S -8 2>/dev/null)"
     looks_like_dev_channels_prompt "$t" && ok "tmux: панель соседа не тронута" \
                                         || bad "tmux: панель соседа получила Enter"
     [ -z "$(pane_cursor_x "$S")" ] && ok "tmux: курсор соседа не читается под чужим именем" \
@@ -392,6 +428,138 @@ if command -v tmux >/dev/null 2>&1; then
     tmux kill-session -t "=$S-long" 2>/dev/null || true
   else
     echo "· tmux session could not start — skipping neighbour check"
+  fi
+fi
+
+# ---- real tmux: второе окно оператора не перехватывает клавиши агента -------
+# «=имя:» — это ТЕКУЩЕЕ окно сессии. Открой оператор в сессии агента второе окно
+# (оно становится текущим), и watchdog читал бы его bash и слал бы туда Enter.
+# Функции pane.sh обязаны работать с первым окном и его верхней левой панелью —
+# в том числе при base-index и pane-base-index 1, где номера начинаются не с 0.
+if command -v tmux >/dev/null 2>&1; then
+  S="panetest-win-$$"
+  OP_OUT="$TEST_TMP/operator-window.txt"; : > "$OP_OUT"
+  win_tui="bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; "
+  win_tui+="read -r _; printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'"
+  if tmux new-session -d -s "$S" -x 80 -y 20 "$win_tui" 2>/dev/null; then
+    # Нумерация с единицы: окно агента переезжает на 1, панели считаются с 1.
+    # set-option ждёт цель-панель — «=имя» без двоеточия он не находит.
+    tmux set-option -t "=$S:" base-index 1 2>/dev/null
+    tmux move-window -s "=$S:0" -t "=$S:1" 2>/dev/null
+    tmux set-option -w -t "=$S:1" pane-base-index 1 2>/dev/null
+    # Окно оператора: всё, что в него придёт, падает в файл.
+    tmux new-window -t "=$S:" "bash -c 'cat > \"$OP_OUT\"'" 2>/dev/null
+    cur="$(tmux display -p -t "=$S:" '#{window_index}' 2>/dev/null)"
+    first="$(tmux display -p -t "=$S:^.{top-left}" '#{window_index}.#{pane_index}' 2>/dev/null)"
+    if [ "$cur" = 2 ] && [ "$first" = 1.1 ]; then
+      ok "tmux: текущим стало окно оператора, панель агента — 1.1 (условие воспроизведено)"
+    else
+      bad "tmux: окружение не воспроизведено (текущее окно=$cur, панель агента=$first)"
+    fi
+    wait_pane "$S" looks_like_dev_channels_prompt || true
+    looks_like_dev_channels_prompt "$t" \
+      && ok "tmux: читается панель агента, а не текущее окно оператора" \
+      || bad "tmux: панель агента не прочитана при втором окне"
+    case "$(pane_cursor_x "$S")" in
+      ''|*[!0-9]*) bad "tmux: курсор панели агента не читается при втором окне" ;;
+      *)           ok "tmux: курсор читается у панели агента" ;;
+    esac
+    answer_dev_channels_prompt "$S" "$t" || bad "tmux: ответ на вопрос не отправлен"
+    win_passed() { has_prompt "$1" && ! looks_like_dev_channels_prompt "$1"; }
+    wait_pane "$S" win_passed && ok "tmux: Enter дошёл до панели агента" \
+                              || bad "tmux: Enter не дошёл до панели агента"
+    sleep 0.3
+    [ ! -s "$OP_OUT" ] && ok "tmux: окно оператора не получило ни клавиши" \
+                       || bad "tmux: клавиши ушли в окно оператора: $(od -c "$OP_OUT" | head -2)"
+    tmux kill-session -t "=$S" 2>/dev/null || true
+  else
+    echo "· tmux session could not start — skipping second-window check"
+  fi
+fi
+
+# ---- real tmux: на «2. Exit» стрелка возвращает выбор, claude не выходит ----
+# Имитация меню claude: стрелки двигают выбор, Enter на первом пункте ведёт к
+# промпту, Enter на «Exit» пишет флаг-файл и завершает «claude».
+cat > "$TEST_TMP/dev-menu.sh" <<'TUI'
+sel=2
+draw() {
+  printf '\033[2J\033[H Channels: server:labops-channel\n\n'
+  if [ "$sel" = 1 ]; then
+    printf ' ❯ 1. I am using this for local development\n   2. Exit\n'
+  else
+    printf '   1. I am using this for local development\n ❯ 2. Exit\n'
+  fi
+}
+draw
+while IFS= read -rsn1 k; do
+  if [ "$k" = $'\e' ]; then
+    read -rsn2 -t 1 k2 || k2=""
+    [ "$k2" = "[A" ] && sel=1
+    [ "$k2" = "[B" ] && sel=2
+    draw
+  elif [ -z "$k" ]; then
+    if [ "$sel" = 1 ]; then
+      printf '\033[2J\033[H\n❯ \n  ⏵⏵ bypass permissions on\n'; sleep 30; exit 0
+    fi
+    echo EXITED > "$1"; exit 0
+  fi
+done
+TUI
+if command -v tmux >/dev/null 2>&1; then
+  S="panetest-up-$$"
+  EXIT_FLAG="$TEST_TMP/dev-menu-exited"
+  if tmux new-session -d -s "$S" -x 80 -y 20 bash "$TEST_TMP/dev-menu.sh" "$EXIT_FLAG" 2>/dev/null
+  then
+    exit_selected() {
+      looks_like_dev_channels_prompt "$1" && _last_marker_line "$1" | grep -qa '2\. Exit'
+    }
+    wait_pane "$S" exit_selected && ok "tmux: живое меню стоит на «2. Exit»" \
+                                 || bad "tmux: меню не отрисовалось на «2. Exit»"
+    answer_dev_channels_prompt "$S" "$t" && ok "tmux: с «2. Exit» ответ дошёл (стрелка, Enter)" \
+                                         || bad "tmux: с «2. Exit» ответ не отправлен"
+    up_passed() { has_prompt "$1" && ! looks_like_dev_channels_prompt "$1"; }
+    wait_pane "$S" up_passed && ok "tmux: после ответа — промпт" \
+                             || bad "tmux: вопрос остался после ответа с «2. Exit»"
+    [ ! -e "$EXIT_FLAG" ] && ok "tmux: «Exit» не выбран — claude не закрыт" \
+                          || bad "tmux: Enter ушёл на «Exit» — claude закрылся бы"
+    tmux kill-session -t "=$S" 2>/dev/null || true
+  else
+    echo "· tmux session could not start — skipping live Up check"
+  fi
+fi
+
+# ---- real tmux: после ответа ждём, пока вопрос уйдёт (start-agent.sh) ------
+# Медленная перерисовка: вопрос держится на экране ещё 1.5с после Enter. Кто
+# проверит экран сразу, увидит «неотвеченный» вопрос и ответит второй раз.
+if command -v tmux >/dev/null 2>&1; then
+  S="panetest-slow-$$"
+  slow_tui="bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; "
+  slow_tui+="read -r _; sleep 1.5; printf \"\\n❯ \\n  ⏵⏵ bypass permissions on\\n\"; sleep 30'"
+  if tmux new-session -d -s "$S" -x 80 -y 20 "$slow_tui" 2>/dev/null; then
+    wait_pane "$S" looks_like_dev_channels_prompt || true
+    answer_dev_channels_prompt "$S" "$t" || bad "tmux: ответ медленному меню не отправлен"
+    now="$(tmux capture-pane -pt "=$S:^.{top-left}" -S -8 2>/dev/null)"
+    looks_like_dev_channels_prompt "$now" \
+      && ok "tmux: сразу после Enter вопрос ещё на экране (медленная перерисовка)" \
+      || bad "tmux: перерисовка не медленная — случай ничего не проверяет"
+    dev_channels_prompt_wait_gone "$S" 10 && ok "tmux: ожидание дождалось ухода вопроса" \
+                                         || bad "tmux: ожидание не дождалось ухода вопроса"
+    tmux kill-session -t "=$S" 2>/dev/null || true
+  fi
+  S="panetest-stuck-$$"
+  stuck_tui="bash -c 'printf \" ❯ 1. I am using this for local development\\n   2. Exit\\n\"; "
+  stuck_tui+="sleep 30'"
+  if tmux new-session -d -s "$S" -x 80 -y 20 "$stuck_tui" 2>/dev/null; then
+    wait_pane "$S" looks_like_dev_channels_prompt || true
+    started="$(date +%s)"
+    if dev_channels_prompt_wait_gone "$S" 1; then
+      bad "tmux: неуходящий вопрос принят за ушедший"
+    elif [ $(( $(date +%s) - started )) -le 5 ]; then
+      ok "tmux: ожидание ограничено таймаутом (вопрос не ушёл — код 1)"
+    else
+      bad "tmux: ожидание вышло за таймаут"
+    fi
+    tmux kill-session -t "=$S" 2>/dev/null || true
   fi
 fi
 
@@ -413,6 +581,26 @@ if grep -q 'report_down "вопрос о каналах разработки' "$
   ok "неуходящий вопрос о каналах эскалируется оператору"
 else
   bad "неуходящий вопрос о каналах никому не сообщается"
+fi
+# После лимита ответов — один рестарт на эпизод и только потом оператор. Раньше
+# рестарта не было вовсе: сессия стояла на вопросе до прихода человека.
+a0_from='/^  if looks_like_dev_channels_prompt "\$TAIL"; then/'
+a0_to='/^  DEV_CHANNELS_ANSWERS=0$/'
+a0_block="$(awk "$a0_from,$a0_to" "$WD")"
+a0_line() { printf '%s\n' "$a0_block" | grep -n "$1" | head -1 | cut -d: -f1; }
+a0_restart="$(a0_line 'restart_session "вопрос о каналах')"
+a0_report="$(a0_line 'report_down "вопрос о каналах')"
+if [ -n "$a0_restart" ] && [ -n "$a0_report" ] && [ "$a0_restart" -lt "$a0_report" ] \
+   && printf '%s' "$a0_block" | grep -q 'DEV_CHANNELS_RESTARTED=1' \
+   && grep -q 'DEV_CHANNELS_RESTARTED=0' "$WD"; then
+  ok "неуходящий вопрос о каналах: один рестарт на эпизод, затем оператор"
+else
+  bad "ветка A0 без рестарта на эпизод (restart=$a0_restart report=$a0_report)"
+fi
+if grep -q 'dev_channels_prompt_wait_gone "\$SESSION"' "$SA"; then
+  ok "start-agent.sh после ответа ждёт ухода вопроса — второй Enter не уйдёт в чужой экран"
+else
+  bad "start-agent.sh отвечает без ожидания перерисовки — второй Enter уйдёт в следующий экран"
 fi
 if grep -q 'lib/pane.sh' "$SA" && grep -q 'answer_dev_channels_prompt' "$SA"; then
   ok "start-agent.sh отвечает тем же детектором из lib/pane.sh"
@@ -483,8 +671,8 @@ fi
 # Регрессия 2026-09-01: watchdog отправлял агенту любой нарисованный в поле
 # текст, агент его выполнял, и рой уходил в цикл самоуказаний. Досылать можно
 # только подтверждённое меткой доставки.
-MARKER_DIR="$(mktemp -d)"
-trap 'rm -rf "$MARKER_DIR"' EXIT
+# Каталог внутри TEST_TMP: отдельный trap затёр бы уборку своего tmux-сервера.
+MARKER_DIR="$TEST_TMP/marker"; mkdir -p "$MARKER_DIR"
 TELEGRAM_STATE_DIR="$MARKER_DIR"
 MARKER="$MARKER_DIR/last-inbound"
 

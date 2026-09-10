@@ -533,7 +533,7 @@ else
       sleep 3
       LOGIN_WAITED=$((LOGIN_WAITED + 3))
     done
-    tmux send-keys -t "=$LOGIN_SESSION:" "/exit" Enter
+    tmux send-keys -t "=$LOGIN_SESSION:^.{top-left}" "/exit" Enter
     sleep 2
     tmux kill-session -t "=$LOGIN_SESSION" 2>/dev/null || true
   ) &
