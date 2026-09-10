@@ -314,8 +314,10 @@ if command -v tmux >/dev/null 2>&1; then
     # Paint overlay text over the pane
     tmux respawn-pane -k -t "$S" \
       "bash -c 'printf \"  Context Usage\\n  Auto-compact window: 400k tokens\\n  /context all to expand\\n\"; sleep 30'" 2>/dev/null
-    no_prompt() { ! has_prompt "$1"; }
-    wait_pane "$S" no_prompt || true
+    # Ждём сам оверлей, а не «промпта нет»: сразу после respawn панель пуста, а
+    # пустая панель тоже без промпта. Под нагрузкой хоста захват успевал раньше
+    # отрисовки, и проверка «оверлей распознан» падала на пустоте.
+    wait_pane "$S" looks_like_overlay || true
     if has_prompt "$t"; then
       bad "tmux: overlay still shows a prompt — fixture wrong"
     else
