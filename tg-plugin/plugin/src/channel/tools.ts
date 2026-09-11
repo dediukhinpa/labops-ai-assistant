@@ -35,6 +35,10 @@ import {
 import { splitMessage } from '../format/chunk.js'
 import { assertSendableFile, isPhotoExtension } from '../security/paths.js'
 
+/** Права на каталог и файлы скачанных вложений: только владелец. */
+export const ATTACHMENT_DIR_MODE = 0o700
+export const ATTACHMENT_FILE_MODE = 0o600
+
 // ─────────────────────────────────────────────────────────────────────
 // MCP request/response types we touch. We narrow rather than import deep
 // SDK types because the SDK exports them only as generic Zod-inferred shapes
@@ -195,8 +199,10 @@ export function createTelegramApi(bot: Bot, token: string): TelegramApi {
       const ext = rawExt.replace(/[^a-zA-Z0-9]/g, '') || 'bin'
       const uniqueId = (file.file_unique_id ?? '').replace(/[^a-zA-Z0-9_-]/g, '') || 'dl'
       const path = join(destDir, `${Date.now()}-${uniqueId}.${ext}`)
-      mkdirSync(destDir, { recursive: true })
-      writeFileSync(path, buf)
+      // Вложения — документы клиента: только владельцу, как секреты и
+      // память агента, а не по umask процесса.
+      mkdirSync(destDir, { recursive: true, mode: ATTACHMENT_DIR_MODE })
+      writeFileSync(path, buf, { mode: ATTACHMENT_FILE_MODE })
       return { path, size: buf.length }
     },
   }
