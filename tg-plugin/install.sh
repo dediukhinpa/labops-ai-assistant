@@ -69,11 +69,25 @@ if ! command -v unzip >/dev/null 2>&1; then
 fi
 
 if ! command -v bun >/dev/null 2>&1; then
-  warn "bun не найден — устанавливаю (curl -fsSL https://bun.sh/install | bash)"
-  curl -fsSL https://bun.sh/install | bash
-  export PATH="$HOME/.bun/bin:$PATH"
+  warn "bun не найден — устанавливаю"
+  # Скачиваем в файл и запускаем отдельной командой, а НЕ конвейером
+  # `curl -fsSL … | bash`. Под set -e + pipefail упавший curl ронял скрипт
+  # молча прямо здесь: die строкой ниже уже не выполнялся, а вызывающий
+  # agent-architecture/install.sh получал только код возврата и писал мягкое
+  # «канал может быть недоступен». Оператор в итоге видел лишь «bun не найден»
+  # у созданного агента и не мог узнать, что именно не получилось
+  # (12.09.2026, установка у клиента).
+  BUN_INSTALLER="$(mktemp)"
+  if curl -fsSL --connect-timeout 7 --max-time 180 https://bun.sh/install -o "$BUN_INSTALLER"; then
+    bash "$BUN_INSTALLER" || warn "установщик bun завершился с ошибкой"
+  else
+    warn "не удалось скачать https://bun.sh/install — проверьте сеть/DNS/прокси на этой машине"
+  fi
+  rm -f "$BUN_INSTALLER"
+  export PATH="${BUN_INSTALL:-$HOME/.bun}/bin:$PATH"
 fi
-command -v bun >/dev/null 2>&1 || die "Установка bun не удалась — установите вручную: curl -fsSL https://bun.sh/install | bash"
+command -v bun >/dev/null 2>&1 || die "Установка bun не удалась — канал без него не запустится. Поставьте вручную ПОД ПОЛЬЗОВАТЕЛЕМ АГЕНТА (сессия ищет bun в \$HOME/.bun/bin):
+      curl -fsSL https://bun.sh/install -o /tmp/bun-install.sh && bash /tmp/bun-install.sh"
 ok "bun $(bun --version)"
 
 if ! command -v tmux >/dev/null 2>&1; then
@@ -83,8 +97,16 @@ command -v tmux >/dev/null 2>&1 || die "Установка tmux не удала�
 ok "tmux $(tmux -V 2>/dev/null | awk '{print $2}')"
 
 if ! command -v claude >/dev/null 2>&1; then
-  warn "claude не найден — устанавливаю (curl -fsSL https://claude.ai/install.sh | bash)"
-  curl -fsSL https://claude.ai/install.sh | bash
+  warn "claude не найден — устанавливаю"
+  # Тот же приём и та же причина, что с bun выше: конвейер `curl … | bash` под
+  # set -e + pipefail роняет скрипт молча, и заготовленное die не печатается.
+  CLAUDE_INSTALLER="$(mktemp)"
+  if curl -fsSL --connect-timeout 7 --max-time 180 https://claude.ai/install.sh -o "$CLAUDE_INSTALLER"; then
+    bash "$CLAUDE_INSTALLER" || warn "установщик Claude Code завершился с ошибкой"
+  else
+    warn "не удалось скачать https://claude.ai/install.sh — фронт часто режется по региону, попробуйте прямой адрес: https://downloads.claude.ai/claude-code-releases/bootstrap.sh"
+  fi
+  rm -f "$CLAUDE_INSTALLER"
   export PATH="$HOME/.local/bin:$PATH"
 fi
 command -v claude >/dev/null 2>&1 || die "Установка Claude Code не удалась — установите вручную: https://docs.claude.com/en/docs/claude-code"
