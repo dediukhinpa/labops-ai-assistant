@@ -40,14 +40,20 @@ UNIT_TAIL="${UNIT_TAIL:-20}"
 # перезапустить нужный файл, чтобы узнать хотя бы название сломавшегося случая.
 unit() {   # <строка успеха> <строка провала> <команда...>
   local ok_msg="$1" bad_msg="$2"; shift 2
-  local out rc=0
-  out="$("$@" 2>&1)" || rc=$?
+  local log rc=0
+  log="$(mktemp "$GATE_TMP/unit.XXXXXX")"
+  # Вывод — в ФАЙЛ, а не в "$(...)": подстановка команд читает канал до EOF, то
+  # есть ждёт закрытия stdout ВСЕМИ потомками теста. Тест, оставивший после себя
+  # фоновый процесс с унаследованным stdout, подвешивал бы весь self-test до
+  # смерти этого процесса. Плюс </dev/null: тест не должен ждать ввода.
+  "$@" >"$log" 2>&1 </dev/null || rc=$?
   if [ "$rc" -eq 0 ]; then
     ok "$ok_msg"
   else
     bad "$bad_msg"
-    printf '%s\n' "$out" | tail -n "$UNIT_TAIL" | sed 's/^/      /'
+    tail -n "$UNIT_TAIL" "$log" | sed 's/^/      /'
   fi
+  rm -f "$log"
 }
 
 echo "── 1. Синтаксис bash-скриптов ──"
@@ -574,6 +580,16 @@ echo "── 15. Сессия подбирает самообновившийс�
 # 15a. Поведенческий тест библиотеки: реальные процессы, реальный /proc.
 unit "cli-version: дрейф версии и fail-open — юнит-тест зелёный" "cli-version: юнит-тест провален (orchestration/lib/cli-version.test.sh)" bash orchestration/lib/cli-version.test.sh
 
+# Фиктивные версии CLI — копия bash, а не утилита coreutils: там, где coreutils
+# собраны одним мультивызывным бинарём (uutils в Ubuntu 25.10+, coreutils-single
+# в Fedora/RHEL), программа выбирается по argv[0], и копия под именем «1.0»
+# отвечает «unknown program», а не спит.
+if grep -q 'cp "$BASH_BIN" "$TMP/versions' orchestration/lib/cli-version.test.sh; then
+  ok "версии CLI в тесте не зависят от сборки coreutils"
+else
+  bad "версии CLI копируются из coreutils — на Fedora/RHEL тест падает на argv[0]"
+fi
+
 # 15b. Регрессия 08.09.2026: перезапуск ради версии допустим ТОЛЬКО из ветки
 # чистого простоя. Внутри хода он стоил бы агенту потерянной работы.
 if awk '/clean idle prompt/,/^  fi$/' orchestration/watchdog.sh | grep -q 'cli_version_drifted'; then
@@ -691,6 +707,15 @@ unit "preflight: разбор кодов ответа — юнит-тест зе
 # 18b. Поведение самого install.sh: реальный запуск с закрытым хостом должен
 # останавливать установку на шаге 0, до пакетов и создания пользователя.
 unit "install.sh останавливается на закрытом хосте — юнит-тест зелёный" "preflight в install.sh: юнит-тест провален (install-preflight.test.sh)" bash install-preflight.test.sh
+
+# Тест гоняет НАСТОЯЩИЙ install.sh, поэтому обязан быть глух к флагам в шелле
+# оператора: с PREFLIGHT_DONE=1 в окружении он винил установщик в том, чего тот
+# не делал.
+if grep -q 'env -u PREFLIGHT_DONE' install-preflight.test.sh; then
+  ok "тест preflight не наследует флаги установщика из окружения оператора"
+else
+  bad "install-preflight.test.sh наследует PREFLIGHT_DONE — даст ложный провал"
+fi
 
 # 18c. Регрессия 08.09.2026: `curl -fsSL … | bash` под set -e + pipefail обрывал
 # установку молча — curl отдавал 22, конвейер падал, и die с объяснением уже не
