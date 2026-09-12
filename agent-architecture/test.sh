@@ -696,6 +696,18 @@ else
   bad "settings.json.template не подставляет PRIMARY_MODEL"
 fi
 
+# 16d. Haiku не отвечает через reply канала — агент молчит в Telegram, хотя
+# установка зелёная. Выбор haiku должен сопровождаться предупреждением.
+unit "выбор haiku: предупреждение и подтверждение — юнит-тест зелёный" \
+     "model-choice: юнит-тест провален (orchestration/lib/model-choice.test.sh)" \
+     bash orchestration/lib/model-choice.test.sh
+if grep -qE '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh \
+   && grep -A4 -E '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh | grep -q '^confirm_primary_model'; then
+  ok "new-agent.sh проверяет выбранную модель сразу после вопроса"
+else
+  bad "new-agent.sh не зовёт confirm_primary_model — haiku пройдёт молча"
+fi
+
 echo "── 17. Секреты не попадают в командную строку ──"
 
 # 17a. Поведенческий тест: реальный запуск session-exec.sh с подставным claude,
