@@ -75,6 +75,8 @@ ORCH_DIR="$REPO_DIR/orchestration"
 . "$ORCH_DIR/lib/pane.sh"
 # shellcheck source=../../orchestration/lib/dangerous-mode.sh
 . "$ORCH_DIR/lib/dangerous-mode.sh"
+# shellcheck source=../../orchestration/lib/model-choice.sh
+. "$ORCH_DIR/lib/model-choice.sh"
 # Нативный claude ставится в ~/.local/bin, но PATH туда правится только в
 # ~/.bashrc — при запуске не-login шеллом (sudo -u ... -H bash ...) это не
 # подхватывается. Подмешиваем явно, чтобы claude находился и здесь, и в
@@ -196,6 +198,9 @@ fi
 # и устарело молча. Полное имя тоже принимается: им закрепляют конкретную
 # версию, когда обновление модели нежелательно.
 ask PRIMARY_MODEL    "Модель — алиас последней (fable / opus / sonnet / haiku) либо полное имя для закрепления версии" "opus"
+# Haiku не отвечает через reply канала — агент молчит в Telegram при зелёной
+# установке. Спрашиваем подтверждение, см. lib/model-choice.sh.
+confirm_primary_model
 ask LANGUAGE         "Язык ответов" "Russian"
 ask OPERATOR_ADDRESS "Как обращаться к вам" "Boss"
 # Второй мозг всегда колоцирован на этом же VPS, без reverse proxy — прямые
