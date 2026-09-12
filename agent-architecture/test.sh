@@ -985,6 +985,46 @@ else
   printf '%s\n' "$tmux_report" | tail -n "$UNIT_TAIL" | sed 's/^/      /'
 fi
 
+echo "── 23. Установка работает и с sudo, и с sudo-rs (Ubuntu 26.04) ──"
+# 12.09.2026, чистая Ubuntu 26.04: sudo-rs отверг sudoers со звёздочками в
+# аргументах команд, автостарт не включился, и агент после зелёной установки
+# ни разу не поднялся; заодно sudo -E был проигнорирован, и флаги установщика не
+# дошли до прогона под агент-пользователем.
+unit "sudo-compat: правила без звёздочек, окружение переживает передачу — юнит-тест зелёный" \
+     "sudo-compat: юнит-тест провален (orchestration/lib/sudo-compat.test.sh)" \
+     bash orchestration/lib/sudo-compat.test.sh
+unit "labops-agent-unit: юнит из шаблона, опасные аргументы отвергаются — юнит-тест зелёный" \
+     "labops-agent-unit: юнит-тест провален (orchestration/labops-agent-unit.test.sh)" \
+     bash orchestration/labops-agent-unit.test.sh
+
+# 23a. sudo -E не должен вернуться ни в один скрипт: sudo-rs его молча игнорирует.
+if grep -rnE 'sudo +(-[a-zA-Z]*E|--preserve-env( |$))' --include='*.sh' --exclude=test.sh \
+     --exclude='*.test.sh' . ../install.sh 2>/dev/null | grep -v '^\S*:[0-9]*: *#' | grep -q .; then
+  bad "sudo -E в скриптах установки — sudo-rs (Ubuntu 26.04) его игнорирует"
+else
+  ok "окружение под агент-пользователя передаётся без sudo -E"
+fi
+
+# 23b. install.sh выдаёт права через sudoers_agent_rules, а не своим текстом
+# со звёздочками; хелпер и шаблон ставятся root-копиями.
+if grep -q 'sudoers_agent_rules "$AGENT_OS_USER"' install.sh \
+   && ! grep -qE 'NOPASSWD:.*\*' install.sh \
+   && grep -q 'install -m 755 "$UNIT_HELPER_SRC" "$LABOPS_UNIT_HELPER"' install.sh \
+   && grep -q 'install -m 644 "$UNIT_TMPL_SRC" "$LABOPS_UNIT_TEMPLATE_ROOT"' install.sh; then
+  ok "install.sh: sudoers на один хелпер, хелпер и шаблон — root-копии"
+else
+  bad "install.sh: sudoers не через sudoers_agent_rules или хелпер не ставится root-копией"
+fi
+
+# 23c. new-agent.sh сначала зовёт хелпер, а при отказе — прежние три команды:
+# хосты 22.04/24.04 со sudoers от старого install.sh должны включать автостарт как раньше.
+if grep -q 'sudo -n "$LABOPS_UNIT_HELPER" "$AGENT_ID" "$ORCH_DIR" "$LAB_DIR"' skills/create-agent/new-agent.sh \
+   && grep -q 'sudo -n cp "$UNIT" "/etc/systemd/system/claude-agent-$AGENT_ID.service"' skills/create-agent/new-agent.sh; then
+  ok "new-agent.sh: автостарт через хелпер с запасным путём для старых sudoers"
+else
+  bad "new-agent.sh: нет вызова хелпера или пропал запасной путь для хостов со старым sudoers"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
