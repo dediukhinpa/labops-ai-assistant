@@ -69,6 +69,10 @@ ORCH_DIR="$REPO_DIR/orchestration"
 # canonical cwd ломает MCP у второго агента, см. lib/plugin.sh)
 # shellcheck source=../../orchestration/lib/plugin.sh
 . "$ORCH_DIR/lib/plugin.sh"
+# Распознавание экранов сессии: smoke ниже отличает «канал ещё поднимается» от
+# «сессия стоит на гейте и не поднимется никогда».
+# shellcheck source=../../orchestration/lib/pane.sh
+. "$ORCH_DIR/lib/pane.sh"
 # Нативный claude ставится в ~/.local/bin, но PATH туда правится только в
 # ~/.bashrc — при запуске не-login шеллом (sudo -u ... -H bash ...) это не
 # подхватывается. Подмешиваем явно, чтобы claude находился и здесь, и в
@@ -604,7 +608,18 @@ if [ -n "${TELEGRAM_WEBHOOK_PORT:-}" ]; then
   if [ "$HEALTH_OK" = "1" ]; then
     ok "плагин слушает /hooks/agent на :${TELEGRAM_WEBHOOK_PORT} (agent-to-agent доставка готова)"
   else
-    warn "плагин не ответил на :${TELEGRAM_WEBHOOK_PORT}/health за ~20с — agent-to-agent webhook пока недоступен. Часто это медленный старт: проверьте позже (curl :${TELEGRAM_WEBHOOK_PORT}/health) или логи tmux-сессии labops-${AGENT_ID}"; FAIL=1
+    # Прежде чем списывать молчание на медленный старт, смотрим экран сессии.
+    # Пока на нём гейт «Bypass Permissions mode», claude не доходит до промпта:
+    # канал не поднимется НИКОГДА, ждать бессмысленно — нужен оператор. Клиент
+    # 12.09.2026 получил здесь «часто это медленный старт» и час искал причину.
+    PANE_NOW="$(tmux capture-pane -pt "=labops-${AGENT_ID}:^.{top-left}" -S -12 2>/dev/null || true)"
+    if looks_like_bypass_permissions_prompt "$PANE_NOW"; then
+      warn "канал не поднимется, пока сессия стоит на подтверждении режима без проверок"
+      DEGRADED+=("$(bypass_permissions_hint "labops-${AGENT_ID}")")
+    else
+      warn "плагин не ответил на :${TELEGRAM_WEBHOOK_PORT}/health за ~20с — agent-to-agent webhook пока недоступен. Часто это медленный старт: проверьте позже (curl :${TELEGRAM_WEBHOOK_PORT}/health) или логи tmux-сессии labops-${AGENT_ID}"
+    fi
+    FAIL=1
   fi
 fi
 # 7f. доска отвечает И выданный scope на ней ДЕЙСТВУЕТ.
@@ -638,6 +653,28 @@ if [ "${AUTOSTART:-1}" = "1" ]; then
   else
     warn "поллер доски не поднялся за ~20с — агент не увидит задачи с доски (логи: $LAB_DIR/$AGENT_ID/.claude/logs/task-poller.log)"; FAIL=1
   fi
+fi
+
+# Гейт «Bypass Permissions mode» ждёт ЧЕЛОВЕКА: согласие на режим без проверок —
+# решение оператора за его же клавиатурой, автоматика его не подставляет. Пока
+# вопрос на экране, сессия не доходит до промпта: канал мёртв, агент нем, а
+# watchdog видит «не отвечает». Поэтому не заканчиваем установку молча —
+# показываем, что нажать, и предлагаем подключиться прямо отсюда. Подтверждается
+# один раз на машину: дальше CLI хранит ответ в пользовательских настройках.
+PANE_FINAL="$(tmux capture-pane -pt "=labops-${AGENT_ID}:^.{top-left}" -S -12 2>/dev/null || true)"
+if looks_like_bypass_permissions_prompt "$PANE_FINAL"; then
+  echo
+  printf "${Y}⚠ Сессия агента ждёт вашего подтверждения (Bypass Permissions mode).${N}\n"
+  echo "  Claude Code просит согласие на режим без проверок — тот самый, в котором"
+  echo "  агент и работает. Подтвердить может только человек, один раз на эту машину."
+  echo "  В сессии: стрелка вниз на «Yes, I accept» → Enter → затем Ctrl-b и d (отключиться)."
+  ATTACH_NOW=""
+  ask ATTACH_NOW "Подключиться к сессии агента сейчас? (y/n)" "y"
+  case "$ATTACH_NOW" in
+    [Nn]*) DEGRADED+=("$(bypass_permissions_hint "labops-${AGENT_ID}")") ;;
+    *)     tmux attach -t "=labops-${AGENT_ID}" \
+             || DEGRADED+=("$(bypass_permissions_hint "labops-${AGENT_ID}")") ;;
+  esac
 fi
 
 echo
