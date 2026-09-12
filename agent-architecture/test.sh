@@ -464,11 +464,16 @@ fi
 unit "согласие на режим без проверок: запись и защита чужих настроек — юнит-тест зелёный" \
      "dangerous-mode: юнит-тест провален (orchestration/lib/dangerous-mode.test.sh)" \
      bash orchestration/lib/dangerous-mode.test.sh
-if grep -q 'ask BYPASS_CONSENT' skills/create-agent/new-agent.sh \
-   && grep -q 'dangerous_mode_record_consent' skills/create-agent/new-agent.sh; then
-  ok "режим без проверок включается только после вопроса оператору"
+# Согласие записывает сама установка, без отдельного вопроса — решение владельца
+# системы (12.09.2026): агент запускается только в этом режиме, и отказ оставлял
+# бы его немым. Требование к коду осталось одно, но жёсткое — НЕ молчать: в
+# выводе установки должно быть видно, что ключ выставлен, и сказано, как снять.
+if grep -q 'dangerous_mode_record_consent' skills/create-agent/new-agent.sh \
+   && grep -q 'режим без проверок подтверждён для агентов этой машины' skills/create-agent/new-agent.sh \
+   && grep -q 'Отменить — уберите ключ' skills/create-agent/new-agent.sh; then
+  ok "режим без проверок включается установкой, и оператору сказано об этом и о том, как снять"
 else
-  bad "согласие на режим без проверок проставляется без явного ответа оператора"
+  bad "согласие ставится молча — оператор не узнает ни о ключе, ни о способе его снять"
 fi
 
 # 13f. Гейт «Bypass Permissions mode» (CLI 2.1.x) должен быть распознан ВЕЗДЕ,
