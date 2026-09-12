@@ -32,11 +32,19 @@ EOF
 # install.sh поедет дальше вопреки закрытому хосту: тогда он не должен ни
 # клонировать репозитории, ни заводить пользователя, ни ждать ввода. HOME
 # подменён, так что любые следы остаются во временном каталоге.
+# env -u: тест обязан мерить КОД установщика, а не шелл оператора. Флаги
+# install.sh наследуются из окружения, и PREFLIGHT_DONE=1 (его экспортируют,
+# когда обходят закрытый по региону claude.ai) отключал шаг 0 ВНУТРИ теста —
+# тот честно докладывал, что установка дошла до пакетов вопреки 403, хотя код
+# был цел. Поймано 12.09.2026 у клиента. Поэтому гасим весь набор флагов, а
+# нужные для теста задаём тут же, явно.
 run_install() {   # <файл-вывода> → код возврата в RC
   RC=0
-  PATH="$TMP/bin:$PATH" HOME="$TMP/home" \
-  SKIP_SECOND_BRAIN=1 SKIP_TG_PLUGIN=1 SKIP_USER_SETUP=1 \
-    bash "$REPO/install.sh" >"$1" 2>&1 </dev/null || RC=$?
+  env -u PREFLIGHT_DONE -u SKIP_SELFTEST -u GITHUB_TOKEN -u TG_PLUGIN_DIR \
+      -u INSTALL_TG_LOCAL -u SECOND_BRAIN_DIR -u CLAUDE_LAB -u REUSE_EXISTING \
+      PATH="$TMP/bin:$PATH" HOME="$TMP/home" \
+      SKIP_SECOND_BRAIN=1 SKIP_TG_PLUGIN=1 SKIP_USER_SETUP=1 \
+      bash "$REPO/install.sh" >"$1" 2>&1 </dev/null || RC=$?
 }
 
 mkdir -p "$TMP/home"
