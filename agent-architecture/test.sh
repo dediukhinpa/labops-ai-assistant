@@ -458,6 +458,32 @@ if [ -f "$OOB_TS" ]; then
   fi
 fi
 
+# 13e-bis. Согласие на режим без проверок: пишется только по явному ответу
+# оператора. Молчаливое включение недопустимо — режим снимает подтверждения со
+# ВСЕХ команд агента, и такое решение не должно быть побочным эффектом установки.
+unit "согласие на режим без проверок: запись и защита чужих настроек — юнит-тест зелёный" \
+     "dangerous-mode: юнит-тест провален (orchestration/lib/dangerous-mode.test.sh)" \
+     bash orchestration/lib/dangerous-mode.test.sh
+if grep -q 'ask BYPASS_CONSENT' skills/create-agent/new-agent.sh \
+   && grep -q 'dangerous_mode_record_consent' skills/create-agent/new-agent.sh; then
+  ok "режим без проверок включается только после вопроса оператору"
+else
+  bad "согласие на режим без проверок проставляется без явного ответа оператора"
+fi
+
+# 13f. Гейт «Bypass Permissions mode» (CLI 2.1.x) должен быть распознан ВЕЗДЕ,
+# где решается судьба молчащей сессии. Иначе повторится 12.09.2026 у клиента:
+# watchdog крутил рестарты час, smoke писал «часто это медленный старт», а
+# доктор — «агент не отвечает»; настоящая причина (ждём согласия человека) не
+# была названа ни разу.
+for _f in orchestration/watchdog.sh orchestration/doctor.sh skills/create-agent/new-agent.sh; do
+  if grep -q 'looks_like_bypass_permissions_prompt' "$_f"; then
+    ok "гейт bypass распознаётся: $(basename "$_f")"
+  else
+    bad "$_f не знает про гейт bypass — молчащий агент снова останется без объяснения"
+  fi
+done
+
 echo "── 14. Жизненный цикл юнита и установка агента ──"
 # Все проверки ниже -- регрессии, найденные живым прогоном create-agent 03.09.2026.
 
@@ -726,6 +752,29 @@ if grep -vE '^[[:space:]]*#' install.sh | grep -qE 'curl [^|]*\| *bash'; then
   bad "установка Claude Code снова идёт конвейером — ошибка проглотится молча"
 else
   ok "claude ставится без конвейера curl|bash — код ошибки не теряется"
+fi
+
+# 18c-bis. bun ставит САМ архитектурный установщик. Раньше его ставил только
+# tg-plugin/install.sh, а тот вызывается лишь при INSTALL_TG_LOCAL=1: если вызов
+# не состоялся или упал, установка писала warn и шла дальше — агент получался
+# «зелёным», но немым, потому что канал без bun не стартует (12.09.2026, у
+# клиента bun не оказалось вовсе). Ставить надо ПОД пользователем агента:
+# сессия ищет bun в "$HOME/.bun/bin" (orchestration/start-agent.sh), и bun,
+# поставленный root, ей не виден.
+if grep -q 'fetch_and_run "https://bun.sh/install"' install.sh; then
+  ok "install.sh ставит bun сам — канал не зависит от того, дошло ли до tg-plugin"
+else
+  bad "bun ставится только в tg-plugin/install.sh — при сбое его вызова агент останется немым"
+fi
+# Функция скачивания нужна обоим установкам, поэтому объявлена на верхнем
+# уровне: внутри ветки «claude не найден» её не существовало на машине, где
+# claude уже стоял, и установка bun падала бы на command not found.
+fr_def="$(grep -n '^fetch_and_run() {' install.sh | head -1 | cut -d: -f1)"
+fr_use="$(grep -n 'fetch_and_run "' install.sh | head -1 | cut -d: -f1)"
+if [ -n "$fr_def" ] && [ -n "$fr_use" ] && [ "$fr_def" -lt "$fr_use" ]; then
+  ok "загрузчик установочных скриптов объявлен до вызовов (строка $fr_def < $fr_use)"
+else
+  bad "fetch_and_run объявлен после вызова или вложен в ветку (def=$fr_def use=$fr_use)"
 fi
 
 # 18d. claude.ai — только редирект; дистрибутив лежит на downloads.claude.ai за

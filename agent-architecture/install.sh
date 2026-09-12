@@ -320,22 +320,30 @@ say "3. Claude Code и окружение"
 # дёргает curl | bash (сам установщик идемпотентен и просто ничего не ставит
 # повторно, но это лишняя сетевая операция и шумное предупреждение).
 export PATH="$HOME/.local/bin:$PATH"
+
+# Скачиваем установочный скрипт в файл и запускаем отдельной командой, а НЕ
+# конвейером `curl -fsSL … | bash`. Конвейер под `set -e` + `pipefail` обрывал
+# установку молча: curl -f отдаёт 22, конвейер падает, и die двумя строками
+# ниже уже не выполняется — оператор видел только `curl: (22)` и внезапный
+# конец. Функция объявлена на верхнем уровне: ею ставятся и claude, и bun, а
+# раньше она жила внутри ветки «claude не найден» — на машине с уже стоящим
+# claude её просто не существовало.
+fetch_and_run() {   # <url> → 0 успех, 1 не скачалось, 2 скрипт упал
+  local url="$1" tmp rc=0
+  tmp="$(mktemp)"
+  if ! curl -fsSL --connect-timeout 7 --max-time 180 "$url" -o "$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  bash "$tmp" || rc=2
+  rm -f "$tmp"
+  return "$rc"
+}
+
 if ! command -v claude >/dev/null 2>&1; then
   # Скачиваем в файл и запускаем отдельной командой, а НЕ конвейером
   # `curl -fsSL … | bash`. Конвейер под `set -e` + `pipefail` обрывал установку
   # молча: curl -f отдаёт 22, конвейер падает, и die двумя строками ниже уже не
   # выполняется — оператор видел только `curl: (22)` и внезапный конец.
-  fetch_and_run() {   # <url> → 0 успех, 1 не скачалось, 2 скрипт упал
-    local url="$1" tmp rc=0
-    tmp="$(mktemp)"
-    if ! curl -fsSL --connect-timeout 7 --max-time 180 "$url" -o "$tmp"; then
-      rm -f "$tmp"; return 1
-    fi
-    bash "$tmp" || rc=2
-    rm -f "$tmp"
-    return "$rc"
-  }
-
   warn "claude не найден — устанавливаю (без Node.js)"
   if ! fetch_and_run "https://claude.ai/install.sh"; then
     # claude.ai — это только редирект; версия, манифест и сам бинарь (с проверкой
@@ -357,6 +365,29 @@ else
     регион или репутация адреса датацентра) — нужен другой хост или маршрут.
     Иначе поставьте вручную:
       curl -fsSL https://downloads.claude.ai/claude-code-releases/bootstrap.sh -o /tmp/bs.sh && bash /tmp/bs.sh"
+fi
+
+# bun гоняет Telegram-канал агента (bun src/server.ts). Ставим ЗДЕСЬ, а не
+# полагаемся на tg-plugin/install.sh: тот вызывается лишь при INSTALL_TG_LOCAL=1
+# и, если его вызов не состоялся или упал, установка просто пишет warn и идёт
+# дальше — агент получается «зелёным», но немым (12.09.2026 у клиента: канал не
+# поднялся, а bun не оказалось вовсе). Ставим уже ПОД пользователем агента:
+# сессия ищет bun в "$HOME/.bun/bin" (orchestration/start-agent.sh), и bun,
+# поставленный root, ей не виден. Установщик bun требует unzip — он уже стоит
+# системным пакетом (шаг 1).
+if ! command -v bun >/dev/null 2>&1 && [ ! -x "$HOME/.bun/bin/bun" ]; then
+  warn "bun не найден — устанавливаю (Telegram-канал без него не запустится)"
+  # Тот же приём, что и с claude: скачиваем в файл и запускаем отдельной
+  # командой. Конвейер `curl … | bash` под set -e + pipefail терял бы код
+  # ошибки curl и обрывал установку молча.
+  fetch_and_run "https://bun.sh/install" || true
+fi
+export PATH="$HOME/.bun/bin:$PATH"
+if command -v bun >/dev/null 2>&1; then
+  ok "bun $(bun --version 2>/dev/null)"
+else
+  warn "bun поставить не удалось — Telegram-канал будет недоступен, поставьте вручную под пользователем агента:
+      curl -fsSL https://bun.sh/install -o /tmp/bun-install.sh && bash /tmp/bun-install.sh"
 fi
 
 if command -v systemctl >/dev/null 2>&1; then ok "systemd найден"; else

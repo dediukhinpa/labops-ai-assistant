@@ -720,6 +720,76 @@ else
   bad "перепечатка не защищена проверкой (gate=$gate_line retype=$retype_line)"
 fi
 
+# ---- гейт «Bypass Permissions mode» -----------------------------------------
+# Экран, на котором 12.09.2026 встал агент у клиента: CLI 2.1.269 спрашивает
+# согласие на режим без проверок при КАЖДОМ старте, пока оно не подтверждено на
+# машине. Сессия стоит → канал не поднимается → watchdog видит «не отвечает» и
+# перезапускает → новая сессия встаёт на том же экране. Больше часа по кругу.
+BYPASS='WARNING: Claude Code running in Bypass Permissions mode
+
+ In Bypass Permissions mode, Claude Code will not ask for your approval before
+ running potentially dangerous commands.
+
+ ❯ 1. No, exit
+   2. Yes, I accept'
+
+# Тот же экран после стрелки вниз — согласие выбрано, но ещё не подтверждено.
+BYPASS_PICKED='WARNING: Claude Code running in Bypass Permissions mode
+
+   1. No, exit
+ ❯ 2. Yes, I accept'
+
+# Отвеченный гейт остаётся в захваченной истории над промптом: звать оператора
+# из-за него — то же, что будить по ложной тревоге.
+BYPASS_ANSWERED='WARNING: Claude Code running in Bypass Permissions mode
+   2. Yes, I accept
+
+ ❯ '
+
+looks_like_bypass_permissions_prompt "$BYPASS" \
+  && ok "гейт bypass распознан (выбран «No, exit»)" || bad "гейт bypass пропущен"
+looks_like_bypass_permissions_prompt "$BYPASS_PICKED" \
+  && ok "гейт bypass распознан (выбран «Yes, I accept»)" \
+  || bad "гейт bypass с выбранным согласием пропущен"
+looks_like_bypass_permissions_prompt "$BYPASS_ANSWERED" \
+  && bad "отвеченный гейт принят за ждущий — оператора позовут зря" \
+  || ok "отвеченный гейт в истории не считается"
+looks_like_bypass_permissions_prompt "$IDLE" \
+  && bad "простой принят за гейт bypass" || ok "простой — не гейт bypass"
+looks_like_bypass_permissions_prompt "$ONBOARDING" \
+  && bad "мастер первого запуска принят за гейт bypass" || ok "мастер — не гейт bypass"
+# Почему нужна отдельная ветка ДО общей классификации: у выбранного пункта стоит
+# «❯», поэтому гейт выглядит и здоровым простоем, и застрявшим вводом — ровно
+# как мастер первого запуска.
+has_prompt "$BYPASS" && ok "гейт рисует «❯» (почему он и прятался)" \
+                     || bad "у гейта не нашлось «❯» — проверка потеряла смысл"
+
+# Подсказка оператору обязана называть сессию и действие: без неё сообщение
+# «агент недоступен» не говорит, что делать руками.
+hint="$(bypass_permissions_hint "labops-developer")"
+case "$hint" in
+  *"labops-developer"*"Yes, I accept"*) ok "подсказка называет сессию и нужный пункт" ;;
+  *) bad "подсказка не объясняет оператору, что нажать: $hint" ;;
+esac
+
+# Порядок веток в watchdog: гейт разбирается ДО вопроса о каналах и до общей
+# классификации панели, иначе сессия попадёт в рестарт-петлю.
+W="$HERE/../watchdog.sh"
+bypass_line="$(grep -n 'looks_like_bypass_permissions_prompt "\$TAIL"' "$W" | head -1 | cut -d: -f1)"
+devch_line="$(grep -n 'looks_like_dev_channels_prompt "\$TAIL"' "$W" | head -1 | cut -d: -f1)"
+if [ -n "$bypass_line" ] && [ -n "$devch_line" ] && [ "$bypass_line" -lt "$devch_line" ]; then
+  ok "ветка гейта bypass стоит выше остальных (строка $bypass_line < $devch_line)"
+else
+  bad "ветка гейта bypass не первая (bypass=$bypass_line devch=$devch_line) — вернётся рестарт-петля"
+fi
+
+# Рестартовать на этом экране бессмысленно: подтвердить может только человек.
+if grep -n -A 6 'looks_like_bypass_permissions_prompt "\$TAIL"' "$W" | grep -q 'restart_session'; then
+  bad "watchdog перезапускает сессию на гейте bypass — это и есть петля"
+else
+  ok "watchdog не перезапускает сессию на гейте bypass"
+fi
+
 echo
 echo "passed=$pass failed=$fail"
 [ $fail -eq 0 ]
