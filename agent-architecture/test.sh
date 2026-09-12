@@ -458,6 +458,19 @@ if [ -f "$OOB_TS" ]; then
   fi
 fi
 
+# 13f. Гейт «Bypass Permissions mode» (CLI 2.1.x) должен быть распознан ВЕЗДЕ,
+# где решается судьба молчащей сессии. Иначе повторится 12.09.2026 у клиента:
+# watchdog крутил рестарты час, smoke писал «часто это медленный старт», а
+# доктор — «агент не отвечает»; настоящая причина (ждём согласия человека) не
+# была названа ни разу.
+for _f in orchestration/watchdog.sh orchestration/doctor.sh skills/create-agent/new-agent.sh; do
+  if grep -q 'looks_like_bypass_permissions_prompt' "$_f"; then
+    ok "гейт bypass распознаётся: $(basename "$_f")"
+  else
+    bad "$_f не знает про гейт bypass — молчащий агент снова останется без объяснения"
+  fi
+done
+
 echo "── 14. Жизненный цикл юнита и установка агента ──"
 # Все проверки ниже -- регрессии, найденные живым прогоном create-agent 03.09.2026.
 

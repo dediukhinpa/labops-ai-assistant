@@ -447,6 +447,9 @@ The root `install.sh` (at the monorepo root) installs **both bundled components*
 > [!IMPORTANT]
 > **Model & auth.** Sign in once interactively (`/login` in the Claude Code TUI, Max/Pro subscription; the persistent session reads only `~/.claude/.credentials.json` — `claude setup-token` is forbidden in this architecture). The agent's model is set in `settings.json` (the `model` field); `opus` (Opus 4.8) is recommended for the Developer. Without sign-in the agent starts but can't reach a model.
 
+> [!IMPORTANT]
+> **Bypass-permissions consent — once per machine.** Claude Code (CLI 2.1+) shows a "Bypass Permissions mode" screen (`No, exit` / `Yes, I accept`) on every session start with `--dangerously-skip-permissions` until the consent is recorded on that machine. The flag itself does not clear it — this is a separate gate, like folder trust. While it is up the session never reaches the prompt: MCP servers don't start, the channel never binds its port, and the agent is silent on Telegram. A **human** accepts it: `tmux attach -t =labops-<agent>` → arrow down to "Yes, I accept" → `Enter` → `Ctrl-b`, then `d`. `new-agent.sh` offers to do this right after the agent is created, and `watchdog.sh` / `/doctor` recognise the screen and name the cause instead of restarting in a loop.
+
 ```bash
 # From the labops-ai-assistant monorepo root.
 # One command: deps + self-test + sign-in (if needed) + Developer agent.
