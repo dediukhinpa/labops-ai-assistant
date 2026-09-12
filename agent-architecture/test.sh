@@ -29,6 +29,27 @@ pass=0; fail=0
 ok()  { printf "${G}✓${N} %s\n" "$*"; pass=$((pass+1)); }
 bad() { printf "${R}✗${N} %s\n" "$*"; fail=$((fail+1)); }
 
+# Сколько последних строк вывода упавшего теста показывать: и bash-тесты
+# (fail "…" перед выходом), и unittest печатают причину в конце.
+UNIT_TAIL="${UNIT_TAIL:-20}"
+
+# Прогон вложенного юнит-теста. Вывод копится и печатается ТОЛЬКО при провале:
+# зелёный прогон остаётся коротким, а красная строка сразу объясняет себя.
+# Раньше тесты глушились в /dev/null, и оператор — часто на чужой машине, где
+# причина в окружении, — видел голое "✗ имя теста" и должен был сам найти и
+# перезапустить нужный файл, чтобы узнать хотя бы название сломавшегося случая.
+unit() {   # <строка успеха> <строка провала> <команда...>
+  local ok_msg="$1" bad_msg="$2"; shift 2
+  local out rc=0
+  out="$("$@" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    ok "$ok_msg"
+  else
+    bad "$bad_msg"
+    printf '%s\n' "$out" | tail -n "$UNIT_TAIL" | sed 's/^/      /'
+  fi
+}
+
 echo "── 1. Синтаксис bash-скриптов ──"
 while IFS= read -r f; do
   if bash -n "$f" 2>/dev/null; then :; else bad "bash -n: $f"; fi
@@ -95,32 +116,16 @@ else
 fi
 
 echo "── 5. Watchdog-алерты оператору (lib/notify.sh) ──"
-if bash orchestration/lib/notify.test.sh >/dev/null 2>&1; then
-  ok "notify.sh: opt-in / троттлинг / non-fatal — юнит-тест зелёный"
-else
-  bad "notify.sh: юнит-тест провален (orchestration/lib/notify.test.sh)"
-fi
+unit "notify.sh: opt-in / троттлинг / non-fatal — юнит-тест зелёный" "notify.sh: юнит-тест провален (orchestration/lib/notify.test.sh)" bash orchestration/lib/notify.test.sh
 
 echo "── 6. Мониторинг бэкенда (second_brain-monitor.sh) ──"
-if bash orchestration/second_brain-monitor.test.sh >/dev/null 2>&1; then
-  ok "second_brain-monitor.sh: переходы down/recovery + проба порта — юнит-тест зелёный"
-else
-  bad "second_brain-monitor.sh: юнит-тест провален (orchestration/second_brain-monitor.test.sh)"
-fi
+unit "second_brain-monitor.sh: переходы down/recovery + проба порта — юнит-тест зелёный" "second_brain-monitor.sh: юнит-тест провален (orchestration/second_brain-monitor.test.sh)" bash orchestration/second_brain-monitor.test.sh
 
 echo "── 7. Heartbeat-хук живости (heartbeat-hook.sh) ──"
-if bash agent-template/hooks/heartbeat-hook.test.sh >/dev/null 2>&1; then
-  ok "heartbeat-hook.sh: атомарная запись / sdk-guard / advance — юнит-тест зелёный"
-else
-  bad "heartbeat-hook.sh: юнит-тест провален (agent-template/hooks/heartbeat-hook.test.sh)"
-fi
+unit "heartbeat-hook.sh: атомарная запись / sdk-guard / advance — юнит-тест зелёный" "heartbeat-hook.sh: юнит-тест провален (agent-template/hooks/heartbeat-hook.test.sh)" bash agent-template/hooks/heartbeat-hook.test.sh
 
 echo "── 7a. sdk-guard во всех хуках (защита от рекурсии) ──"
-if bash agent-template/hooks/sdk-guard.test.sh >/dev/null 2>&1; then
-  ok "sdk-guard: stop/session-start/precompact выходят без побочных эффектов — юнит-тест зелёный"
-else
-  bad "sdk-guard: юнит-тест провален (agent-template/hooks/sdk-guard.test.sh)"
-fi
+unit "sdk-guard: stop/session-start/precompact выходят без побочных эффектов — юнит-тест зелёный" "sdk-guard: юнит-тест провален (agent-template/hooks/sdk-guard.test.sh)" bash agent-template/hooks/sdk-guard.test.sh
 
 echo "── 7b. start-agent: проброс agent.env с placeholder-guard ──"
 # Регрессия сессии 2026-07-19: agent.env существовал, но start-agent.sh не
@@ -135,18 +140,10 @@ else
 fi
 
 echo "── 8. Страховочный flush в общий мозг (brain-flush.sh) ──"
-if bash agent-template/scripts/brain-flush.test.sh >/dev/null 2>&1; then
-  ok "brain-flush.sh: guard/dedup/fail-open — юнит-тест зелёный"
-else
-  bad "brain-flush.sh: юнит-тест провален (agent-template/scripts/brain-flush.test.sh)"
-fi
+unit "brain-flush.sh: guard/dedup/fail-open — юнит-тест зелёный" "brain-flush.sh: юнит-тест провален (agent-template/scripts/brain-flush.test.sh)" bash agent-template/scripts/brain-flush.test.sh
 # Обращения к second_brain идут через рукопожатие MCP: одиночный tools/call
 # FastMCP отвергает, и записи в общий мозг молча не доходили (2026-09-01).
-if bash agent-template/scripts/mcp-call.test.sh >/dev/null 2>&1; then
-  ok "mcp-call.sh: рукопожатие MCP (initialize + session-id) — юнит-тест зелёный"
-else
-  bad "mcp-call.sh: юнит-тест провален (agent-template/scripts/mcp-call.test.sh)"
-fi
+unit "mcp-call.sh: рукопожатие MCP (initialize + session-id) — юнит-тест зелёный" "mcp-call.sh: юнит-тест провален (agent-template/scripts/mcp-call.test.sh)" bash agent-template/scripts/mcp-call.test.sh
 for hook_script in brain-flush.sh reflect-nudge.sh; do
   if grep -q 'mcp_tools_call' "agent-template/scripts/$hook_script"; then
     ok "$hook_script ходит в second_brain через рукопожатие"
@@ -156,11 +153,7 @@ for hook_script in brain-flush.sh reflect-nudge.sh; do
 done
 
 echo "── 9. Изоляция плагина по агентам (lib/plugin.sh) ──"
-if bash orchestration/lib/plugin.test.sh >/dev/null 2>&1; then
-  ok "plugin.sh: приватная копия / миграция симлинка / разный cwd — юнит-тест зелёный"
-else
-  bad "plugin.sh: юнит-тест провален (orchestration/lib/plugin.test.sh)"
-fi
+unit "plugin.sh: приватная копия / миграция симлинка / разный cwd — юнит-тест зелёный" "plugin.sh: юнит-тест провален (orchestration/lib/plugin.test.sh)" bash orchestration/lib/plugin.test.sh
 
 # Регрессия: симлинк плагина в воркспейс — это и есть баг общего canonical cwd.
 if grep -rn 'ln -s .*TG_PLUGIN_DIR.*labops-tg-plugin' --include=*.sh \
@@ -174,36 +167,20 @@ echo "── 9a. channel.env сорсится при любом имени аг�
 # Регрессия 09.09.2026: имя «LabOps App» уехало в channel.env без кавычек,
 # сорсинг падал на `App: command not found`, и агент, «активный» по systemd,
 # не поднимал ни сессию, ни порт канала.
-if bash skills/create-agent/channel-env.test.sh >/dev/null 2>&1; then
-  ok "channel.env: пробел в имени агента не ломает сорсинг — юнит-тест зелёный"
-else
-  bad "channel.env: юнит-тест провален (skills/create-agent/channel-env.test.sh)"
-fi
+unit "channel.env: пробел в имени агента не ломает сорсинг — юнит-тест зелёный" "channel.env: юнит-тест провален (skills/create-agent/channel-env.test.sh)" bash skills/create-agent/channel-env.test.sh
 
 echo "── 9b. Классификатор панели: overlay ≠ зависание (lib/pane.sh) ──"
-if bash orchestration/lib/pane.test.sh >/dev/null 2>&1; then
-  ok "pane.sh: слеш-команда не принимается за смерть TUI — юнит-тест зелёный"
-else
-  bad "pane.sh: юнит-тест провален (orchestration/lib/pane.test.sh)"
-fi
+unit "pane.sh: слеш-команда не принимается за смерть TUI — юнит-тест зелёный" "pane.sh: юнит-тест провален (orchestration/lib/pane.test.sh)" bash orchestration/lib/pane.test.sh
 
 echo "── 9b2. Перепечатка застрявшего ввода: полный текст, а не обрезок ──"
 # Регрессия 2026-09-01: из панели читается только первая визуальная строка,
 # и длинное сообщение оператора доходило до агента обрезанным на полуслове.
-if bash orchestration/lib/pane-recover.test.sh >/dev/null 2>&1; then
-  ok "pane-recover.sh: перепечатывается полный текст из метки доставки"
-else
-  bad "pane-recover.sh: юнит-тест провален (orchestration/lib/pane-recover.test.sh)"
-fi
+unit "pane-recover.sh: перепечатывается полный текст из метки доставки" "pane-recover.sh: юнит-тест провален (orchestration/lib/pane-recover.test.sh)" bash orchestration/lib/pane-recover.test.sh
 
 echo "── 9b3. Тесты с живым tmux не трогают сервер роя ──"
 # Агент гоняет гейт из своей панели, где $TMUX указывает на общий сервер роя.
 # Прогон под $TMUX на сервер-приманку: приманка должна остаться нетронутой.
-if bash orchestration/lib/tmux-test-isolation.test.sh >/dev/null 2>&1; then
-  ok "тесты с живым tmux работают в своём сервере, чужой не трогают"
-else
-  bad "тест с живым tmux трогает чужой сервер (orchestration/lib/tmux-test-isolation.test.sh)"
-fi
+unit "тесты с живым tmux работают в своём сервере, чужой не трогают" "тест с живым tmux трогает чужой сервер (orchestration/lib/tmux-test-isolation.test.sh)" bash orchestration/lib/tmux-test-isolation.test.sh
 
 echo "── 9c. Контракт канала: ответ через reply (CLAUDE.md.template) ──"
 # Регрессия 2026-07-20: агент ответил оператору текстом в сессии, не вызвав
@@ -258,18 +235,10 @@ TELEGRAM_WEBHOOK_HOST TELEGRAM_MEMORY_ENABLED TELEGRAM_MEMORY_SOURCE_TAG"
 fi
 
 echo "── 11. Near-real-time межагентная доставка задач (task-poller.sh) ──"
-if bash agent-template/scripts/task-poller.test.sh >/dev/null 2>&1; then
-  ok "task-poller.sh: обёртка видима надзору, без headless claude — юнит-тест зелёный"
-else
-  bad "task-poller.sh: юнит-тест провален (agent-template/scripts/task-poller.test.sh)"
-fi
+unit "task-poller.sh: обёртка видима надзору, без headless claude — юнит-тест зелёный" "task-poller.sh: юнит-тест провален (agent-template/scripts/task-poller.test.sh)" bash agent-template/scripts/task-poller.test.sh
 # Логика опроса живёт в python-демоне: адресный фильтр, idle-гейт, идемпотентность,
 # кэш токена, одна живая MCP-сессия.
-if python3 agent-template/scripts/task_poller.test.py >/dev/null 2>&1; then
-  ok "task_poller.py: фильтр / idle-гейт / идемпотентность / MCP-сессия — юнит-тест зелёный"
-else
-  bad "task_poller.py: юнит-тест провален (agent-template/scripts/task_poller.test.py)"
-fi
+unit "task_poller.py: фильтр / idle-гейт / идемпотентность / MCP-сессия — юнит-тест зелёный" "task_poller.py: юнит-тест провален (agent-template/scripts/task_poller.test.py)" python3 agent-template/scripts/task_poller.test.py
 # Регрессия: доска задач должна попасть новому агенту. Забыли сервер в шаблоне
 # или URL в install/new-agent -- у агента не будет инструментов task_*, и он
 # молча вернётся к заметкам, ёмкость которых конечна (см. AGENT_ROUTER.md).
@@ -297,11 +266,7 @@ else
 fi
 # Юнит-тест единого запуска/надзора (ensure_task_poller): noscript/running/launched
 # + точный подсчёт по /proc без self-match.
-if bash orchestration/lib/task-poller-launch.test.sh >/dev/null 2>&1; then
-  ok "task-poller-launch.sh: ensure_task_poller / _poller_count — юнит-тест зелёный"
-else
-  bad "task-poller-launch.sh: юнит-тест провален (orchestration/lib/task-poller-launch.test.sh)"
-fi
+unit "task-poller-launch.sh: ensure_task_poller / _poller_count — юнит-тест зелёный" "task-poller-launch.sh: юнит-тест провален (orchestration/lib/task-poller-launch.test.sh)" bash orchestration/lib/task-poller-launch.test.sh
 # Регрессия: start-agent.sh обязан запускать поллер, иначе доставка задач мертва.
 if grep -q 'ensure_task_poller' orchestration/start-agent.sh; then
   ok "start-agent.sh запускает task-poller (ensure_task_poller)"
@@ -465,16 +430,8 @@ if grep -q 'DOWN_FLAG=' orchestration/watchdog.sh; then
 else
   bad "флаг тревоги живёт в памяти процесса — после рестарта watchdog тревога не закроется"
 fi
-if bash orchestration/doctor.test.sh >/dev/null 2>&1; then
-  ok "doctor.sh: диагноз и починка на подменённом окружении — юнит-тест зелёный"
-else
-  bad "doctor.sh: юнит-тест провален (bash orchestration/doctor.test.sh)"
-fi
-if bash orchestration/lib/doctor-request.test.sh >/dev/null 2>&1; then
-  ok "очередь /doctor: запрос исполняется один раз, команда не зацикливается — юнит-тест зелёный"
-else
-  bad "очередь /doctor: юнит-тест провален (bash orchestration/lib/doctor-request.test.sh)"
-fi
+unit "doctor.sh: диагноз и починка на подменённом окружении — юнит-тест зелёный" "doctor.sh: юнит-тест провален (bash orchestration/doctor.test.sh)" bash orchestration/doctor.test.sh
+unit "очередь /doctor: запрос исполняется один раз, команда не зацикливается — юнит-тест зелёный" "очередь /doctor: юнит-тест провален (bash orchestration/lib/doctor-request.test.sh)" bash orchestration/lib/doctor-request.test.sh
 # Отвечать на /doctor обязан watchdog, а не плагин: доктор вправе перезапустить
 # сессию, и плагин (он живёт ВНУТРИ неё) умрёт, не успев отправить вердикт.
 if grep -q 'serve_doctor_request' orchestration/watchdog.sh; then
@@ -600,14 +557,22 @@ else
   bad "SKIP_SELFTEST=1 выключает тесты и в режиме --test-only — режим теряет смысл"
 fi
 
+# 14k. Причина провала обязана быть видна прямо в прогоне: тест, заглушённый в
+# /dev/null, превращает красную строку в загадку — оператору на чужой машине
+# приходилось искать файл теста и перезапускать его руками. Считаем такие
+# вызовы. Кавычки внутри паттерна разрывают его для самого grep — иначе эта
+# строка нашла бы саму себя и проверка всегда была бы красной.
+muted="$(grep -cE "test\.(sh|py) >""/dev/null" test.sh || true)"
+if [ "$muted" -eq 0 ] && grep -q '^unit() {' test.sh; then
+  ok "упавший юнит-тест печатает причину под красной строкой (глушения нет)"
+else
+  bad "вывод юнит-тестов снова глушится ($muted шт.) — причина провала не попадёт в отчёт"
+fi
+
 echo "── 15. Сессия подбирает самообновившийся Claude Code ──"
 
 # 15a. Поведенческий тест библиотеки: реальные процессы, реальный /proc.
-if bash orchestration/lib/cli-version.test.sh >/dev/null 2>&1; then
-  ok "cli-version: дрейф версии и fail-open — юнит-тест зелёный"
-else
-  bad "cli-version: юнит-тест провален (orchestration/lib/cli-version.test.sh)"
-fi
+unit "cli-version: дрейф версии и fail-open — юнит-тест зелёный" "cli-version: юнит-тест провален (orchestration/lib/cli-version.test.sh)" bash orchestration/lib/cli-version.test.sh
 
 # 15b. Регрессия 08.09.2026: перезапуск ради версии допустим ТОЛЬКО из ветки
 # чистого простоя. Внутри хода он стоил бы агенту потерянной работы.
@@ -688,11 +653,7 @@ echo "── 17. Секреты не попадают в командную ст
 
 # 17a. Поведенческий тест: реальный запуск session-exec.sh с подставным claude,
 # который печатает свою cmdline и своё окружение.
-if bash orchestration/lib/agent-env.test.sh >/dev/null 2>&1; then
-  ok "agent-env: секреты в окружении, но не в argv — юнит-тест зелёный"
-else
-  bad "agent-env: юнит-тест провален (orchestration/lib/agent-env.test.sh)"
-fi
+unit "agent-env: секреты в окружении, но не в argv — юнит-тест зелёный" "agent-env: юнит-тест провален (orchestration/lib/agent-env.test.sh)" bash orchestration/lib/agent-env.test.sh
 
 # 17b. Регрессия 08.09.2026: секреты уезжали в сессию флагами tmux -e VAR=value,
 # то есть лежали в командной строке и были видны в обычном ps любому
@@ -725,19 +686,11 @@ fi
 echo "── 18. Предполётная проверка доступности хостов ──"
 
 # 18a. Классификация ответа хоста (403 ≠ нет связи) — на подставном curl.
-if bash orchestration/lib/preflight.test.sh >/dev/null 2>&1; then
-  ok "preflight: разбор кодов ответа — юнит-тест зелёный"
-else
-  bad "preflight: юнит-тест провален (orchestration/lib/preflight.test.sh)"
-fi
+unit "preflight: разбор кодов ответа — юнит-тест зелёный" "preflight: юнит-тест провален (orchestration/lib/preflight.test.sh)" bash orchestration/lib/preflight.test.sh
 
 # 18b. Поведение самого install.sh: реальный запуск с закрытым хостом должен
 # останавливать установку на шаге 0, до пакетов и создания пользователя.
-if bash install-preflight.test.sh >/dev/null 2>&1; then
-  ok "install.sh останавливается на закрытом хосте — юнит-тест зелёный"
-else
-  bad "preflight в install.sh: юнит-тест провален (install-preflight.test.sh)"
-fi
+unit "install.sh останавливается на закрытом хосте — юнит-тест зелёный" "preflight в install.sh: юнит-тест провален (install-preflight.test.sh)" bash install-preflight.test.sh
 
 # 18c. Регрессия 08.09.2026: `curl -fsSL … | bash` под set -e + pipefail обрывал
 # установку молча — curl отдавал 22, конвейер падал, и die с объяснением уже не
@@ -833,11 +786,7 @@ fi
 echo "── 21. Шаблоны: одно правило — одно место ──"
 # Общие правила агентов живут только в глобальном ~/.claude/CLAUDE.md, поэтому
 # install.sh не вправе молча пропустить его, если у пользователя уже есть свой.
-if bash agent-template/install-global-rules.test.sh >/dev/null 2>&1; then
-  ok "общие правила агентов не теряются при своём ~/.claude/CLAUDE.md"
-else
-  bad "install.sh теряет общие правила агентов (agent-template/install-global-rules.test.sh)"
-fi
+unit "общие правила агентов не теряются при своём ~/.claude/CLAUDE.md" "install.sh теряет общие правила агентов (agent-template/install-global-rules.test.sh)" bash agent-template/install-global-rules.test.sh
 
 # Дословные повторы между шаблонами. Одни и те же правила лежали в двух-трёх файлах
 # сразу — 9 принципов в глобальном и агентском CLAUDE.md, git и безопасность в
@@ -901,11 +850,7 @@ else
 fi
 
 # Уборка стареет выводы, но не пожелания владельца — почему, см. шапку decay-sweep.sh.
-if bash agent-template/scripts/decay-sweep.test.sh >/dev/null 2>&1; then
-  ok "decay-sweep: стареют выводы, preferences.md не трогается"
-else
-  bad "decay-sweep: юнит-тест провален (agent-template/scripts/decay-sweep.test.sh)"
-fi
+unit "decay-sweep: стареют выводы, preferences.md не трогается" "decay-sweep: юнит-тест провален (agent-template/scripts/decay-sweep.test.sh)" bash agent-template/scripts/decay-sweep.test.sh
 
 echo "── 22. Цели tmux только точные ──"
 # Без «=» tmux ищет сессию по НАЧАЛУ имени, если точной нет. 10.09.2026 watchdog
@@ -918,16 +863,12 @@ echo "── 22. Цели tmux только точные ──"
 # scripts/check_tmux_targets.py разбирает вызов целиком — bash, Python и
 # TypeScript, здесь и в ../tg-plugin. Тесты не проверяются: они нарочно пишут
 # неточные формы и работают в своём tmux-сервере (секция 9b3).
-if python3 scripts/check_tmux_targets.test.py >/dev/null 2>&1; then
-  ok "страж целей tmux ловит все неточные формы и пропускает точные — юнит-тест зелёный"
-else
-  bad "страж целей tmux: юнит-тест провален (scripts/check_tmux_targets.test.py)"
-fi
+unit "страж целей tmux ловит все неточные формы и пропускает точные — юнит-тест зелёный" "страж целей tmux: юнит-тест провален (scripts/check_tmux_targets.test.py)" python3 scripts/check_tmux_targets.test.py
 if tmux_report="$(python3 scripts/check_tmux_targets.py 2>&1)"; then
   ok "tmux: все цели точные (=имя / =имя:^.{top-left})"
 else
   bad "tmux: неточная цель промахнётся в чужую сессию или в чужое окно:"
-  printf '%s\n' "$tmux_report" | sed -n '1,16s/^/      /p'
+  printf '%s\n' "$tmux_report" | tail -n "$UNIT_TAIL" | sed 's/^/      /'
 fi
 
 echo
