@@ -583,6 +583,23 @@ else
   bad "smoke зелёный поверх сессии со старым .mcp.json"
 fi
 
+# 14i. Self-test остаётся gate-ом по умолчанию. Обход нужен под чужое окружение
+# (контейнер, /tmp с noexec, нет python3), но он обязан быть ЯВНЫМ решением
+# оператора: молчаливый пропуск проверок — это установка неизвестно чего.
+if grep -q 'bash "$REPO_DIR/test.sh" || die' install.sh \
+   && grep -q 'SKIP_SELFTEST:-0' install.sh; then
+  ok "self-test рвёт установку по умолчанию, пропуск — только по SKIP_SELFTEST=1"
+else
+  bad "gate self-test: либо он больше не останавливает установку, либо обход не явный"
+fi
+
+# 14j. --test-only ради тестов и существует: флаг обхода там не должен работать.
+if grep 'SKIP_SELFTEST:-0' install.sh | grep -qF 'MODE" != "test"'; then
+  ok "--test-only гоняет тесты даже при SKIP_SELFTEST=1"
+else
+  bad "SKIP_SELFTEST=1 выключает тесты и в режиме --test-only — режим теряет смысл"
+fi
+
 echo "── 15. Сессия подбирает самообновившийся Claude Code ──"
 
 # 15a. Поведенческий тест библиотеки: реальные процессы, реальный /proc.
