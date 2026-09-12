@@ -44,6 +44,9 @@
 
 set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Правила sudoers и передача окружения, совместимые с sudo-rs (Ubuntu 26.04).
+# shellcheck source=orchestration/lib/sudo-compat.sh
+. "$REPO_DIR/orchestration/lib/sudo-compat.sh"
 
 C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[1m'; N='\033[0m'
 say()  { printf "\n${C}▶ %s${N}\n" "$*"; }
@@ -218,32 +221,40 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
       passwd "$AGENT_OS_USER" || warn "пароль не задан — задайте позже: passwd $AGENT_OS_USER"
     fi
 
-    # Узко-scoped NOPASSWD sudo — ТОЛЬКО управление собственными
-    # claude-agent-*.service юнитами (cp юнита в /etc/systemd/system,
-    # systemctl daemon-reload, systemctl enable --now claude-agent-*).
-    # Больше никаких sudo-прав пользователь не получает: сам агент внутри
-    # Claude Code всё равно работает без sudo (deny-правило в settings),
-    # это нужно только new-agent.sh для автостарта systemd-юнита без
-    # ручного вмешательства оператора на каждом запуске.
-    if command -v visudo >/dev/null 2>&1; then
+    # Узко-scoped NOPASSWD sudo — ТОЛЬКО на root-хелпер labops-agent-unit,
+    # который собирает и включает юнит claude-agent-<id>.service. Больше никаких
+    # sudo-прав пользователь не получает: сам агент внутри Claude Code всё равно
+    # работает без sudo (deny-правило в settings), это нужно только new-agent.sh
+    # для автостарта юнита без ручного вмешательства оператора.
+    #
+    # Правило — одна команда без аргументов: прежние три строки со звёздочкой
+    # в аргументах sudo-rs (Ubuntu 26.04) отвергает целиком, и автостарт молча
+    # не включался. Хелпер и шаблон юнита ставим root-копиями вне дома
+    # пользователя: иначе он правил бы то, что потом исполняется от root.
+    UNIT_HELPER_SRC="$REPO_DIR/orchestration/labops-agent-unit.sh"
+    UNIT_TMPL_SRC="$REPO_DIR/systemd/claude-agent.service.template"
+    if ! command -v visudo >/dev/null 2>&1; then
+      warn "нет visudo — scoped sudo для автостарта не выдан, юнит придётся ставить вручную"
+    elif [ ! -f "$UNIT_HELPER_SRC" ] || [ ! -f "$UNIT_TMPL_SRC" ]; then
+      warn "нет $UNIT_HELPER_SRC или $UNIT_TMPL_SRC — scoped sudo для автостарта не выдан"
+    else
+      install -d -m 755 "$(dirname "$LABOPS_UNIT_HELPER")" "$(dirname "$LABOPS_UNIT_TEMPLATE_ROOT")"
+      install -m 755 "$UNIT_HELPER_SRC" "$LABOPS_UNIT_HELPER"
+      install -m 644 "$UNIT_TMPL_SRC" "$LABOPS_UNIT_TEMPLATE_ROOT"
+      echo "  хелпер автостарта: $LABOPS_UNIT_HELPER"
       SUDOERS_FILE="/etc/sudoers.d/labops-agent-systemd-$AGENT_OS_USER"
       SUDOERS_TMP="$(mktemp)"
-      cat > "$SUDOERS_TMP" <<SUDOERS
-# Автосоздано labops-agent-architecture/install.sh. Разрешает $AGENT_OS_USER
-# без пароля устанавливать и включать ТОЛЬКО claude-agent-*.service юниты.
-$AGENT_OS_USER ALL=(root) NOPASSWD: /usr/bin/cp /tmp/claude-agent-*.service /etc/systemd/system/claude-agent-*.service
-$AGENT_OS_USER ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
-$AGENT_OS_USER ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now claude-agent-*.service
-SUDOERS
+      sudoers_agent_rules "$AGENT_OS_USER" > "$SUDOERS_TMP"
       if visudo -cf "$SUDOERS_TMP" >/dev/null 2>&1; then
+        # Перезаписывает и файл от прежних версий установщика — со старыми
+        # wildcard-правилами, которые давали подложить в /etc/systemd любой юнит.
         install -m 440 "$SUDOERS_TMP" "$SUDOERS_FILE"
-        ok "scoped sudo для $AGENT_OS_USER: только systemd claude-agent-* юниты"
+        ok "scoped sudo для $AGENT_OS_USER: только $LABOPS_UNIT_HELPER"
       else
         warn "sudoers-файл для $AGENT_OS_USER не прошёл проверку синтаксиса — автостарт юнита придётся включать вручную"
+        visudo -cf "$SUDOERS_TMP" 2>&1 | sed 's/^/    /' || true
       fi
       rm -f "$SUDOERS_TMP"
-    else
-      warn "нет visudo — scoped sudo для автостарта не выдан, юнит придётся ставить вручную"
     fi
 
     NEW_HOME="$(getent passwd "$AGENT_OS_USER" | cut -d: -f6)"
@@ -298,12 +309,19 @@ SUDOERS
       export TG_PLUGIN_DIR="$DEST_ROOT/tg-plugin"
     fi
     ok "продолжаю установку от имени $AGENT_OS_USER"
-    # -E сохраняет окружение (REUSE_EXISTING=1, SKIP_TG_PLUGIN=0 и т.п. —
-    # без него sudo молча сбрасывает все такие "флаги", и они не доходят до
-    # реального install.sh под labops). Мы root — sudo -E от root разрешён
-    # всегда, независимо от sudoers env_keep. -H всё равно ставит HOME
-    # правильно (домашняя папка labops), а не окружение вызывающего root.
-    exec sudo -E -u "$AGENT_OS_USER" -H bash "$DEST_REPO/install.sh" "$@"
+    # Флаги установщика (REUSE_EXISTING=1, SKIP_TG_PLUGIN, PREFLIGHT_DONE,
+    # TG_PLUGIN_DIR, INSTALL_TG_LOCAL, ...) должны дойти до install.sh под
+    # пользователем, а sudo по умолчанию окружение сбрасывает. Раньше тут был
+    # sudo -E, но sudo-rs (Ubuntu 26.04) его игнорирует: установка под
+    # пользователем заново гоняла preflight и не ставила локальный tg-plugin.
+    # Передаём окружение файлом 600 во владении пользователя — одинаково для
+    # sudo и sudo-rs, и значения токенов не попадают в argv. -H ставит HOME
+    # пользователя; HOME/PATH/USER root в файл не пишутся.
+    ENV_HANDOFF="$(mktemp "$NEW_HOME/.labops-install-env.XXXXXX")"
+    env_handoff_write "$ENV_HANDOFF"
+    chown "$AGENT_OS_USER":"$AGENT_OS_USER" "$ENV_HANDOFF"
+    exec sudo -u "$AGENT_OS_USER" -H bash -c "$ENV_HANDOFF_LOADER" labops-install \
+      "$ENV_HANDOFF" "$DEST_REPO/install.sh" "$@"
   else
     warn "продолжаю от root — НЕ рекомендуется для постоянной эксплуатации агентов"
   fi

@@ -53,11 +53,12 @@ mkdir -p "$TMP/home"
 # поедет дальше нулевого шага и дойдёт до `chmod +x orchestration/*.sh` — то есть
 # тест начнёт править файлы репозитория (поймано 08.09.2026: два скрипта молча
 # стали исполняемыми). Копии нужен только шаг 0, поэтому берём install.sh и
-# библиотеку, которую он сорсит.
+# библиотеки, которые он сорсит.
 REPO="$TMP/repo"
 mkdir -p "$REPO/orchestration/lib"
 cp "$HERE/install.sh" "$REPO/install.sh"
 cp "$HERE/orchestration/lib/preflight.sh" "$REPO/orchestration/lib/preflight.sh"
+cp "$HERE/orchestration/lib/sudo-compat.sh" "$REPO/orchestration/lib/sudo-compat.sh"
 
 # 1. Закрытый хост (403) — установка обязана остановиться.
 make_curl_stub 403

@@ -77,6 +77,8 @@ ORCH_DIR="$REPO_DIR/orchestration"
 . "$ORCH_DIR/lib/dangerous-mode.sh"
 # shellcheck source=../../orchestration/lib/model-choice.sh
 . "$ORCH_DIR/lib/model-choice.sh"
+# shellcheck source=../../orchestration/lib/sudo-compat.sh
+. "$ORCH_DIR/lib/sudo-compat.sh"
 # Нативный claude ставится в ~/.local/bin, но PATH туда правится только в
 # ~/.bashrc — при запуске не-login шеллом (sudo -u ... -H bash ...) это не
 # подхватывается. Подмешиваем явно, чтобы claude находился и здесь, и в
@@ -490,18 +492,32 @@ if [ "$AUTOSTART" = "1" ] && [ -f "$UNIT_TMPL" ]; then
   sed -e "s|__AGENT__|$AGENT_ID|g" -e "s|__USER__|$(id -un)|g" \
       -e "s|__ORCH__|$ORCH_DIR|g" -e "s|__LAB__|$LAB_DIR|g" "$UNIT_TMPL" > "$UNIT"
   mkdir -p "$LAB_DIR/$AGENT_ID/logs"
-  # install.sh выдаёт агент-пользователю узко-scoped NOPASSWD sudo ТОЛЬКО на эти
-  # три команды (cp юнита + systemctl daemon-reload/enable --now claude-agent-*).
-  # "sudo -n true" тут не подходит как проверка — сам "true" не входит в
-  # разрешённый список команд, поэтому пробуем реальные команды напрямую.
-  if command -v systemctl >/dev/null 2>&1 \
-     && sudo -n cp "$UNIT" "/etc/systemd/system/claude-agent-$AGENT_ID.service" 2>/dev/null \
-     && sudo -n systemctl daemon-reload 2>/dev/null \
-     && sudo -n systemctl enable --now "claude-agent-$AGENT_ID.service" 2>/dev/null; then
+  # Автостарт через узкий NOPASSWD sudo, выданный install.sh. Два варианта:
+  #  1. хелпер labops-agent-unit (текущий install.sh) — сам собирает юнит от root
+  #     из своей копии шаблона; единственный вариант, который принимает sudo-rs
+  #     (Ubuntu 26.04);
+  #  2. прежние три команды cp + systemctl daemon-reload/enable --now — хосты
+  #     22.04/24.04, где sudoers выдан старым install.sh и не переустанавливался.
+  # "sudo -n true" как проверка не годится — "true" не входит в разрешённые
+  # команды, поэтому пробуем реальные вызовы.
+  UNIT_OK=0
+  UNIT_ERR=""
+  if command -v systemctl >/dev/null 2>&1; then
+    if [ -x "$LABOPS_UNIT_HELPER" ] \
+       && UNIT_ERR="$(sudo -n "$LABOPS_UNIT_HELPER" "$AGENT_ID" "$ORCH_DIR" "$LAB_DIR" 2>&1)"; then
+      UNIT_OK=1
+    elif sudo -n cp "$UNIT" "/etc/systemd/system/claude-agent-$AGENT_ID.service" 2>/dev/null \
+       && sudo -n systemctl daemon-reload 2>/dev/null \
+       && sudo -n systemctl enable --now "claude-agent-$AGENT_ID.service" 2>/dev/null; then
+      UNIT_OK=1
+    fi
+  fi
+  if [ "$UNIT_OK" = "1" ]; then
     ok "юнит claude-agent-$AGENT_ID активен"
   else
+    [ -n "$UNIT_ERR" ] && printf '%s\n' "$UNIT_ERR" | sed 's/^/    /'
     warn "нет scoped sudo для systemd claude-agent-* (или нет systemctl) — юнит сгенерирован в $UNIT. Установите вручную:"
-    echo "    sudo cp $UNIT /etc/systemd/system/ && sudo systemctl enable --now claude-agent-$AGENT_ID"
+    echo "    sudo cp $UNIT /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now claude-agent-$AGENT_ID"
     DEGRADED+=("автостарт не включён — агент не поднимется сам после перезагрузки; юнит в $UNIT")
   fi
 elif ! [ -f "$UNIT_TMPL" ]; then
