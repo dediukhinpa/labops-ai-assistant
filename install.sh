@@ -20,6 +20,7 @@ set -euo pipefail
 #   bash install.sh --no-agent   # подготовить окружение, без создания агента
 #   bash install.sh --test-only  # только self-test архитектуры
 #   SKIP_SECOND_BRAIN=1 bash install.sh   # не клонировать общий мозг
+#   SKIP_SELFTEST=1 bash install.sh       # не останавливать установку на self-test
 #
 # Все прочие флаги/переменные окружения пробрасываются в
 # agent-architecture/install.sh без изменений.
