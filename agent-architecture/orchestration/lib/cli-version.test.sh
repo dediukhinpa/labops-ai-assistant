@@ -25,9 +25,25 @@ trap cleanup EXIT
 # для скрипта exe вёл бы на интерпретатор, один и тот же у обеих версий.
 # Раскладка повторяет нативный установщик: версия — это САМ исполняемый файл,
 # названный номером версии, а не каталог с бинарём внутри.
+#
+# Берём копию bash, а НЕ /bin/sleep. Утилиту coreutils копировать нельзя: там,
+# где они собраны ОДНИМ мультивызывным бинарём, программа выбирается по argv[0],
+# а наши «версии» названы номерами. Это давно так в coreutils-single (Fedora,
+# RHEL), а с переходом Ubuntu на uutils (Rust-реализация, штатная с 25.10) — и
+# на Ubuntu: копия под именем «1.0» отвечает «coreutils: unknown program '1'» и
+# умирает, не дожив до проверки (поймано 12.09.2026 у клиента на Ubuntu 26.04).
+# Живём на чтении из fifo, в которое никто не пишет: процесс блокируется в
+# builtin read, не порождая потомков. Через «sleep 300» версия оставляла бы
+# после себя осиротевший процесс с унаследованным stdout, а он подвешивает
+# любого, кто читает вывод теста каналом. Хвост «; :» обязателен и здесь: для
+# ОДНОЙ простой команды bash делает implicit exec, и /proc/<pid>/exe указывал бы
+# на подменённый образ вместо нашей копии.
+BASH_BIN="$(command -v bash)"
 mkdir -p "$TMP/versions" "$TMP/bin"
-cp /bin/sleep "$TMP/versions/1.0"
-cp /bin/sleep "$TMP/versions/2.0"
+mkfifo "$TMP/keepalive"
+STAY_ALIVE="read -r _ < \"$TMP/keepalive\"; :"
+cp "$BASH_BIN" "$TMP/versions/1.0"
+cp "$BASH_BIN" "$TMP/versions/2.0"
 
 export CLI_VERSION_CLAUDE_BIN="$TMP/bin/claude"
 export CLI_VERSION_PANE_PID_CMD="$TMP/pane-pid.sh"
@@ -40,7 +56,7 @@ source "$HERE/cli-version.sh"
 fail() { echo "FAIL: $1"; exit 1; }
 
 # Сессия стартовала с версии 1.0 и продолжает её исполнять.
-"$TMP/versions/1.0" 300 & OLD_PID=$!
+"$TMP/versions/1.0" -c "$STAY_ALIVE" & OLD_PID=$!
 PIDS+=("$OLD_PID")
 set_pane_pid "$OLD_PID"
 
@@ -59,7 +75,7 @@ cli_version_drifted demo || fail "дрейф не найден после под
   || fail "метка установленной версии неверна: $(cli_version_label "$(cli_version_installed_exe)")"
 
 # 4. Перезапустились на новой версии — дрейф закрылся.
-"$TMP/versions/2.0" 300 & NEW_PID=$!
+"$TMP/versions/2.0" -c "$STAY_ALIVE" & NEW_PID=$!
 PIDS+=("$NEW_PID")
 set_pane_pid "$NEW_PID"
 cli_version_drifted demo && fail "дрейф остался после перезапуска на актуальной версии"
@@ -140,7 +156,7 @@ if command -v tmux >/dev/null 2>&1; then
   S="cliver-$$"
   # Команда отдельными аргументами — tmux исполнит её сам, без обёртки-оболочки,
   # и pane_pid окажется ровно процессом «версии».
-  if tmux new-session -d -s "$S" "$TMP/versions/2.0" 300 2>/dev/null; then
+  if tmux new-session -d -s "$S" "$TMP/versions/2.0" -c "$STAY_ALIVE" 2>/dev/null; then
     tmux new-window -t "=$S:" bash -c 'sleep 300'
     agent_pid="$(tmux display -p -t "=$S:^.{top-left}" '#{pane_pid}')"
     op_pid="$(tmux display -p -t "=$S:" '#{pane_pid}')"
