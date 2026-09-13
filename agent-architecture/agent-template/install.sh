@@ -34,7 +34,6 @@ SHARED_SKILLS_SRC="${DISTRO_ROOT}/skills"
 # shellcheck source=../orchestration/lib/ui.sh
 . "${DISTRO_ROOT}/orchestration/lib/ui.sh"
 log()   { ok "$1"; }
-err()   { printf "${UI_ERR}✗ %s${UI_RESET}\n" "$1" >&2; }
 ask()   { printf "${UI_INFO}[?]${UI_RESET} %s: " "$1"; }
 
 # Cross-platform sed in-place (macOS BSD vs GNU)

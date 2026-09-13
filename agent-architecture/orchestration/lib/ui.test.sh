@@ -65,4 +65,13 @@ source "$HERE/ui.sh"
 err_out="$( (die boom) 2>&1 >/dev/null )"; rc=0; (die boom) >/dev/null 2>&1 || rc=$?
 [[ "$err_out" == *"✗ boom"* ]] && [ "$rc" -ne 0 ] || fail "die: не в stderr или код 0"
 
+# 9. err — ✗ в stderr, но без выхода; ask_text — [?] и ответ, закрытый stdin = пусто.
+err_out="$( (err oops; echo alive >&2) 2>&1 >/dev/null )"
+[[ "$err_out" == *"✗ oops"*alive* ]] || fail "err: не в stderr или завершил скрипт"
+out="$(printf 'два слова\n' | bash -c 'source "'"$HERE"'/ui.sh"; ask_text V "Имя"; echo; echo "RESULT=$V"')"
+grep -q '\[?\].*Имя: ' <<<"$out" || fail "ask_text: формат вопроса: $out"
+[ "$(last "$out")" = "RESULT=два слова" ] || fail "ask_text: ответ: $(last "$out")"
+out="$(printf '' | bash -c 'set -euo pipefail; source "'"$HERE"'/ui.sh"; V=old; ask_text V "Имя"; echo; echo "RESULT=[$V]"')"
+[ "$(last "$out")" = "RESULT=[]" ] || fail "ask_text: закрытый stdin: $(last "$out")"
+
 echo "ui: ok"

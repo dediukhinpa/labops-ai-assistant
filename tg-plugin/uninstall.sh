@@ -26,6 +26,8 @@ warn() { printf "${UI_WARN}⚠ %s${UI_RESET}\n" "$*"; }
 die()  { printf "${UI_ERR}✗ %s${UI_RESET}\n" "$*" >&2; exit 1; }
 step() { printf "${UI_INFO}→ %s${UI_RESET}\n" "$*"; }
 note() { printf "${UI_INFO}ℹ %s${UI_RESET}\n" "$*"; }
+err()  { printf "${UI_ERR}✗ %s${UI_RESET}\n" "$*" >&2; }
+ask_text() { printf "${UI_INFO}[?]${UI_RESET} %s: " "$2"; read -r "$1" || true; }
 # ui:end
 
 SKIPPED=()
