@@ -16,10 +16,19 @@ PLUGIN_DIR="$REPO_DIR/plugin"
 RUN_TESTS=1
 [ "${1:-}" = "--no-tests" ] && RUN_TESTS=0
 
-say()  { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
-ok()   { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
-warn() { printf '\033[1;33m⚠ %s\033[0m\n' "$*"; }
-die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+# Вид вывода — копия agent-architecture/orchestration/lib/ui.sh: плагин ставится
+# и отдельно от монорепо, а в общей установке его строки идут вперемешку со
+# строками архитектуры и должны выглядеть так же. test.sh сверяет копию.
+# ui:begin — от этой метки до ui:end test.sh сверяет с tg-plugin/install.sh.
+UI_SECTION='\033[1;36m'; UI_OK='\033[0;32m'; UI_WARN='\033[1;33m'; UI_ERR='\033[1;31m'
+UI_INFO='\033[0;36m'; UI_BOLD='\033[1m'; UI_RESET='\033[0m'
+say()  { printf "\n${UI_SECTION}▶ %s${UI_RESET}\n" "$*"; }
+ok()   { printf "${UI_OK}✓ %s${UI_RESET}\n" "$*"; }
+warn() { printf "${UI_WARN}⚠ %s${UI_RESET}\n" "$*"; }
+die()  { printf "${UI_ERR}✗ %s${UI_RESET}\n" "$*" >&2; exit 1; }
+step() { printf "${UI_INFO}→ %s${UI_RESET}\n" "$*"; }
+note() { printf "${UI_INFO}ℹ %s${UI_RESET}\n" "$*"; }
+# ui:end
 
 # Накопитель degraded/пропущенных шагов — чтобы зелёный финал не скрыл дыры.
 SKIPPED=()
@@ -30,8 +39,7 @@ skip() { warn "$*"; SKIPPED+=("$*"); }
 # оператора "закройте пункты" НЕ нужно. Без флага — standalone-деплой, где эти
 # шаги действительно на операторе.
 AGENT_FLOW="${LABOPS_AGENT_FLOW:-0}"
-# note() — информационная строка, которая НЕ идёт в degraded-накопитель.
-note() { printf '\033[0;36mℹ %s\033[0m\n' "$*"; }
+# note() (из блока выше) — информационная строка, которая НЕ идёт в degraded-накопитель.
 
 REQUIRED_CLAUDE="2.1.80"
 # ver_ge A B → истина, если версия A >= версии B.
@@ -48,11 +56,11 @@ fi
 install_via_pkgmgr() {
   local pkg="$1"
   if command -v apt-get >/dev/null 2>&1; then
-    warn "$pkg не найден — устанавливаю через apt-get${SUDO:+ (sudo)}"
+    step "устанавливаю $pkg (apt-get${SUDO:+, sudo})"
     $SUDO apt-get update -y
     $SUDO apt-get install -y "$pkg"
   elif command -v brew >/dev/null 2>&1; then
-    warn "$pkg не найден — устанавливаю через brew"
+    step "устанавливаю $pkg (brew)"
     brew install "$pkg"
   else
     die "$pkg не найден и не найден ни apt-get, ни brew — установите $pkg вручную."
@@ -69,7 +77,7 @@ if ! command -v unzip >/dev/null 2>&1; then
 fi
 
 if ! command -v bun >/dev/null 2>&1; then
-  warn "bun не найден — устанавливаю"
+  step "устанавливаю bun — на нём работает Telegram-канал"
   # Скачиваем в файл и запускаем отдельной командой, а НЕ конвейером
   # `curl -fsSL … | bash`. Под set -e + pipefail упавший curl ронял скрипт
   # молча прямо здесь: die строкой ниже уже не выполнялся, а вызывающий
@@ -97,7 +105,7 @@ command -v tmux >/dev/null 2>&1 || die "Установка tmux не удала�
 ok "tmux $(tmux -V 2>/dev/null | awk '{print $2}')"
 
 if ! command -v claude >/dev/null 2>&1; then
-  warn "claude не найден — устанавливаю"
+  step "устанавливаю Claude Code"
   # Тот же приём и та же причина, что с bun выше: конвейер `curl … | bash` под
   # set -e + pipefail роняет скрипт молча, и заготовленное die не печатается.
   CLAUDE_INSTALLER="$(mktemp)"
@@ -227,15 +235,15 @@ fi
 
 # ─── 6. Финальный статус (degraded-шаги видны явно) ──────────────
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
-  printf '\n\033[1;33m⚠ Установка ЗАВЕРШЕНА, но с пропущенными/degraded шагами:\033[0m\n'
+  printf "\n${UI_WARN}⚠ Установка ЗАВЕРШЕНА, но с пропущенными/degraded шагами:${UI_RESET}\n"
   for s in "${SKIPPED[@]}"; do printf '   • %s\n' "$s"; done
   if [ "$AGENT_FLOW" = "1" ]; then
-    printf '\033[0;36m  Это агентский флоу — часть конфигурации канала завершит new-agent.sh дальше.\033[0m\n'
+    printf "${UI_INFO}  Это агентский флоу — часть конфигурации канала завершит new-agent.sh дальше.${UI_RESET}\n"
   else
-    printf '\033[1;33m  Зелёный финал НЕ означает полностью рабочий сетап — закройте пункты выше.\033[0m\n'
+    printf "${UI_WARN}  Зелёный финал НЕ означает полностью рабочий сетап — закройте пункты выше.${UI_RESET}\n"
   fi
 else
-  printf '\n\033[1;32m✅ Установка подтверждена: все проверки и тесты прошли, ничего не пропущено.\033[0m\n'
+  printf "\n${UI_OK}✓ Установка подтверждена: все проверки и тесты прошли, ничего не пропущено.${UI_RESET}\n"
 fi
 
 if [ "$AGENT_FLOW" = "1" ]; then

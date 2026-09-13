@@ -14,9 +14,19 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$REPO_DIR/plugin"
 
-say()  { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
-ok()   { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
-warn() { printf '\033[1;33m⚠ %s\033[0m\n' "$*"; }
+# Вид вывода — копия agent-architecture/orchestration/lib/ui.sh: плагин ставится
+# и отдельно от монорепо, а в общей установке его строки идут вперемешку со
+# строками архитектуры и должны выглядеть так же. test.sh сверяет копию.
+# ui:begin — от этой метки до ui:end test.sh сверяет с tg-plugin/install.sh.
+UI_SECTION='\033[1;36m'; UI_OK='\033[0;32m'; UI_WARN='\033[1;33m'; UI_ERR='\033[1;31m'
+UI_INFO='\033[0;36m'; UI_BOLD='\033[1m'; UI_RESET='\033[0m'
+say()  { printf "\n${UI_SECTION}▶ %s${UI_RESET}\n" "$*"; }
+ok()   { printf "${UI_OK}✓ %s${UI_RESET}\n" "$*"; }
+warn() { printf "${UI_WARN}⚠ %s${UI_RESET}\n" "$*"; }
+die()  { printf "${UI_ERR}✗ %s${UI_RESET}\n" "$*" >&2; exit 1; }
+step() { printf "${UI_INFO}→ %s${UI_RESET}\n" "$*"; }
+note() { printf "${UI_INFO}ℹ %s${UI_RESET}\n" "$*"; }
+# ui:end
 
 SKIPPED=()
 skip() { warn "$*"; SKIPPED+=("$*"); }
@@ -70,10 +80,10 @@ fi
 
 # ─── 4. Финальный статус ─────────────────────────────────────────
 if [ "${#SKIPPED[@]}" -gt 0 ]; then
-  printf '\n\033[1;33m⚠ Удаление завершено, но кое-что пропущено:\033[0m\n'
+  printf "\n${UI_WARN}⚠ Удаление завершено, но кое-что пропущено:${UI_RESET}\n"
   for s in "${SKIPPED[@]}"; do printf '   • %s\n' "$s"; done
 else
-  printf '\n\033[1;32m✅ Плагин полностью удалён.\033[0m\n'
+  printf "\n${UI_OK}✓ Плагин полностью удалён.${UI_RESET}\n"
 fi
 
 cat <<'NEXT'

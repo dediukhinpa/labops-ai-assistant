@@ -85,11 +85,9 @@ ORCH_DIR="$REPO_DIR/orchestration"
 # smoke-проверках (шаг 7) ниже.
 export PATH="$HOME/.local/bin:$PATH"
 
-C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[1m'; N='\033[0m'
-say()  { printf "\n${C}▶ %s${N}\n" "$*"; }
-ok()   { printf "${G}✓ %s${N}\n" "$*"; }
-warn() { printf "${Y}⚠ %s${N}\n" "$*"; }
-die()  { printf "${R}✗ %s${N}\n" "$*" >&2; exit 1; }
+# say/ok/warn/die/step/note и ask_yn — общие для всей установки.
+# shellcheck source=../../orchestration/lib/ui.sh
+. "$ORCH_DIR/lib/ui.sh"
 # NONINTERACTIVE=1 -- ни одного вопроса, только значения по умолчанию.
 # И даже в обычном режиме EOF на stdin больше не фатален: `read` под set -e
 # возвращал 1 на закрытом вводе и убивал установку ПОСЕРЕДИНЕ -- воркспейс уже
@@ -97,10 +95,10 @@ die()  { printf "${R}✗ %s${N}\n" "$*" >&2; exit 1; }
 ask()  { local __v="$1" __l="$2" __d="${3:-}" __i=""; if [ -n "${!__v:-}" ]; then return; fi
          if [ "${NONINTERACTIVE:-0}" = "1" ]; then
            printf -v "$__v" '%s' "$__d"
-           printf "${C}[=]${N} %s: %s\n" "$__l" "${__d:-<пусто>}"
+           printf "${UI_INFO}[=]${UI_RESET} %s: %s\n" "$__l" "${__d:-<пусто>}"
            return
          fi
-         printf "${C}[?]${N} %s%s: " "$__l" "${__d:+ [$__d]}"; read -r __i || __i=""
+         printf "${UI_INFO}[?]${UI_RESET} %s%s: " "$__l" "${__d:+ [$__d]}"; read -r __i || __i=""
          printf -v "$__v" '%s' "${__i:-$__d}"; }
 
 echo "════════════════════════════════════════════"
@@ -174,7 +172,7 @@ done
 if [ -n "$TG_PLUGIN_DIR" ] && [ ! -d "$TG_PLUGIN_DIR/plugin/node_modules" ]; then
   BUN_BIN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
   if [ -x "$BUN_BIN" ]; then
-    warn "node_modules нет в $TG_PLUGIN_DIR/plugin — выполняю bun install"
+    step "ставлю зависимости плагина (bun install в $TG_PLUGIN_DIR/plugin)"
     ( cd "$TG_PLUGIN_DIR/plugin" && "$BUN_BIN" install --silent ) \
       && ok "bun install: зависимости плагина установлены" \
       || DEGRADED+=("bun install в $TG_PLUGIN_DIR/plugin провалился — канал не запустится")
@@ -524,7 +522,7 @@ elif ! [ -f "$UNIT_TMPL" ]; then
   warn "шаблон юнита не найден ($UNIT_TMPL) — автостарт пропущен"
   DEGRADED+=("автостарт пропущен: нет $UNIT_TMPL")
 else
-  warn "автостарт пропущен (AUTOSTART=0)"
+  note "автостарт пропущен (AUTOSTART=0)"
 fi
 
 # ── 6.5. Живая сессия должна перечитать конфиг ──────────────────
@@ -707,14 +705,14 @@ fi
 PANE_FINAL="$(tmux capture-pane -pt "=labops-${AGENT_ID}:^.{top-left}" -S -12 2>/dev/null || true)"
 if looks_like_bypass_permissions_prompt "$PANE_FINAL"; then
   echo
-  printf "${Y}⚠ Сессия агента ждёт вашего подтверждения (Bypass Permissions mode).${N}\n"
+  printf "${UI_WARN}⚠ Сессия агента ждёт вашего подтверждения (Bypass Permissions mode).${UI_RESET}\n"
   echo "  Claude Code просит согласие на режим без проверок — тот самый, в котором"
   echo "  агент и работает. Подтвердить может только человек, один раз на эту машину."
   echo "  В сессии: стрелка вниз на «Yes, I accept» → Enter → затем Ctrl-b и d (отключиться)."
   ATTACH_NOW=""
-  ask ATTACH_NOW "Подключиться к сессии агента сейчас? (y/n)" "y"
+  ask_yn ATTACH_NOW "Подключиться к сессии агента сейчас?" y
   case "$ATTACH_NOW" in
-    [Nn]*) DEGRADED+=("$(bypass_permissions_hint "labops-${AGENT_ID}")") ;;
+    n) DEGRADED+=("$(bypass_permissions_hint "labops-${AGENT_ID}")") ;;
     *)     tmux attach -t "=labops-${AGENT_ID}" \
              || DEGRADED+=("$(bypass_permissions_hint "labops-${AGENT_ID}")") ;;
   esac
@@ -722,16 +720,16 @@ fi
 
 echo
 if [ "$FAIL" = "0" ] && [ "${#DEGRADED[@]}" -eq 0 ]; then
-  printf "${G}✅ Агент '%s' (%s) готов и полностью рабочий. Напишите ему в Telegram.${N}\n" "$AGENT_NAME" "$AGENT_ID"
+  printf "${UI_OK}✓ Агент '%s' (%s) готов и полностью рабочий. Напишите ему в Telegram.${UI_RESET}\n" "$AGENT_NAME" "$AGENT_ID"
 elif [ "$FAIL" = "0" ]; then
-  printf "${Y}⚠ Агент '%s' (%s) создан, но НЕ всё включено:${N}\n" "$AGENT_NAME" "$AGENT_ID"
+  printf "${UI_WARN}⚠ Агент '%s' (%s) создан, но НЕ всё включено:${UI_RESET}\n" "$AGENT_NAME" "$AGENT_ID"
 else
-  printf "${Y}⚠ Агент '%s' создан, но часть smoke-проверок не прошла — см. предупреждения выше.${N}\n" "$AGENT_NAME"
+  printf "${UI_WARN}⚠ Агент '%s' создан, но часть smoke-проверок не прошла — см. предупреждения выше.${UI_RESET}\n" "$AGENT_NAME"
 fi
 # Явно перечисляем, что деградировало — чтобы «зелёная» установка не скрыла дыры.
 if [ "${#DEGRADED[@]}" -gt 0 ]; then
-  printf "${Y}   Что НЕ работает / не настроено:${N}\n"
+  printf "${UI_WARN}   Что НЕ работает / не настроено:${UI_RESET}\n"
   for d in "${DEGRADED[@]}"; do printf "     • %s\n" "$d"; done
 fi
-printf "   Воркспейс: ${B}%s${N}\n" "$WORKSPACE"
-printf "   Запуск вручную:\n     ${B}source %s/agent.env && claude --project %s${N}\n" "$WORKSPACE" "$WORKSPACE"
+printf "   Воркспейс: ${UI_BOLD}%s${UI_RESET}\n" "$WORKSPACE"
+printf "   Запуск вручную:\n     ${UI_BOLD}source %s/agent.env && claude --project %s${UI_RESET}\n" "$WORKSPACE" "$WORKSPACE"

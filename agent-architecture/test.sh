@@ -1025,9 +1025,44 @@ else
   bad "new-agent.sh: нет вызова хелпера или пропал запасной путь для хостов со старым sudoers"
 fi
 
+echo "── 24. Единый вид вывода установки ──"
+# 13.09.2026, отзыв с чистого сервера: на плановой доустановке пакетов установка
+# сыпала жёлтыми ⚠ («unzip не найден — устанавливаю»), значки и цвета у
+# install.sh, new-agent.sh, agent-template и tg-plugin различались, а вопрос о
+# пользователе был единственным «[Y/n]» среди «[?] …».
+unit "ui.sh: значки и вопрос да/нет — юнит-тест зелёный" \
+     "ui.sh: юнит-тест провален (orchestration/lib/ui.test.sh)" \
+     bash orchestration/lib/ui.test.sh
+
+# 24a. tg-plugin ставится и отдельно, поэтому держит копию блока — она не должна разойтись.
+UI_BLOCK="$(sed -n '/^# ui:begin/,/^# ui:end/p' orchestration/lib/ui.sh)"
+ui_drift=""
+for f in ../tg-plugin/install.sh ../tg-plugin/uninstall.sh; do
+  [ -f "$f" ] || continue
+  [ "$(sed -n '/^# ui:begin/,/^# ui:end/p' "$f")" = "$UI_BLOCK" ] || ui_drift+=" $f"
+done
+if [ -n "$UI_BLOCK" ] && [ -z "$ui_drift" ]; then
+  ok "tg-plugin: вид вывода совпадает с orchestration/lib/ui.sh"
+else
+  bad "копия ui-блока разошлась с orchestration/lib/ui.sh:$ui_drift"
+fi
+
+# 24b. В установщиках нет своих цветов, ✅, «[Y/n]» и ⚠ на плановой доустановке.
+UI_FILES="install.sh skills/create-agent/new-agent.sh agent-template/install.sh
+  orchestration/lib/model-choice.sh ../install.sh ../tg-plugin/install.sh ../tg-plugin/uninstall.sh"
+# shellcheck disable=SC2086
+ui_bad="$(grep -nHE "^[A-Z]+='\\033|✅|\[Y/n\]|\[y/N\]|\(y/n\)|read -r?p |warn \"[^\"]*(не найден|нет[^\"]*) — (устанавливаю|ставлю|выполняю)" \
+  $UI_FILES 2>/dev/null | grep -vE '^[^:]+:[0-9]+: *#' || true)"
+if [ -z "$ui_bad" ]; then
+  ok "установщики пишут через общие say/ok/warn/step/note и ask_yn"
+else
+  bad "в установщиках остался свой вид вывода:"
+  printf '%s\n' "$ui_bad" | sed 's/^/      /'
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
-  printf "${G}✅ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
+  printf "${G}✓ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
 else
-  printf "${R}❌ self-test провален: %d ошибок.${N}\n" "$fail"; exit 1
+  printf "${R}✗ self-test провален: %d ошибок.${N}\n" "$fail"; exit 1
 fi
