@@ -106,6 +106,13 @@ prompt CHARACTER_TRAITS       "Character traits (e.g. Pragmatic, calm, precise)"
 # Алиасы, а не версии: см. комментарий в skills/create-agent/new-agent.sh.
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "  Aliases resolve to the latest model of their tier: fable / opus (code+review) / sonnet (subagents+research) / haiku. A full model name pins a version."; }
 prompt PRIMARY_MODEL          "Primary model [opus]" "opus"
+# Имя модели уходит в settings.json как есть: с посторонними байтами агент молчит
+# при зелёной установке (см. orchestration/lib/model-choice.sh). Этот установщик
+# запускается и отдельно, поэтому проверка своя; new-agent.sh уже переспросил.
+if [ -z "$PRIMARY_MODEL" ] || [ -n "$(printf '%s' "$PRIMARY_MODEL" | LC_ALL=C tr -d 'A-Za-z0-9._[]-')" ]; then
+    err "Invalid model name: $(printf '%q' "$PRIMARY_MODEL") -- use Latin letters, digits and . _ - [ ] (e.g. opus, sonnet)"
+    exit 1
+fi
 prompt RESEARCH_MODEL         "Research model [Perplexity Sonar]" "Perplexity Sonar (web search only, no code)"
 prompt MAX_SUBAGENTS          "Max simultaneous subagents [5]" "5"
 
