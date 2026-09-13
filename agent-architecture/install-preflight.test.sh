@@ -59,6 +59,7 @@ mkdir -p "$REPO/orchestration/lib"
 cp "$HERE/install.sh" "$REPO/install.sh"
 cp "$HERE/orchestration/lib/preflight.sh" "$REPO/orchestration/lib/preflight.sh"
 cp "$HERE/orchestration/lib/sudo-compat.sh" "$REPO/orchestration/lib/sudo-compat.sh"
+cp "$HERE/orchestration/lib/ui.sh" "$REPO/orchestration/lib/ui.sh"
 
 # 1. Закрытый хост (403) — установка обязана остановиться.
 make_curl_stub 403

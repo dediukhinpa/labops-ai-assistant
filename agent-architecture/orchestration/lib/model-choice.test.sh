@@ -60,7 +60,7 @@ echo "$out" | grep -q 'RESULT=haiku$' || fail "закрытый stdin: моде�
 
 # 8. NONINTERACTIVE — без вопроса, но с предупреждением.
 out="$(run haiku 'n\nsonnet\n' 1)"
-echo "$out" | grep -q '\[y/N\]' && fail "NONINTERACTIVE: задан вопрос"
+echo "$out" | grep -q "\[y/n\]" && fail "NONINTERACTIVE: задан вопрос"
 echo "$out" | grep -q 'может не отвечать' || fail "NONINTERACTIVE: нет предупреждения"
 echo "$out" | grep -q 'RESULT=haiku$' || fail "NONINTERACTIVE: модель изменилась"
 

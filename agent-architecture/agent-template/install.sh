@@ -27,17 +27,15 @@ GLOBAL_DIR="${HOME}/.claude"
 DISTRO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SHARED_SKILLS_SRC="${DISTRO_ROOT}/skills"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-log()   { echo -e "${GREEN}[+]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
-err()   { echo -e "${RED}[x]${NC} $1"; }
-ask()   { echo -en "${CYAN}[?]${NC} $1: "; }
+# Значки и цвета — общие для всей установки (orchestration/lib/ui.sh): этот
+# скрипт зовёт new-agent.sh посреди установки, и его «[+]»/«[!]» выбивались из
+# остального вывода. «Skipping (exists)» — не проблема, а штатный повторный
+# прогон, поэтому идёт через note, а не warn.
+# shellcheck source=../orchestration/lib/ui.sh
+. "${DISTRO_ROOT}/orchestration/lib/ui.sh"
+log()   { ok "$1"; }
+err()   { printf "${UI_ERR}✗ %s${UI_RESET}\n" "$1" >&2; }
+ask()   { printf "${UI_INFO}[?]${UI_RESET} %s: " "$1"; }
 
 # Cross-platform sed in-place (macOS BSD vs GNU)
 sed_i() {
@@ -163,14 +161,11 @@ echo "  second_brain agent_router:  ${SECOND_BRAIN_AGENT_ROUTER_URL}"
 echo "  second_brain tasks:         ${SECOND_BRAIN_TASKS_URL}"
 echo "  Scopes:      ${AGENT_SCOPES}"
 echo ""
-if [ "${NONINTERACTIVE:-0}" != "1" ]; then
-    ask "Proceed? [Y/n]"
-    read -r CONFIRM
-    CONFIRM_LOWER=$(echo "$CONFIRM" | tr '[:upper:]' '[:lower:]')
-    if [[ "$CONFIRM_LOWER" == "n" ]]; then
-        echo "Cancelled."
-        exit 0
-    fi
+CONFIRM=""
+ask_yn CONFIRM "Proceed?" y
+if [ "$CONFIRM" = "n" ]; then
+    echo "Cancelled."
+    exit 0
 fi
 
 # ============================================================
@@ -207,7 +202,7 @@ fill_template() {
     local dst="$2"
 
     if [ -f "$dst" ]; then
-        warn "Skipping (exists): $dst"
+        note "Skipping (exists): $dst"
         return
     fi
 
@@ -257,7 +252,7 @@ copy_doc() {
         return
     fi
     if [ -f "$dst" ]; then
-        warn "Skipping (exists): $dst"
+        note "Skipping (exists): $dst"
         return
     fi
     cp "$src" "$dst"
@@ -314,7 +309,7 @@ for script in active-writer.sh reflect-nudge.sh decay-sweep.sh archive-roll.sh b
             chmod +x "${WORKSPACE}/scripts/${script}"
             log "Copied: scripts/${script}"
         else
-            warn "Skipping (exists): scripts/${script}"
+            note "Skipping (exists): scripts/${script}"
         fi
     else
         warn "Script not found in distro: ${script}"
@@ -329,7 +324,7 @@ for hook in heartbeat-hook.sh session-start-hook.sh stop-hook.sh precompact-hook
             chmod +x "${WORKSPACE}/hooks/${hook}"
             log "Copied: hooks/${hook}"
         else
-            warn "Skipping (exists): hooks/${hook}"
+            note "Skipping (exists): hooks/${hook}"
         fi
     else
         warn "Hook not found in distro: ${hook}"
@@ -369,19 +364,14 @@ if [ -d "$SHARED_SKILLS_SRC" ]; then
     echo "--- Shared skills ---"
     echo "Available in ${SHARED_SKILLS_SRC}:"
     ls -1 "$SHARED_SKILLS_SRC" | sed 's/^/  - /'
-    if [ "${NONINTERACTIVE:-0}" = "1" ]; then
-        ENABLE_ALL="${ENABLE_ALL:-y}"
-    else
-        ask "Symlink all shared skills into the workspace? [Y/n]"
-        read -r ENABLE_ALL
-    fi
-    ENABLE_ALL_LOWER=$(echo "$ENABLE_ALL" | tr '[:upper:]' '[:lower:]')
-    if [[ "$ENABLE_ALL_LOWER" != "n" ]]; then
+    # ENABLE_ALL=y|n из окружения отвечает без вопроса, как и раньше.
+    ask_yn ENABLE_ALL "Symlink all shared skills into the workspace?" y
+    if [ "$ENABLE_ALL" != "n" ]; then
         if [ ! -L "${WORKSPACE}/skills" ] && [ ! -d "${WORKSPACE}/skills" ]; then
             ln -s "$SHARED_SKILLS_SRC" "${WORKSPACE}/skills"
             log "Symlinked: skills/ -> ${SHARED_SKILLS_SRC}"
         else
-            warn "Skipping: skills/ already present"
+            note "Skipping: skills/ already present"
         fi
     else
         warn "Skills not linked. Symlink later: ln -s ${SHARED_SKILLS_SRC} ${WORKSPACE}/skills"
@@ -433,7 +423,7 @@ RULE
         esac
         log "Created: ${GLOBAL_DIR}/rules/${rule_file}"
     else
-        warn "Skipping (exists): ${GLOBAL_DIR}/rules/${rule_file}"
+        note "Skipping (exists): ${GLOBAL_DIR}/rules/${rule_file}"
     fi
 done
 

@@ -48,11 +48,9 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=orchestration/lib/sudo-compat.sh
 . "$REPO_DIR/orchestration/lib/sudo-compat.sh"
 
-C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[1m'; N='\033[0m'
-say()  { printf "\n${C}▶ %s${N}\n" "$*"; }
-ok()   { printf "${G}✓ %s${N}\n" "$*"; }
-warn() { printf "${Y}⚠ %s${N}\n" "$*"; }
-die()  { printf "${R}✗ %s${N}\n" "$*" >&2; exit 1; }
+# Значки и цвета вывода — общие для всей установки, см. orchestration/lib/ui.sh.
+# shellcheck source=orchestration/lib/ui.sh
+. "$REPO_DIR/orchestration/lib/ui.sh"
 
 MODE="full"
 [ "${1:-}" = "--test-only" ] && MODE="test"
@@ -75,11 +73,11 @@ fi
 install_via_pkgmgr() {
   local pkg="$1"
   if command -v apt-get >/dev/null 2>&1; then
-    warn "$pkg не найден — устанавливаю через apt-get${SUDO:+ (sudo)}"
+    step "устанавливаю $pkg (apt-get${SUDO:+, sudo})"
     $SUDO apt-get update -y
     $SUDO apt-get install -y "$pkg"
   elif command -v brew >/dev/null 2>&1; then
-    warn "$pkg не найден — устанавливаю через brew"
+    step "устанавливаю $pkg (brew)"
     brew install "$pkg"
   else
     die "$pkg не найден и не найден ни apt-get, ни brew — установите $pkg вручную."
@@ -205,11 +203,13 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
   say "2. Пользователь для агентов"
   echo "  Сейчас install.sh запущен от root. Рекомендуется отдельный"
   echo "  непривилегированный пользователь — под ним будут жить агенты."
-  read -rp "  Создать/использовать такого пользователя? [Y/n] " _ans
-  if [ "${_ans:-Y}" != "n" ] && [ "${_ans:-Y}" != "N" ]; then
+  CREATE_AGENT_USER=""
+  ask_yn CREATE_AGENT_USER "Создать/использовать такого пользователя?" y
+  if [ "$CREATE_AGENT_USER" = "y" ]; then
     AGENT_OS_USER=""
     while [ -z "$AGENT_OS_USER" ]; do
-      read -rp "  Имя пользователя для агентов: " AGENT_OS_USER
+      printf "${UI_INFO}[?]${UI_RESET} %s: " "Имя пользователя для агентов"
+      read -r AGENT_OS_USER || die "нет ввода — имя пользователя не задано"
       [ -z "$AGENT_OS_USER" ] && warn "имя не может быть пустым"
     done
     if id "$AGENT_OS_USER" >/dev/null 2>&1; then
@@ -362,7 +362,7 @@ if ! command -v claude >/dev/null 2>&1; then
   # `curl -fsSL … | bash`. Конвейер под `set -e` + `pipefail` обрывал установку
   # молча: curl -f отдаёт 22, конвейер падает, и die двумя строками ниже уже не
   # выполняется — оператор видел только `curl: (22)` и внезапный конец.
-  warn "claude не найден — устанавливаю (без Node.js)"
+  step "устанавливаю Claude Code (нативный бинарь, без Node.js)"
   if ! fetch_and_run "https://claude.ai/install.sh"; then
     # claude.ai — это только редирект; версия, манифест и сам бинарь (с проверкой
     # SHA256 внутри bootstrap) лежат на downloads.claude.ai, за другой
@@ -394,7 +394,7 @@ fi
 # поставленный root, ей не виден. Установщик bun требует unzip — он уже стоит
 # системным пакетом (шаг 1).
 if ! command -v bun >/dev/null 2>&1 && [ ! -x "$HOME/.bun/bin/bun" ]; then
-  warn "bun не найден — устанавливаю (Telegram-канал без него не запустится)"
+  step "устанавливаю bun — на нём работает Telegram-канал"
   # Тот же приём, что и с claude: скачиваем в файл и запускаем отдельной
   # командой. Конвейер `curl … | bash` под set -e + pipefail терял бы код
   # ошибки curl и обрывал установку молча.
@@ -578,7 +578,8 @@ else
   echo "  нажмите Enter — вот тогда появится ссылка для входа в браузере."
   echo "  Как только вход завершится, установщик сам это обнаружит и"
   echo "  закроет сессию — руками жать /exit не нужно."
-  read -rp "  Нажмите Enter, чтобы продолжить... " _
+  printf "${UI_INFO}[?]${UI_RESET} %s" "Нажмите Enter, чтобы продолжить... "
+  read -r _
 
   LOGIN_SESSION="installer-login-$$"
   tmux new-session -d -s "$LOGIN_SESSION" \
@@ -648,7 +649,7 @@ fi
 # НЕ вручную: scripts/connect-agents.sh (в его install.sh) сам подключит агента.
 # Печатаем спокойную инфо-строку, а не warn.
 [ -n "$SB" ] && [ ! -x "$SB/.venv/bin/python" ] && \
-  printf '\033[0;36mℹ %s\033[0m\n' "labops-second-brain пока не развёрнут — это нормально: он ставится вторым шагом (sudo bash $SB/scripts/install.sh), и его установщик сам выдаст токен агенту (connect-agents.sh). До этого recall у агента выключен."
+  note "labops-second-brain пока не развёрнут — это нормально: он ставится вторым шагом (sudo bash $SB/scripts/install.sh), и его установщик сам выдаст токен агенту (connect-agents.sh). До этого recall у агента выключен."
 export AGENT_NAME="${AGENT_NAME:-Developer}"
 export AGENT_ROLE="${AGENT_ROLE:-Разработчик}"
 export AGENT_ROLE_DESCRIPTION="${AGENT_ROLE_DESCRIPTION:-Автономный разработчик: пишет код, ревьюит архитектуру, гоняет тесты и помогает оператору создавать новых агентов.}"
@@ -666,8 +667,8 @@ if [ -d "$DEV_WS" ] && [ ! -e "$DEV_WS/skills/create-agent" ]; then
 fi
 
 say "Готово."
-printf "  ${G}Developer создан.${N} Напишите ему в Telegram, либо запустите вручную:\n"
-printf "    ${B}source %s/agent.env && claude --project %s${N}\n" "$DEV_WS" "$DEV_WS"
+printf "  ${UI_OK}Developer создан.${UI_RESET} Напишите ему в Telegram, либо запустите вручную:\n"
+printf "    ${UI_BOLD}source %s/agent.env && claude --project %s${UI_RESET}\n" "$DEV_WS" "$DEV_WS"
 echo "  Чтобы добавить следующего агента — попросите Developer «Создай нового агента»"
 echo "  (он применит скилл create-agent) или запустите:"
-printf "    ${B}bash skills/create-agent/new-agent.sh${N}\n"
+printf "    ${UI_BOLD}bash skills/create-agent/new-agent.sh${UI_RESET}\n"
