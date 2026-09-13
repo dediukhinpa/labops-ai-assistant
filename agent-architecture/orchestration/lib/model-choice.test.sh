@@ -64,4 +64,36 @@ echo "$out" | grep -q "\[y/n\]" && fail "NONINTERACTIVE: задан вопрос
 echo "$out" | grep -q 'может не отвечать' || fail "NONINTERACTIVE: нет предупреждения"
 echo "$out" | grep -q 'RESULT=haiku$' || fail "NONINTERACTIVE: модель изменилась"
 
+# 9. Имя модели: допустимые проходят, мусор от русской раскладки — нет.
+for m in opus sonnet fable haiku claude-opus-5 'claude-opus-5[1m]' claude-haiku-4-5-20251001 'opus[1m]'; do
+  is_valid_model_name "$m" || fail "отверг допустимое имя: $m"
+done
+for m in "" $'\xd1\x8b\xd1sonnet' 'ыsonnet' 'sonnet ы' 'son net' '-opus' 'opus;rm' 'opus"'; do
+  is_valid_model_name "$m" && fail "принял недопустимое имя: $(printf '%q' "$m")"
+done
+
+# 10. Мусор в ответе — вопрос заново, итог чистый; байты показаны в виде %q.
+out="$(run $'\xd1\x8b\xd1sonnet' 'sonnet\n' 2>&1)"
+echo "$out" | grep -q 'Недопустимое имя модели' || fail "мусор: нет ошибки"
+echo "$out" | grep -qF '\321sonnet' || fail "мусор: байты не показаны через %q: $out"
+echo "$out" | grep -q 'RESULT=sonnet$' || fail "мусор: не переспросил: $out"
+
+# 11. Мусор, затем Enter — значение по умолчанию; пробелы по краям срезаются.
+out="$(run 'ыsonnet' '\n' 2>&1)"
+echo "$out" | grep -q 'RESULT=opus$' || fail "мусор + Enter: не opus: $out"
+out="$(run '  sonnet ' '' 2>&1)"
+[ "$out" = "RESULT=sonnet" ] || fail "пробелы по краям не срезаны: $out"
+
+# 12. Мусор без живого ввода — установка останавливается, а не пишет модель.
+rc=0; out="$(run 'ыsonnet' '' 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "закрытый stdin + мусор: не остановился: $out"
+echo "$out" | grep -q 'RESULT=' && fail "закрытый stdin + мусор: модель записана"
+rc=0; out="$(run 'ыsonnet' 'sonnet\n' 1 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "NONINTERACTIVE + мусор: не остановился: $out"
+
+# 13. Мусор, исправленный на haiku, всё равно проходит через предупреждение.
+out="$(run 'ыhaiku' 'haiku\ny\n' 2>&1)"
+echo "$out" | grep -q 'может не отвечать' || fail "мусор → haiku: нет предупреждения"
+echo "$out" | grep -q 'RESULT=haiku$' || fail "мусор → haiku + y: $out"
+
 echo "model-choice: ok"
