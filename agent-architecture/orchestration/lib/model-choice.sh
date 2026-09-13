@@ -27,7 +27,8 @@
 # shellcheck source=ui.sh
 . "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
 
-MODEL_CHOICE_DEFAULT="${MODEL_CHOICE_DEFAULT:-opus}"
+# sonnet по умолчанию: владелец выбрал его для новых агентов (13.09.2026).
+MODEL_CHOICE_DEFAULT="${MODEL_CHOICE_DEFAULT:-sonnet}"
 
 # is_haiku_model <модель> — алиас haiku или полное имя из семейства Haiku.
 is_haiku_model() {
@@ -61,7 +62,7 @@ ask_model_again() {
 
 # confirm_primary_model — проверяет PRIMARY_MODEL: недопустимое имя спрашивает
 # заново (без живого ввода — die), при Haiku предупреждает и спрашивает, оставить
-# ли. Отказ — вопрос о модели заново (Enter = opus).
+# ли. Отказ — вопрос о модели заново (Enter = sonnet).
 confirm_primary_model() {
   local keep=""
   while :; do

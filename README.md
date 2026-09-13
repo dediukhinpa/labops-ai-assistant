@@ -167,7 +167,7 @@ The root `install.sh` installs `agent-architecture` (deps, Claude Code, the firs
 **Shared memory** — `labops-second-brain` is a *separate* dependency, not part of this repo. `install.sh` clones it next to the repo (unless `SKIP_SECOND_BRAIN=1`); install it with `sudo bash ~/labops-second-brain/scripts/install.sh` (or hand it to a Claude Code agent following its `AGENT.md`). It issues the agent a Bearer token and brings up MCP `memory:5001` / `memory_router:5002` / `agent_router:5000` / `tasks:5003` (the task board).
 
 > [!TIP]
-> For the first agent (Developer) the default model is `opus` (Opus 4.8). You install only the **first** agent — then the swarm grows itself: the Developer spawns the rest via the `create-agent` skill.
+> The default model is `sonnet` (an alias — always the latest model of its tier). You install only the **first** agent — then the swarm grows itself: the Developer spawns the rest via the `create-agent` skill.
 
 > [!IMPORTANT]
 > **Model & auth.** Sign in once with `claude setup-token` (Max/Pro subscription, first-party — no third-party risk). The agent's model is set in `settings.json` (the `model` field). Model config is **operator-owned** — never change it without the owner. Without sign-in the agent starts under systemd but can't reach the model — the smoke test catches this.

@@ -563,7 +563,7 @@ else
 fi
 
 # 14g. read под set -e не должен убивать установку посередине.
-if grep -q 'read -r __i || __i=""' "$NA" && grep -q 'NONINTERACTIVE' "$NA"; then
+if grep -qF 'read -r __i || { __i=""; ASK_EOF=1;' "$NA" && grep -q 'NONINTERACTIVE' "$NA"; then
   ok "ask переживает закрытый stdin и умеет неинтерактивный режим"
 else
   bad "ask падает на EOF — установка оборвётся между воркспейсом и юнитом"
@@ -664,7 +664,10 @@ echo "── 16. Модель задаётся алиасом, а не приб�
 # это молча устарело — алиас opus давно резолвится в следующее поколение. Номер
 # версии в тексте устаревает всегда, алиас — никогда. Комментарии из проверки
 # исключаем: объяснение, ПОЧЕМУ версий тут быть не должно, само содержит пример.
-MODEL_FILES="skills/create-agent/new-agent.sh agent-template/install.sh"
+# SKILL.md и README тоже: 13.09.2026 «opus (Opus 4.8)» нашёлся в подсказке скилла,
+# по которой агент советует модель оператору, и в четырёх README.
+MODEL_FILES="skills/create-agent/new-agent.sh agent-template/install.sh skills/create-agent/SKILL.md"
+MODEL_FILES="$MODEL_FILES README.md README.ru.md ../README.md ../README.ru.md"
 MODEL_FILES="$MODEL_FILES $(ls agent-template/templates/*.template 2>/dev/null)"
 pinned=""
 for f in $MODEL_FILES; do
@@ -707,6 +710,13 @@ if grep -qE '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh \
 else
   bad "new-agent.sh не зовёт confirm_primary_model — haiku пройдёт молча"
 fi
+
+# 16e. Скилл запускает new-agent.sh без stdin: забытый allowlist давал бота,
+# отвечающего всем, забытое имя — второго Developer. Такие ответы проверяются до
+# создания чего-либо (lib/agent-inputs.sh).
+unit "без живого ввода недостающие имя и allowlist останавливают new-agent.sh — юнит-тест зелёный" \
+     "agent-inputs: юнит-тест провален (orchestration/lib/agent-inputs.test.sh)" \
+     bash orchestration/lib/agent-inputs.test.sh
 
 echo "── 17. Секреты не попадают в командную строку ──"
 

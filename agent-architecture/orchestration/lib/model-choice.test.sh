@@ -27,8 +27,8 @@ for m in opus sonnet fable claude-sonnet-5 ""; do
 done
 
 # 2. Не Haiku — ни вопроса, ни предупреждения.
-out="$(run sonnet '')"
-[ "$out" = "RESULT=sonnet" ] || fail "sonnet: лишний вывод или смена модели: $out"
+out="$(run opus '')"
+[ "$out" = "RESULT=opus" ] || fail "opus: лишний вывод или смена модели: $out"
 
 # 3. Haiku + согласие — модель остаётся, предупреждение показано.
 out="$(run haiku 'y\n')"
@@ -43,7 +43,7 @@ echo "$out" | grep -q 'RESULT=sonnet$' || fail "отказ не привёл к 
 
 # 5. Отказ + Enter на новом вопросе — значение по умолчанию.
 out="$(run haiku 'n\n\n')"
-echo "$out" | grep -q 'RESULT=opus$' || fail "Enter на новом вопросе не дал opus: $out"
+echo "$out" | grep -q 'RESULT=sonnet$' || fail "Enter на новом вопросе не дал sonnet: $out"
 
 # 6. Повторно ввели haiku — спрашиваем снова, а не пропускаем.
 out="$(run haiku 'n\nhaiku\ny\n')"
@@ -80,7 +80,7 @@ echo "$out" | grep -q 'RESULT=sonnet$' || fail "мусор: не переспр�
 
 # 11. Мусор, затем Enter — значение по умолчанию; пробелы по краям срезаются.
 out="$(run 'ыsonnet' '\n' 2>&1)"
-echo "$out" | grep -q 'RESULT=opus$' || fail "мусор + Enter: не opus: $out"
+echo "$out" | grep -q 'RESULT=sonnet$' || fail "мусор + Enter: не sonnet: $out"
 out="$(run '  sonnet ' '' 2>&1)"
 [ "$out" = "RESULT=sonnet" ] || fail "пробелы по краям не срезаны: $out"
 

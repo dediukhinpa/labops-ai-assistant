@@ -79,6 +79,8 @@ ORCH_DIR="$REPO_DIR/orchestration"
 . "$ORCH_DIR/lib/model-choice.sh"
 # shellcheck source=../../orchestration/lib/sudo-compat.sh
 . "$ORCH_DIR/lib/sudo-compat.sh"
+# shellcheck source=../../orchestration/lib/agent-inputs.sh
+. "$ORCH_DIR/lib/agent-inputs.sh"
 # Нативный claude ставится в ~/.local/bin, но PATH туда правится только в
 # ~/.bashrc — при запуске не-login шеллом (sudo -u ... -H bash ...) это не
 # подхватывается. Подмешиваем явно, чтобы claude находился и здесь, и в
@@ -92,13 +94,14 @@ export PATH="$HOME/.local/bin:$PATH"
 # И даже в обычном режиме EOF на stdin больше не фатален: `read` под set -e
 # возвращал 1 на закрытом вводе и убивал установку ПОСЕРЕДИНЕ -- воркспейс уже
 # создан, канала и юнита ещё нет. Теперь EOF просто означает «бери default».
-ask()  { local __v="$1" __l="$2" __d="${3:-}" __i=""; if [ -n "${!__v:-}" ]; then return; fi
+# ASK_EOF=1 после вызова — ввода не было, взято значение по умолчанию.
+ask()  { local __v="$1" __l="$2" __d="${3:-}" __i=""; ASK_EOF=0; if [ -n "${!__v:-}" ]; then return; fi
          if [ "${NONINTERACTIVE:-0}" = "1" ]; then
            printf -v "$__v" '%s' "$__d"
            printf "${UI_INFO}[=]${UI_RESET} %s: %s\n" "$__l" "${__d:-<пусто>}"
            return
          fi
-         printf "${UI_INFO}[?]${UI_RESET} %s%s: " "$__l" "${__d:+ [$__d]}"; read -r __i || __i=""
+         printf "${UI_INFO}[?]${UI_RESET} %s%s: " "$__l" "${__d:+ [$__d]}"; read -r __i || { __i=""; ASK_EOF=1; echo; }
          printf -v "$__v" '%s' "${__i:-$__d}"; }
 
 # Backspace в терминале без iutf8 стирает один байт из двух у кириллической
@@ -188,6 +191,9 @@ fi
 
 # ── 1. Параметры агента ─────────────────────────────────────────
 say "1. Конфигурация агента"
+# Без живого ввода (скилл create-agent из Bash-инструмента) — проверить ответы
+# до того, как создано хоть что-то; см. lib/agent-inputs.sh.
+require_unattended_inputs
 ask AGENT_NAME  "Имя агента (напр. Developer, Friday)" "Developer"
 ask AGENT_ROLE  "Роль агента" "Разработчик"
 ask AGENT_ROLE_DESCRIPTION "Описание роли одной фразой" "Автономный разработчик: пишет код, ревьюит архитектуру, гоняет тесты, помогает ставить других агентов."
@@ -202,7 +208,7 @@ fi
 # нужно править с каждым релизом. Раньше здесь стояло «opus = Opus 4.8» —
 # и устарело молча. Полное имя тоже принимается: им закрепляют конкретную
 # версию, когда обновление модели нежелательно.
-ask PRIMARY_MODEL    "Модель — алиас последней (fable / opus / sonnet / haiku) либо полное имя для закрепления версии" "opus"
+ask PRIMARY_MODEL    "Модель — алиас последней (fable / opus / sonnet / haiku) либо полное имя для закрепления версии" "sonnet"
 # Haiku не отвечает через reply канала — агент молчит в Telegram при зелёной
 # установке. Спрашиваем подтверждение, см. lib/model-choice.sh.
 confirm_primary_model
@@ -355,18 +361,24 @@ if [ -n "$TG_PLUGIN_DIR" ]; then
   fi
   ask TELEGRAM_BOT_TOKEN "Токен Telegram-бота (@BotFather → /newbot)" ""
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
-    ask TELEGRAM_ALLOWED_USER_IDS "Ваш Telegram user_id (у @userinfobot)" ""
     # Валидация формата: опечатка в user_id (нецифра/пробел) раньше проходила
     # молча — бот игнорировал оператора без единого предупреждения (кейс
     # developer: 24546645 вместо 124546645 не поймать, но мусор — поймаем).
-    if [ -n "${TELEGRAM_ALLOWED_USER_IDS:-}" ] \
-       && ! printf '%s' "$TELEGRAM_ALLOWED_USER_IDS" | grep -qE '^-?[0-9]+(,-?[0-9]+)*$'; then
-      warn "user_id '$TELEGRAM_ALLOWED_USER_IDS' не похож на id (цифры через запятую, для групп с -100)"
-      ask TELEGRAM_ALLOWED_USER_IDS "Повторите Telegram user_id" ""
-      printf '%s' "${TELEGRAM_ALLOWED_USER_IDS:-}" | grep -qE '^-?[0-9]+(,-?[0-9]+)*$' \
-        || { DEGRADED+=("allowlist невалиден ('${TELEGRAM_ALLOWED_USER_IDS:-}') — исправьте TELEGRAM_ALLOWED_USER_IDS в channel.env"); TELEGRAM_ALLOWED_USER_IDS=""; }
-    fi
-    [ -n "${TELEGRAM_ALLOWED_USER_IDS:-}" ] || DEGRADED+=("allowlist пуст: бот будет отвечать ВСЕМ — впишите user_id в channel.env")
+    # Пустой allowlist больше не принимается: раньше это была строка в сводке,
+    # а бот тем временем отвечал всем (см. lib/agent-inputs.sh).
+    while :; do
+      ask TELEGRAM_ALLOWED_USER_IDS "Ваш Telegram user_id (у @userinfobot)" ""
+      valid_allowlist "${TELEGRAM_ALLOWED_USER_IDS:-}" && break
+      if [ -z "${TELEGRAM_ALLOWED_USER_IDS:-}" ]; then
+        warn "без user_id бот будет отвечать всем, кто его найдёт, а агент выполняет команды на сервере"
+      else
+        warn "user_id '$TELEGRAM_ALLOWED_USER_IDS' не похож на id (цифры через запятую, для групп с -100)"
+      fi
+      if [ "$ASK_EOF" = "1" ] || ! input_is_live; then
+        die "задайте TELEGRAM_ALLOWED_USER_IDS и запустите снова (REUSE_EXISTING=1 — донастроить созданное)"
+      fi
+      TELEGRAM_ALLOWED_USER_IDS=""
+    done
     BOT_ID="${TELEGRAM_BOT_TOKEN%%:*}"
     # Уникальный webhook-порт: если у ЭТОГО агента уже был channel.env (напр.
     # обновление токена при REUSE_EXISTING=1) — берём его же порт, а не ищем
