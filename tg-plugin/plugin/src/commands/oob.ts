@@ -2,7 +2,9 @@
 // notification is sent to Claude. Mirrors gateway.py:_OOB_COMMANDS +
 // _handle_oob_command + handle_command (status/help/reset/new branches).
 //
-// Scope A commands: /help, /status, /stop, /reset, /new.
+// Scope A commands: /help, /status, /stop, /reset, /doctor.
+// /new убран 15.09.2026: он дублировал /reset — в Claude Code «новая сессия» и
+// «сброс» это одно действие, /clear.
 // Explicitly NOT included: /compact, /halt (Scope B per PLAN.md T10).
 //
 // Parsing rules (gateway.py:3037-3046 + 3366-3370):
@@ -10,19 +12,20 @@
 //   - Optional `@botname` suffix is stripped when it matches our bot's
 //     username (case-insensitive).
 //   - Command word is lowercased.
-//   - Trailing `force` token in args sets hasForceFlag (for /reset force,
-//     /new force).
+//   - Trailing `force` token in args sets hasForceFlag (for /reset force).
 //
 // Handling notes:
 //   - /help and /status reply directly to Telegram and DO NOT wake Claude
 //     (no channel notification). Status is a snapshot of plugin-side state
 //     only — Claude session lives in the host process and we don't poke it.
-//   - /stop, /reset force, /new force ack the user AND emit a channel
-//     notification with meta.command=<name>. The plugin can't truly
-//     interrupt Claude (no public API for that yet); /help documents this
-//     limitation.
-//   - /reset and /new without `force` return a short reply asking for the
-//     flag, no channel notification.
+//   - /stop acks the user AND emits a channel notification with
+//     meta.command=stop. The plugin can't truly interrupt Claude (no public
+//     API for that yet); /help documents this limitation.
+//   - /reset force, как и /doctor, кладёт заявку для watchdog: сбросить
+//     контекст может только набор /clear в панели сессии, а плагин живёт
+//     внутри неё. Раньше команда пересылала модели текст «/reset force» и
+//     сразу отвечала «сброшено», хотя сброса не было.
+//   - /reset without `force` returns a short reply asking for the flag.
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -33,14 +36,13 @@ import type { TelegramApi } from '../channel/tools.js'
 import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 
-export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'new' | 'doctor'
+export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'doctor'
 
 const KNOWN_COMMANDS = new Set<OobCommandName>([
   'help',
   'status',
   'stop',
   'reset',
-  'new',
   'doctor',
 ])
 
@@ -116,6 +118,8 @@ export interface OobContext {
   // Путь файла-заявки, которую подхватывает watchdog (см. /doctor). Не задан —
   // значит агент запущен без надзора, и чинить его этой командой некому.
   doctorRequestPath?: string
+  // Путь заявки на сброс сессии (/reset force). Пусто — надзора нет.
+  resetRequestPath?: string
 }
 
 export interface OobResult {
@@ -123,9 +127,9 @@ export interface OobResult {
   command: OobCommandName
   notifyChannel?: { content: string; meta: Record<string, string> }
   replyToTelegram?: { text: string; parseMode?: 'HTML' }
-  // /doctor: файл-заявка для watchdog. Писать её должен исполнитель результата,
-  // а не обработчик — тот остаётся чистой функцией над данными.
-  writeDoctorRequest?: { path: string; chatId: string }
+  // /doctor и /reset force: файл-заявка для watchdog. Писать её должен
+  // исполнитель результата, а не обработчик — тот остаётся чистой функцией.
+  writeRequest?: { path: string; chatId: string }
   // Чем ответить, если заявку записать не удалось: обещать проверку, которой не
   // будет, хуже, чем честно сказать, что позвать доктора не вышло.
   replyOnWriteFailure?: { text: string; parseMode?: 'HTML' }
@@ -143,8 +147,7 @@ function helpText(): string {
     + '<code>/status</code> — снимок плагина и сессии\n'
     + '<code>/doctor</code> — проверить агента и починить, если сломан\n'
     + '<code>/stop</code> — попросить Claude остановить текущую задачу\n'
-    + '<code>/reset force</code> — сбросить состояние сессии (подтверди флагом <code>force</code>)\n'
-    + '<code>/new force</code> — начать новую сессию (подтверди флагом <code>force</code>)\n\n'
+    + '<code>/reset force</code> — начать сессию с чистого контекста, память сохраняется\n\n'
     + '<i>примечание: /stop — best-effort: плагин передаёт сигнал остановки через '
     + 'канал, но не может гарантировать прерывание посреди вызова инструмента.</i>'
   )
@@ -161,8 +164,7 @@ export const BOT_COMMANDS: ReadonlyArray<BotCommandSpec> = [
   { command: 'status', description: 'снимок плагина и сессии' },
   { command: 'doctor', description: 'проверить и починить агента' },
   { command: 'stop', description: 'попросить Claude остановиться' },
-  { command: 'reset', description: 'сбросить сессию (нужен force)' },
-  { command: 'new', description: 'начать новую сессию (нужен force)' },
+  { command: 'reset', description: 'очистить контекст сессии (нужен force)' },
 ]
 
 function statusText(ctx: OobContext): string {
@@ -205,11 +207,23 @@ function statusText(ctx: OobContext): string {
 export function resolveDoctorRequestPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  return resolveStateRequestPath('doctor.request', env)
+}
+
+// Заявка на сброс сессии. ДОЛЖНА совпадать с reset_request_path из
+// agent-architecture/orchestration/lib/session-reset.sh.
+export function resolveResetRequestPath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return resolveStateRequestPath('reset.request', env)
+}
+
+function resolveStateRequestPath(file: string, env: NodeJS.ProcessEnv): string {
   const id = env.AGENT_ID ?? env.TELEGRAM_MEMORY_AGENT_LABEL ?? ''
   if (id.length === 0) return ''
   const lab = env.CLAUDE_LAB ?? (env.HOME !== undefined ? `${env.HOME}/.claude-lab` : '')
   if (lab.length === 0) return ''
-  return `${lab}/shared/state/${id.toLowerCase()}/doctor.request`
+  return `${lab}/shared/state/${id.toLowerCase()}/${file}`
 }
 
 function escapeHtml(s: string): string {
@@ -275,7 +289,7 @@ export async function handleOobCommand(
       return {
         handled: true,
         command: 'doctor',
-        writeDoctorRequest: { path: ctx.doctorRequestPath, chatId: ctx.chatId },
+        writeRequest: { path: ctx.doctorRequestPath, chatId: ctx.chatId },
         replyToTelegram: { text: '🩺 Проверяю агента, скоро отвечу.' },
         replyOnWriteFailure: { text: 'Не смог позвать доктора — надзор недоступен.' },
       }
@@ -323,37 +337,23 @@ export async function handleOobCommand(
         }
       }
       ctx.log.info('oob /reset force', { chat_id: ctx.chatId })
+      // Модель не будим: команда про сессию, а не для неё. «Сброшено» ответит
+      // watchdog после фактического /clear, здесь только подтверждаем приём.
+      if (ctx.resetRequestPath === undefined || ctx.resetRequestPath === '') {
+        return {
+          handled: true,
+          command: 'reset',
+          replyToTelegram: { text: 'Сбросить некому: агент запущен без надзора.' },
+        }
+      }
       return {
         handled: true,
         command: 'reset',
+        writeRequest: { path: ctx.resetRequestPath, chatId: ctx.chatId },
         replyToTelegram: {
-          text: '<b>сессия сброшена (force)</b>\n\nследующее сообщение начнёт новую сессию',
-          parseMode: 'HTML',
+          text: '🔄 Сброшу сессию, как только агент закончит текущий ответ, и напишу.',
         },
-        notifyChannel: { content: '/reset force', meta: baseMeta },
-      }
-    }
-
-    case 'new': {
-      if (!parsed.hasForceFlag) {
-        return {
-          handled: true,
-          command: 'new',
-          replyToTelegram: {
-            text: 'Для подтверждения добавь <code>force</code>: <code>/new force</code>',
-            parseMode: 'HTML',
-          },
-        }
-      }
-      ctx.log.info('oob /new force', { chat_id: ctx.chatId })
-      return {
-        handled: true,
-        command: 'new',
-        replyToTelegram: {
-          text: '<b>новая сессия</b>\n\nследующее сообщение начнёт новую сессию',
-          parseMode: 'HTML',
-        },
-        notifyChannel: { content: '/new force', meta: baseMeta },
+        replyOnWriteFailure: { text: 'Не смог передать сброс — надзор недоступен.' },
       }
     }
   }
@@ -374,13 +374,13 @@ export async function executeOobResult(
   // Заявка пишется ПЕРЕД ответом: иначе оператор получил бы «скоро отвечу» на
   // проверку, которая не запустилась.
   let reply = result.replyToTelegram
-  if (result.writeDoctorRequest) {
-    const { path: reqPath, chatId } = result.writeDoctorRequest
+  if (result.writeRequest) {
+    const { path: reqPath, chatId } = result.writeRequest
     try {
       await mkdir(dirname(reqPath), { recursive: true })
       await writeFile(reqPath, chatId, 'utf8')
     } catch (err) {
-      ctx.log.warn('doctor request write failed', {
+      ctx.log.warn('watchdog request write failed', {
         command: result.command,
         error: err instanceof Error ? err.message : String(err),
       })

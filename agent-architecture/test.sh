@@ -438,6 +438,9 @@ else
 fi
 unit "doctor.sh: диагноз и починка на подменённом окружении — юнит-тест зелёный" "doctor.sh: юнит-тест провален (bash orchestration/doctor.test.sh)" bash orchestration/doctor.test.sh
 unit "очередь /doctor: запрос исполняется один раз, команда не зацикливается — юнит-тест зелёный" "очередь /doctor: юнит-тест провален (bash orchestration/lib/doctor-request.test.sh)" bash orchestration/lib/doctor-request.test.sh
+# /reset force: раньше плагин отвечал «сброшено» без сброса. Теперь watchdog
+# набирает /clear после конца хода и отвечает только по подтверждению хуков.
+unit "/reset force: /clear после хода, ответ по факту сброса — юнит-тест зелёный" "/reset force: юнит-тест провален (bash orchestration/lib/session-reset.test.sh)" bash orchestration/lib/session-reset.test.sh
 # Отвечать на /doctor обязан watchdog, а не плагин: доктор вправе перезапустить
 # сессию, и плагин (он живёт ВНУТРИ неё) умрёт, не успев отправить вердикт.
 if grep -q 'serve_doctor_request' orchestration/watchdog.sh; then
@@ -449,7 +452,8 @@ fi
 # бы /doctor тихо неработающим: заявка легла бы туда, куда никто не смотрит.
 OOB_TS="../tg-plugin/plugin/src/commands/oob.ts"
 if [ -f "$OOB_TS" ]; then
-  if grep -q 'shared/state/\${id.toLowerCase()}/doctor.request' "$OOB_TS" \
+  if grep -q 'shared/state/\${id.toLowerCase()}/\${file}' "$OOB_TS" \
+       && grep -q "resolveStateRequestPath('doctor.request'" "$OOB_TS" \
        && grep -q 'shared/state/' orchestration/lib/doctor-request.sh \
        && grep -q "doctor.request" orchestration/lib/doctor-request.sh; then
     ok "путь заявки /doctor одинаков в watchdog и в плагине"

@@ -133,16 +133,17 @@ Operator sends `/compact` in Telegram:
 
 ### /reset command (session reset)
 
-Operator sends `/reset` in Telegram:
+Operator sends `/reset force` in Telegram (`/reset` alone only asks for `force`):
 
 ```
-1. The next message starts a fresh session
-2. The old session's history stays on disk (nothing is deleted or summarised)
+1. The plugin files a request (shared/state/<agent>/reset.request)
+2. The watchdog waits until the current turn ends, types /clear into the session pane
+3. SessionEnd fires -> brain-flush.sh sends the diary tail + handoff to second_brain inbox/
+4. The watchdog confirms via hooks.log and replies in Telegram
 ```
 
-- Nothing is saved to a separate archive file: decisions and preferences already
-  live in `passive/` (loaded every session) and in second_brain.
-- `/reset force` is accepted and behaves the same.
+- Memory files (`active/`, `passive/`, `archived/`) are not touched; only the context is cleared.
+- `/new` no longer exists — it duplicated `/reset`.
 
 ### Reflection: ACTIVE episodic -> PASSIVE insights (event-driven, no cron)
 

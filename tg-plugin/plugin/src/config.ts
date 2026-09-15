@@ -85,7 +85,6 @@ export const AppConfigSchema = z.object({
     status: z.boolean().default(true),
     stop: z.boolean().default(true),
     reset: z.boolean().default(true),
-    new: z.boolean().default(true),
   }).default({}),
   // Phase 8: Memory hooks parity with gateway.py:1938-2035. When a Claude
   // hook (UserPromptSubmit / Stop) fires, the plugin writes a turn entry to

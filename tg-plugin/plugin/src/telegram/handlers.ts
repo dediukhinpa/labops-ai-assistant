@@ -46,6 +46,7 @@ import {
   handleOobCommand,
   parseOobCommand,
   resolveDoctorRequestPath,
+  resolveResetRequestPath,
   type OobContext,
 } from '../commands/oob.js'
 import {
@@ -1180,6 +1181,7 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
         botId: deps.bot.id,
         stateDir: deps.statePaths.root,
         doctorRequestPath: resolveDoctorRequestPath(),
+        resetRequestPath: resolveResetRequestPath(),
         ...(deps.statusManager
           ? {
               statusManager: {
