@@ -756,6 +756,18 @@ else
   bad "session-exec.sh не делает exec — pane_pid укажет на bash"
 fi
 
+# 17e. Пробуждение из глубокого сна (PR 7 плана тарифов labops-web-app,
+# deploy/provision_queue.py: write_deep_sleep_marker): метка на диске
+# отличает «усыплён» от «упал», и панель добавляет --continue, только когда
+# метка была.
+unit "deep-sleep-continue.sh: метка --continue берётся и потребляется — юнит-тест зелёный" "deep-sleep-continue.sh: юнит-тест провален (orchestration/lib/deep-sleep-continue.test.sh)" bash orchestration/lib/deep-sleep-continue.test.sh
+
+if grep -q 'RESUME_ARGS\[@\]' orchestration/session-exec.sh; then
+  ok "панель добавляет --continue после глубокого сна, не при обычном старте"
+else
+  bad "session-exec.sh не подключает deep-sleep-continue — --continue никогда не добавится"
+fi
+
 echo "── 18. Предполётная проверка доступности хостов ──"
 
 # 18a. Классификация ответа хоста (403 ≠ нет связи) — на подставном curl.
