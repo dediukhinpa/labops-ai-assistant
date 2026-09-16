@@ -30,7 +30,7 @@ Heavy work -> subagents. Architecture and review -> main agent.
 - Bearer token: stored in `.mcp.json` (see `agent-template/templates/mcp.json.template`)
 - Recall: MCP tool `recall` on `${SECOND_BRAIN_MEMORY_ROUTER_URL}` (default `http://${MCP_HOST}:5002/mcp`) — JSON-RPC `tools/call`, args `{"query":"<topic>","limit":10}`
 - Write: MCP tools `create_decision_note`, `supersede_decision`, `create_error_pattern_note`, `create_handoff` on `${SECOND_BRAIN_MEMORY_URL}` (default `http://${MCP_HOST}:5001/mcp`)
-- Swarm: MCP tool `notify` on `${SECOND_BRAIN_AGENT_ROUTER_URL}` (default `http://${MCP_HOST}:5000/mcp`) for inter-agent triggers
+- Agent router: MCP tool `notify` on `${SECOND_BRAIN_AGENT_ROUTER_URL}` (default `http://${MCP_HOST}:5000/mcp`) for inter-agent triggers
 
 ## Team
 

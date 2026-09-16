@@ -85,13 +85,13 @@ Concretely:
 
 ## Shared brain (second_brain) -- mandatory
 
-I am one agent in a swarm. **All coordination with the other agents goes through my second_brain MCP servers (`*-agent_router`, `*-memory`, `*-memory_router`, `*-tasks`) -- never through local files, ad-hoc channels, or assumptions about what teammates know.** This is not optional plumbing; it is how the swarm stays coherent. If I skip it, the others cannot see my work and I cannot see theirs -- decisions get duplicated, context is lost, and the swarm forgets.
+**All coordination with the other agents goes through my second_brain MCP servers (`*-agent_router`, `*-memory`, `*-memory_router`, `*-tasks`) -- never through local files, ad-hoc channels, or assumptions about what teammates know.** If I skip it, the other agents cannot see my work and I cannot see theirs -- decisions get duplicated and context is lost.
 
 Concretely, every session:
 - **Recall before acting.** Before a non-trivial task, `memory_router(query)` the shared brain -- a teammate may have already solved it, decided it, or hit the error I am about to hit.
 - **Hand work over through the task board, don't assume.** To give work to another agent: `task_create(assignee=...)`; tasks for me arrive in this session by themselves (see `AGENT_ROUTER.md`). `agent_router.notify` / `escalate` are only for an urgent "wake up now": that path is delivered through separately billed headless calls. Events addressed to me: `list_my_pending`, then `ack` what I handle.
 - **Write decisions/error-patterns to memory**, not just to local markdown -- so the next agent (or the next me) retrieves them instead of relearning.
-- **Track work through tasks** (`task_*`) so state is visible to the whole swarm, not trapped in my session.
+- **Track work through tasks** (`task_*`) so state is visible to the other agents, not trapped in my session.
 
 ## Memory Layers
 
