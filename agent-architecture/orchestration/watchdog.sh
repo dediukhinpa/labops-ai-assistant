@@ -174,6 +174,9 @@ source "$SCRIPT_DIR/lib/task-poller-launch.sh"
 # Очередь запросов «/doctor» от плагина + аварийный приём команды из Telegram.
 # shellcheck source=lib/doctor-request.sh
 source "$SCRIPT_DIR/lib/doctor-request.sh"
+# Заявки «/reset force»: очистка контекста сессии набором /clear.
+# shellcheck source=lib/session-reset.sh
+source "$SCRIPT_DIR/lib/session-reset.sh"
 # agent_bot_token — нужен только аварийному приёму (см. serve_doctor_request).
 # shellcheck source=lib/agents.sh
 source "$SCRIPT_DIR/lib/agents.sh"
@@ -215,6 +218,17 @@ serve_doctor_request() {
   # Доктор мог перезапустить сессию или дослать ввод — прежний снимок панели
   # больше ничего не значит.
   PREV_TAIL=""; NUDGE_STAGE=0
+  return 0
+}
+
+# ── Обслуживание команды /reset force ────────────────────────────────────────
+# Логика — в lib/session-reset.sh (serve_session_reset). После набора /clear
+# прежний снимок панели и счётчики простоя больше ничего не значат.
+serve_reset_request() {
+  serve_session_reset
+  if [ "$SESSION_RESET_SERVED" -eq 1 ]; then
+    PREV_TAIL=""; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
+  fi
   return 0
 }
 
@@ -289,6 +303,7 @@ while true; do
   for _ in $(seq 1 15); do
     sleep 2
     if doctor_request_pending "$AGENT"; then serve_doctor_request; fi
+    if reset_request_pending "$AGENT"; then serve_reset_request; fi
   done
 
   # Аварийный приём: пока висит тревога, плагин почти наверняка не читает

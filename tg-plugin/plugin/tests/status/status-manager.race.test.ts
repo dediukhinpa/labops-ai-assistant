@@ -64,7 +64,7 @@ function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
     voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
     permission_relay: { enabled: true, allowed_user_ids: [100000001], bash_only_proof: true },
-    commands: { help: true, status: true, stop: true, reset: true, new: true },
+    commands: { help: true, status: true, stop: true, reset: true },
     memory: {
       enabled: false,
       source_tag: 'tg',

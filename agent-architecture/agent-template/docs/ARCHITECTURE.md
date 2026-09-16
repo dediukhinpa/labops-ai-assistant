@@ -41,8 +41,8 @@ Claude Code launch
 Session lifecycle:
   1. First message   → new session ID (UUID), saved in state/sid-{agent}-{chat}.txt
   2. Subsequent msgs → claude --resume <session_id> (preserves context)
-  3. /reset          → save to ARCHIVE, delete session file, next msg = new session
-  4. /reset force    → delete session file immediately, no save
+  3. /reset force    → watchdog types /clear after the current turn; SessionEnd
+                       flushes the diary to second_brain, context starts clean
 ```
 
 Key commands:
@@ -244,14 +244,14 @@ Was **4 model crons** -> now **0 model crons + 1 optional bash housekeeping cron
 Consolidation (episodic -> passive insights) needs no cron: it fires in-session on
 the checkpoint counter (every 20 turns) and on watchdog idle (10 min).
 
-### Gateway commands for memory
+### Telegram commands (tg-plugin)
 
 | Command | What it does |
 |---------|-------------|
-| `/compact` | Extract key facts from last 24h ACTIVE → PASSIVE, trim ACTIVE to 24h |
-| `/reset` | Start a new session with the next message (history stays on disk) |
-| `/reset force` | Delete session immediately, no save |
-| `/status` | Show session age, memory file sizes (rules, passive, active, archive) |
-| `/new` | Save handoff + start new session |
-| `/stop` | Stop current Claude response |
+| `/reset force` | Clear the session context: the watchdog waits for the current turn to finish, types `/clear` into the session pane, confirms via the SessionEnd/SessionStart hooks (SessionEnd flushes the diary to second_brain `inbox/`) and then replies. Memory files are untouched |
+| `/status` | Snapshot of plugin state |
+| `/doctor` | Check the agent and repair it if broken (served by the watchdog) |
+| `/stop` | Ask Claude to stop the current task (best-effort) |
 | `/help` | Show available commands |
+
+`/new` was removed: in Claude Code "new session" and "reset" are the same `/clear`.

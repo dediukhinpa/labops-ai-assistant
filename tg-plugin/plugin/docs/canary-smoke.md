@@ -75,7 +75,7 @@ Each test sends a Telegram DM from your test account (`<your-telegram-user-id>`)
 | 9 | /status | "/status" | HTML reply listing bot_id, state_dir, workspace, uptime |
 | 10 | /help | "/help" | HTML reply listing OOB commands |
 | 11 | /stop during long task | start a long task, then "/stop" | Status canceled, ack reply |
-| 12 | /reset force | "/reset force" | Ack reply + channel notify `meta.command=reset` |
+| 12 | /reset force | "/reset force" | Ack reply «сброшу сессию…», NO channel notify; watchdog набирает `/clear` и отвечает «✅ Сессия сброшена» |
 | 13 | Permission allow (Bash) | trigger Bash via Claude, then press Allow button | Bash runs |
 | 14 | Permission deny | trigger Bash, press Deny | Bash refused |
 | 15 | Webhook (if enabled) | `curl -X POST http://127.0.0.1:6000/hooks/agent -H 'Authorization: Bearer <TELEGRAM_WEBHOOK_TOKEN>' -d '{...}'` | `meta.source=webhook` in Claude context |

@@ -10,6 +10,7 @@ import {
   handleOobCommand,
   parseOobCommand,
   resolveDoctorRequestPath,
+  resolveResetRequestPath,
   type OobContext,
 } from '../../src/commands/oob.js'
 import type { AppConfig } from '../../src/config.js'
@@ -31,7 +32,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       allowed_user_ids: [100000001],
       bash_only_proof: true,
     },
-    commands: { help: true, status: true, stop: true, reset: true, new: true },
+    commands: { help: true, status: true, stop: true, reset: true },
     memory: {
       enabled: false,
       source_tag: 'tg',
@@ -142,11 +143,10 @@ describe('parseOobCommand', () => {
     expect(r!.hasForceFlag).toBe(true)
   })
 
-  test('parses /new without force has hasForceFlag=false', () => {
-    const r = parseOobCommand('/new')
-    expect(r).not.toBeNull()
-    expect(r!.name).toBe('new')
-    expect(r!.hasForceFlag).toBe(false)
+  test('/new is no longer a command — it duplicated /reset', () => {
+    expect(parseOobCommand('/new')).toBeNull()
+    expect(parseOobCommand('/new force')).toBeNull()
+    expect(BOT_COMMANDS.some((c) => c.command === 'new')).toBe(false)
   })
 
   test('parses unknown /foo as null', () => {
@@ -181,7 +181,7 @@ describe('handleOobCommand', () => {
     expect(text).toContain('/status')
     expect(text).toContain('/stop')
     expect(text).toContain('/reset')
-    expect(text).toContain('/new')
+    expect(text).not.toContain('/new')
     // Scope B commands explicitly absent.
     expect(text).not.toContain('/compact')
     expect(text).not.toContain('/halt')
@@ -235,13 +235,27 @@ describe('handleOobCommand', () => {
     expect(result.replyToTelegram).toBeDefined()
   })
 
-  test('/reset force emits channel notification meta.command=reset', async () => {
+  // Раньше /reset force слал модели текст и сразу отвечал «сброшена», хотя
+  // сброса не было. Теперь это заявка для watchdog, который набирает /clear.
+  test('/reset force files a request for the watchdog and does not wake Claude', async () => {
+    const parsed = parseOobCommand('/reset force')!
+    const result = await handleOobCommand(
+      parsed,
+      makeCtx({ resetRequestPath: '/tmp/reset.request' }),
+    )
+    expect(result.command).toBe('reset')
+    expect(result.notifyChannel).toBeUndefined()
+    expect(result.writeRequest).toEqual({ path: '/tmp/reset.request', chatId: '100000001' })
+    // Ответ обещает сброс, но не утверждает, что он уже случился.
+    expect(result.replyToTelegram!.text).not.toContain('сброшена')
+  })
+
+  test('/reset force without a supervisor says so instead of pretending', async () => {
     const parsed = parseOobCommand('/reset force')!
     const result = await handleOobCommand(parsed, makeCtx())
-    expect(result.command).toBe('reset')
-    expect(result.notifyChannel).toBeDefined()
-    expect(result.notifyChannel!.meta.command).toBe('reset')
-    expect(result.replyToTelegram!.text).toContain('сброшена')
+    expect(result.writeRequest).toBeUndefined()
+    expect(result.notifyChannel).toBeUndefined()
+    expect(result.replyToTelegram!.text).toContain('без надзора')
   })
 
   test('/reset (no force) returns reply asking for force flag, no channel notify', async () => {
@@ -249,22 +263,8 @@ describe('handleOobCommand', () => {
     const result = await handleOobCommand(parsed, makeCtx())
     expect(result.command).toBe('reset')
     expect(result.notifyChannel).toBeUndefined()
+    expect(result.writeRequest).toBeUndefined()
     expect(result.replyToTelegram).toBeDefined()
-    expect(result.replyToTelegram!.text).toContain('force')
-  })
-
-  test('/new force emits channel notification meta.command=new', async () => {
-    const parsed = parseOobCommand('/new force')!
-    const result = await handleOobCommand(parsed, makeCtx())
-    expect(result.command).toBe('new')
-    expect(result.notifyChannel).toBeDefined()
-    expect(result.notifyChannel!.meta.command).toBe('new')
-  })
-
-  test('/new (no force) returns reply asking for force flag, no channel notify', async () => {
-    const parsed = parseOobCommand('/new')!
-    const result = await handleOobCommand(parsed, makeCtx())
-    expect(result.notifyChannel).toBeUndefined()
     expect(result.replyToTelegram!.text).toContain('force')
   })
 })
@@ -289,10 +289,10 @@ describe('/doctor', () => {
       makeCtx({ doctorRequestPath: '/tmp/doctor.request' }),
     )
     expect(result.command).toBe('doctor')
-    expect(result.writeDoctorRequest).toBeDefined()
-    expect(result.writeDoctorRequest!.path).toBe('/tmp/doctor.request')
+    expect(result.writeRequest).toBeDefined()
+    expect(result.writeRequest!.path).toBe('/tmp/doctor.request')
     // chat_id уходит в заявку, чтобы watchdog ответил в тот же чат.
-    expect(result.writeDoctorRequest!.chatId).toBe('100000001')
+    expect(result.writeRequest!.chatId).toBe('100000001')
     expect(result.replyToTelegram).toBeDefined()
   })
 
@@ -308,7 +308,7 @@ describe('/doctor', () => {
   test('says so plainly when there is no supervisor to ask', async () => {
     const parsed = parseOobCommand('/doctor')!
     const result = await handleOobCommand(parsed, makeCtx())
-    expect(result.writeDoctorRequest).toBeUndefined()
+    expect(result.writeRequest).toBeUndefined()
     expect(result.replyToTelegram!.text).toContain('без надзора')
   })
 
@@ -364,6 +364,36 @@ describe('executeOobResult writes the doctor request', () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]).toContain('Не смог позвать доктора')
     rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('executeOobResult writes the reset request', () => {
+  test('writes chat_id to reset.request before acking', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'reset-req-'))
+    const reqPath = join(dir, 'state', 'reset.request')
+    const sent: string[] = []
+    const api = makeTelegramApi()
+    api.sendMessage = (async (_chat: string, text: string) => {
+      sent.push(text)
+      return { message_id: 1 }
+    }) as TelegramApi['sendMessage']
+
+    const ctx = makeCtx({ telegramApi: api, resetRequestPath: reqPath })
+    const result = await handleOobCommand(parseOobCommand('/reset force')!, ctx)
+    await executeOobResult(result, ctx, {} as never)
+
+    expect(readFileSync(reqPath, 'utf8')).toBe('100000001')
+    expect(sent).toHaveLength(1)
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('resolveResetRequestPath', () => {
+  test('mirrors reset_request_path in lib/session-reset.sh', () => {
+    expect(
+      resolveResetRequestPath({ AGENT_ID: 'Developer', CLAUDE_LAB: '/lab' } as NodeJS.ProcessEnv),
+    ).toBe('/lab/shared/state/developer/reset.request')
+    expect(resolveResetRequestPath({ HOME: '/home/x' } as NodeJS.ProcessEnv)).toBe('')
   })
 })
 
