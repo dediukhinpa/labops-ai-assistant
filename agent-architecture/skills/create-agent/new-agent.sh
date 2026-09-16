@@ -457,18 +457,34 @@ ENV
       ok "webhook-token (плоский файл для webhook-listener): $WEBHOOK_TOKEN_FILE"
     fi
     CONFIG_JSON="$STATE_DIR/config.json"
+    # Ещё и status.suppress_typing_bubble=false. Плагин по умолчанию прячет
+    # бабл «Печатает…» и ждёт, что вместо него карточку прогресса нарисуют
+    # хуки Claude Code, шлющие события в /hooks/agent. В агентском флоу этих
+    # хуков нет: settings.json воркспейса держит только heartbeat и память, а
+    # install-hooks.sh — ручной шаг (tg-plugin/plugin/docs/progress-reporter-setup.md).
+    # Без явного false у свежего агента в чате не появляется НИКАКОГО статуса,
+    # пока он думает. Явный true оператора не трогаем (`//=`).
     if [ ! -f "$CONFIG_JSON" ]; then
       umask 077
-      printf '{"webhook": {"enabled": true}}\n' > "$CONFIG_JSON"
-      ok "config.json: webhook.enabled=true ($CONFIG_JSON)"
+      printf '{"webhook": {"enabled": true}, "status": {"suppress_typing_bubble": false}}\n' > "$CONFIG_JSON"
+      ok "config.json: webhook.enabled=true, статус «Печатает…» включён ($CONFIG_JSON)"
     elif command -v jq >/dev/null 2>&1; then
-      if [ "$(jq -r '.webhook.enabled // false' "$CONFIG_JSON" 2>/dev/null)" != "true" ]; then
-        TMP_CFG="$(mktemp)"
-        jq '.webhook.enabled = true' "$CONFIG_JSON" > "$TMP_CFG" && mv "$TMP_CFG" "$CONFIG_JSON"
-        ok "config.json: webhook.enabled=true обновлён ($CONFIG_JSON)"
+      TMP_CFG="$(mktemp)"
+      if jq '.webhook.enabled = true | .status.suppress_typing_bubble //= false' \
+           "$CONFIG_JSON" > "$TMP_CFG" 2>/dev/null; then
+        if cmp -s "$TMP_CFG" "$CONFIG_JSON"; then
+          rm -f "$TMP_CFG"
+        else
+          mv "$TMP_CFG" "$CONFIG_JSON"
+          chmod 600 "$CONFIG_JSON"
+          ok "config.json обновлён: webhook.enabled=true, статус «Печатает…» включён ($CONFIG_JSON)"
+        fi
+      else
+        rm -f "$TMP_CFG"
+        warn "не удалось обновить $CONFIG_JSON через jq — проверьте вручную webhook.enabled=true и status.suppress_typing_bubble=false"
       fi
     else
-      warn "config.json уже существует и jq недоступен — проверьте вручную, что webhook.enabled=true в $CONFIG_JSON"
+      warn "config.json уже существует и jq недоступен — проверьте вручную, что webhook.enabled=true и status.suppress_typing_bubble=false в $CONFIG_JSON"
     fi
   fi
 else

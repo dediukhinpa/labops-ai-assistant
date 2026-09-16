@@ -145,13 +145,15 @@ ok "зависимости установлены"
 say "Регистрация хуков Claude Code"
 if [ -x "$PLUGIN_DIR/scripts/install-hooks.sh" ]; then
   # install-hooks.sh требует --settings/--chat-id/--webhook-url, которых на
-  # этапе установки ещё нет (channel.env не заполнен). В АГЕНТСКОМ флоу хуки и
-  # так приходят из settings.json воркспейса (agent-template), поэтому провал
-  # здесь ожидаем и безвреден — НЕ печатаем ложное "зарегистрированы".
+  # этапе установки ещё нет (channel.env не заполнен), поэтому провал здесь
+  # ожидаем — НЕ печатаем ложное "зарегистрированы". Прежний текст обещал, что
+  # эти хуки поставит agent-template: это неправда, в его settings.json только
+  # heartbeat и память. Без них живёт лишь карточка прогресса (Думает / 🔧
+  # инструмент), статус «Печатает…» приходит из самого плагина и работает.
   if ( cd "$PLUGIN_DIR" && ./scripts/install-hooks.sh >/dev/null 2>&1 ); then
     ok "хуки зарегистрированы"
   elif [ "$AGENT_FLOW" = "1" ]; then
-    note "хуки берутся из settings.json воркспейса (их ставит agent-template при создании агента) — install-hooks.sh здесь не нужен"
+    note "карточка прогресса по tool-call'ам — отдельный ручной шаг (plugin/docs/progress-reporter-setup.md); статус «Печатает…» в чате работает и без неё"
   else
     skip "хуки сейчас не зарегистрированы (install-hooks.sh требует --settings/--chat-id/--webhook-url). Для standalone-деплоя запустите скрипт вручную с этими аргументами после настройки channel.env (docs/06)"
   fi
