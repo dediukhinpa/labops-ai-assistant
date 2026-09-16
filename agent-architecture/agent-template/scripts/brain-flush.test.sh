@@ -13,7 +13,6 @@ bad() { echo "✗ $*"; fail=$((fail+1)); }
 WS="$TMP/lab/tester/.claude"
 mkdir -p "$WS/core/active" "$WS/logs" "$WS/state"
 echo "- did a thing" > "$WS/core/active/episodic.md"
-echo "next: continue" > "$WS/core/active/handoff.md"
 
 # curl stub: records the request body, returns success JSON. Отдаёт и
 # mcp-session-id при запросе с -D: FastMCP требует рукопожатия, без сессии
@@ -49,13 +48,12 @@ rm -f "$TMP/last-request.json"
 URL_OVERRIDE="" run
 [ ! -f "$TMP/last-request.json" ] && ok "no URL → no request" || bad "sent request without URL"
 
-# 3: real flush → create_handoff call with episodic + handoff content
+# 3: real flush → create_handoff call with the episodic tail
 run; rc=$?
 [ $rc -eq 0 ] && ok "flush exits 0" || bad "flush rc=$rc"
 if [ -f "$TMP/last-request.json" ]; then
   grep -q '"create_handoff"' "$TMP/last-request.json" && ok "calls create_handoff" || bad "wrong tool"
   grep -q 'did a thing' "$TMP/last-request.json" && ok "episodic tail included" || bad "episodic missing"
-  grep -q 'next: continue' "$TMP/last-request.json" && ok "handoff included" || bad "handoff missing"
   grep -q '"from_agent": "tester"' "$TMP/last-request.json" && ok "agent id set" || bad "agent id missing"
 else
   bad "no request sent on real flush"

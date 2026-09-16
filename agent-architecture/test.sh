@@ -964,20 +964,35 @@ fi
 
 # Файлы памяти — только те, что кто-то ведёт и читает. LEARNINGS.md и MEMORY.md за два
 # месяца не тронул ни один живой агент, working-set.md собирался на каждом старте, но
-# в контекст не попадал. Вернётся ссылка на них — агенту снова пообещают файл, которого
+# в контекст не попадал, а handoff.md импортировался пустой шапкой: его не писал никто.
+# Вернётся ссылка на них — агенту снова пообещают файл, которого
 # никто не ведёт. Комментарии в скриптах не считаем: там объясняется, почему их убрали.
 mem_refs="$(
-  { grep -nE 'LEARNINGS\.md|core/MEMORY\.md|working-set' "$T"/* skills/*/SKILL.md 2>/dev/null
-    grep -nE 'LEARNINGS\.md|core/MEMORY\.md|working-set' agent-template/install.sh \
+  { grep -nE 'LEARNINGS\.md|core/MEMORY\.md|working-set|handoff\.md' "$T"/* skills/*/SKILL.md 2>/dev/null
+    grep -nE 'LEARNINGS\.md|core/MEMORY\.md|working-set|handoff\.md' agent-template/install.sh \
         agent-template/hooks/*.sh agent-template/scripts/*.sh 2>/dev/null \
       | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#'
   } || true
 )"
 if [ -z "$mem_refs" ]; then
-  ok "шаблоны и скрипты не ссылаются на убранные LEARNINGS.md / MEMORY.md / working-set"
+  ok "шаблоны и скрипты не ссылаются на убранные LEARNINGS.md / MEMORY.md / working-set / handoff.md"
 else
   bad "вернулась ссылка на убранный файл памяти:"
   printf '%s\n' "$mem_refs" | sed -n '1,5s/^/      /p'
+fi
+
+# Скрипты оркестрации, которые удалили 2026-09-16: все были завязаны на /home/agent,
+# ни один не запускался, а README описывал их как работающие (ночной цикл, демоны
+# реакций, рассылка аудита vault). Упоминание в документации — снова обещание того,
+# чего нет.
+dead_refs="$(grep -rnE 'night-learnings|reaction-daemon|set-message-reaction|handle-incoming-messages|agent-boot-sequence|reflect-error-pattern|vault-audit|heartbeat-all|second_brain-heartbeat' \
+    README.md README.ru.md agent-template skills orchestration 2>/dev/null \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+if [ -z "$dead_refs" ]; then
+  ok "документация не ссылается на удалённые скрипты оркестрации"
+else
+  bad "вернулась ссылка на удалённый скрипт оркестрации:"
+  printf '%s\n' "$dead_refs" | sed -n '1,5s/^/      /p'
 fi
 
 # preferences.md импортирован в CLAUDE.md — значит, установщик обязан его создать,

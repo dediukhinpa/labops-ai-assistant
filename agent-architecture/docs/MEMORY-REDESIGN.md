@@ -20,6 +20,10 @@
 > agent touched the archive or the lessons log. The agent now recalls from
 > second_brain itself before a task; operator corrections live in
 > `passive/preferences.md` (always in context, never decays).
+>
+> **Update 2026-09-16:** `active/handoff.md` was removed too: no hook and no agent
+> ever wrote it, so every session loaded an empty header. The end-of-session state
+> reaches second_brain `inbox/` through `brain-flush.sh` (diary tail).
 
 Заменяет старую возрастную ротацию `hot → warm → cold` (4 модельных крона) на
 событийную модель памяти по **ценности**, с разделением на *эпизодическую* и
@@ -136,7 +140,7 @@
   готовым эмбеддингам (FastEmbed). `working-set-build.sh` = `curl` к MCP.
 - **Salience/prompt-worthiness** — bash-эвристики, без модели.
 - **Reflection/синтез** — делает **живая сессия**, разбуженная nudge'ом через
-  `agent_router.notify` (проверенный паттерн `night-learnings.sh`). Фоновый скрипт
+  `agent_router.notify` (тогда так работал ночной learnings-цикл, позже удалённый). Фоновый скрипт
   только шлёт уведомление; «думает» сессия и пишет своими MCP-инструментами.
 - **decay-sweep** — чистая bash-арифметика.
 

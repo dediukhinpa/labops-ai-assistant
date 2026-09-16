@@ -1,570 +1,134 @@
 # Multi-Agent Architecture
 
-Multi-agent system with coordinator, specialized agents, shared state via second_brain, and one Telegram gateway routing to multiple bots.
+Several agents on one host: each with its own workspace, SOUL, Telegram bot and
+session, all sharing one second_brain for memory and coordination.
 
-> **NOTE:** Agent names (Jarvis, Homer, Edith) are **examples**. When copying this architecture, replace them with your own names. The `install.sh` script handles renaming automatically.
+> **NOTE:** Agent names (`developer`, `carmella`, `researcher`) are **examples**.
 
 ## Overview
 
 ```
-OPERATOR (you)
-    │
-    │  talks via 3 Telegram bots
-    │
-    ├──── @jarvis_bot ──┐
-    ├──── @homer_bot ───┤
-    └──── @edith_bot ───┤
-                        ▼
-              ┌──────────────────┐
-              │  GATEWAY (1 proc) │
-              │  routes by token  │
-              └────────┬─────────┘
-           ┌───────────┼───────────┐
-           ▼           ▼           ▼
-     ┌──────────┐ ┌──────────┐ ┌──────────┐
-     │  JARVIS  │ │  HOMER   │ │  EDITH   │
-     │ coordin. │ │  coder   │ │  inbox   │
-     │ tasks    │ │  builds  │ │  knows   │
-     └─────┬────┘ └─────┬────┘ └─────┬────┘
-           └─────────────┼───────────┘
-                         ▼
-              ┌───────────────────┐
-              │    SECOND_BRAIN     │
-              │ shared semantic DB │
-              └───────────────────┘
+OPERATOR
+    │  one Telegram bot per agent
+    ├──── @developer_bot ──► claude-agent-developer   (tmux labops-developer)
+    ├──── @carmella_bot  ──► claude-agent-carmella    (tmux labops-carmella)
+    └──── @research_bot  ──► claude-agent-researcher  (tmux labops-researcher)
+                                  │
+              each session runs its own channel plugin (bun),
+              webhook port 6000, 6001, 6002 … by roster order
+                                  │
+                                  ▼
+                  ┌───────────────────────────────┐
+                  │          SECOND_BRAIN          │
+                  │ memory · recall · agent_router │
+                  │          · task board          │
+                  └───────────────────────────────┘
 ```
 
-> **Scaling:** Add a 4th agent = add a block in `config.json` + create bot in BotFather + run `install.sh`. One-click.
+There is no shared gateway process: every agent is a separate systemd unit
+(`systemd → watchdog.sh → tmux + claude → channel plugin`), so one agent crashing or
+restarting does not touch the others.
 
-## Agents
+## Rolling out agents
 
-> **These are example roles.** You might want: researcher + coder + devops, or marketer + coder + assistant, or any other combination.
+The operator installs only the first agent (Developer) with `install.sh`. Every next
+one is created by Developer through the `create-agent` skill -- see
+[CHECKLIST.md](CHECKLIST.md). The roster comes from `~/.claude-lab/agents.conf` when
+it exists, otherwise from the `~/.claude-lab/*/.claude` directories
+(`orchestration/lib/agents.sh`); nothing is hardcoded.
 
-| Agent | Role | Model | Subagents | Telegram bot |
-|-------|------|-------|-----------|--------------|
-| **Jarvis** | Coordinator | **Opus** | Many Sonnet subagents (search, analysis) | `@jarvis_bot` |
-| **Homer** | Coder | **Opus** | Per-skill model (varies) | `@homer_bot` |
-| **Edith** | Inbox / Knowledge | **Sonnet** | -- | `@edith_bot` |
+## Example roles and models
 
-### Why these models?
+| Agent | Role | Model |
+|-------|------|-------|
+| **developer** | Builds and maintains the swarm, writes code | `opus` / `fable` |
+| **carmella** | Business tasks, documents | `sonnet` |
+| **researcher** | Web research, summaries | `sonnet` |
 
-- **Jarvis** on Opus: coordinator needs deep reasoning for task routing, planning, multi-step workflows. Delegates bulk search/analysis to cheap Sonnet subagents.
-- **Homer** on Opus: code quality is critical -- Opus produces better architecture, fewer bugs. Skills may use other models for specific tasks (e.g. Codex for review).
-- **Edith** on Sonnet: inbox agent processes high volume of links, videos, articles. Sonnet handles parsing and summarization well at lower cost.
+Models are aliases (they always point at the latest model of the tier); a full model
+name pins a version. Changing a model is the operator's decision.
 
-### Edith capabilities (universal inbox)
+## How agents work together
 
-Edith is the "throw everything at it" agent. Send any link or content:
+| Channel | Use case |
+|---------|----------|
+| **Telegram** | The operator talks to one agent directly |
+| **Task board** (`second_brain-tasks`) | One agent hands work to another and checks the result |
+| **agent_router** (`second_brain-agent_router`) | Short events: `notify`, `broadcast`, `escalate`; also the consolidation nudge |
+| **Shared memory** (`second_brain-memory`, `-memory_router`) | What one agent writes, the others find with `recall` |
 
-| Input | What Edith does |
-|-------|----------------|
-| **YouTube link** | Downloads audio, transcribes via Groq Whisper, summarizes |
-| **Twitter/X link** | Reads tweet, thread, or profile |
-| **Reddit link** | Reads post and top comments |
-| **GitHub repo** | Clones, reads README, analyzes structure |
-| **Instagram** | Fetches post via media downloader API |
-| **Web article** | Fetches and reads full page |
-| **PDF / document** | Downloads and extracts text |
-| **Voice message** | Transcribes via Groq Whisper |
-
-All processed content is stored in Edith's memory and pushed to second_brain for cross-agent search.
-
-## Gateway: 1 Process, 3 Bots
-
-One gateway process polls all 3 bot tokens in parallel threads. Routes by `bot_token` to the correct agent workspace.
+### Task board
 
 ```
-Telegram
-┌──────────┐  ┌──────────┐  ┌──────────┐
-│ @jarvis  │  │ @homer   │  │ @edith   │
-│   bot    │  │   bot    │  │   bot    │
-└────┬─────┘  └────┬─────┘  └────┬─────┘
-     │             │             │
-     ▼             ▼             ▼
-┌─────────────────────────────────────────┐
-│            GATEWAY (1 process)          │
-│                                         │
-│  token_1 → poll @jarvis  → agent=jarvis │
-│  token_2 → poll @homer   → agent=homer  │
-│  token_3 → poll @edith   → agent=edith  │
-│                                         │
-│  Route: bot_token → agent workspace     │
-│  Sessions: sid-{agent}-{chat_id}        │
-└─────────────────────────────────────────┘
+developer                                   researcher
+   │ task_create(assignee="researcher", …)     │
+   │ ───────────────────────────────────────►  │  task_poller.py (every 5 s)
+   │                                           │  delivers the task into the session
+   │                                           │  task_claim → task_start → work
+   │                                           │  task_review / task_done
+   │ task_get / task_history  ◄─────────────── │
 ```
 
-### Gateway config.json
-
-```json
-{
-  "agents": [
-    {
-      "name": "jarvis",
-      "bot_token_env": "TG_TOKEN_JARVIS",
-      "workspace": "~/.claude-lab/jarvis/.claude",
-      "model": "opus",
-      "role": "coordinator"
-    },
-    {
-      "name": "homer",
-      "bot_token_env": "TG_TOKEN_HOMER",
-      "workspace": "~/.claude-lab/homer/.claude",
-      "model": "opus",
-      "role": "coder"
-    },
-    {
-      "name": "edith",
-      "bot_token_env": "TG_TOKEN_EDITH",
-      "workspace": "~/.claude-lab/edith/.claude",
-      "model": "sonnet",
-      "role": "inbox"
-    }
-  ],
-  "shared": {
-    "secrets": "~/.claude-lab/shared/secrets/",
-    "skills": "~/.claude-lab/shared/skills/",
-    "gateway": "~/.claude-lab/shared/gateway/"
-  }
-}
-```
-
-> **Add 4th agent:** append another object to the `agents` array. Gateway auto-discovers.
-
-## Directory Layout
-
-> **Example names** -- replace `jarvis/`, `homer/`, `edith/` with your agent names.
-
-```
-~/.claude/                              # GLOBAL (all agents read this)
-├── CLAUDE.md                           # Global rules, conventions
-└── rules/
-    ├── bash.md
-    ├── python.md
-    └── typescript.md
-
-~/.claude-lab/
-│
-├── jarvis/                             # COORDINATOR (example name)
-│   └── .claude/
-│       ├── CLAUDE.md                   # SOUL: identity, character, principles
-│       ├── core/
-│       │   ├── AGENTS.md              # Models, routing rules, agent registry
-│       │   ├── USER.md               # Operator profile
-│       │   ├── rules.md              # Rules learned from mistakes
-│       │   ├── passive/                  # semantic insights (decisions/errors/...)
-│       │   ├── active/episodic.md         # raw append-only diary (+ handoff.md)
-│       │   └── archived/             # ARCHIVE: rolled diary, decayed insights
-│       ├── tools/TOOLS.md            # Servers, Docker, services
-│       ├── skills/                    # Agent-specific + symlinks to shared
-│       └── agents/                   # Subagent definitions
-│
-├── homer/                              # CODER (example name)
-│   └── .claude/
-│       ├── CLAUDE.md                   # SOUL: coder identity
-│       ├── core/                      # Same structure as above
-│       ├── tools/TOOLS.md
-│       └── skills/
-│
-├── edith/                              # INBOX / KNOWLEDGE (example name)
-│   └── .claude/
-│       ├── CLAUDE.md                   # SOUL: knowledge manager identity
-│       ├── core/                      # Same structure as above
-│       ├── tools/TOOLS.md
-│       └── skills/
-│
-├── shared/                             # SHARED RESOURCES (all agents)
-│   ├── secrets/                       # ONE folder for all secrets
-│   │   ├── .env                       # Shared env vars
-│   │   ├── groq-api-key
-│   │   ├── second_brain.key
-│   │   └── db-service-account.json
-│   ├── gateway/                       # Telegram gateway (1 process)
-│   │   ├── gateway.py
-│   │   ├── config.json               # Agent registry (see above)
-│   │   ├── state/                    # Session files per agent
-│   │   └── media-inbound/            # Downloaded media
-│   └── skills/                        # Shared skills (symlinked)
-│       ├── groq-voice/               # Voice transcription
-│       ├── memory-consolidate/       # свёртка эпизодической памяти
-│       └── ...                       # (10 base skills total)
-```
-
-## Gateway Features
-
-The gateway handles much more than simple message routing. Full feature list:
-
-### Core Features
-
-| Feature | Description |
-|---------|-------------|
-| **Multi-bot polling** | One process polls all bot tokens in parallel threads |
-| **Session management** | `--resume` for context continuity, `--resume` for context continuity, `/reset` for fresh start |
-| **Voice transcription** | Auto-transcribe `.ogg` via Groq Whisper before passing to agent |
-| **Source classification** | Tags every message: `own_text`, `own_voice`, `forwarded`, `external_media` |
-| **ACTIVE memory write** | Appends every interaction to `core/active/episodic.md` (file-locked) |
-| **second_brain push** | Background push to semantic memory with anti-pollution guards |
-| **Emergency trim** | Auto-trims ACTIVE when >20KB (keeps last 600 lines) |
-| **Media download** | Photos, documents, stickers -- downloaded to `media-inbound/` |
-
-### Advanced Features
-
-| Feature | Description | Config |
-|---------|-------------|--------|
-| **Forward context** | Agent sees `[Forwarded from: Name]` prefix on forwarded messages | Automatic |
-| **Ack reactions** | Eyes emoji reaction on every incoming message (instant feedback) | Automatic |
-| **Inline buttons** | Send messages with clickable buttons, handle callbacks | `send_message_with_buttons()`, `register_callback_handler()` |
-| **Sticker cache** | File-based cache (`state/sticker-cache.json`) for sticker descriptions | Automatic |
-| **Webhook API** | HTTP endpoint for external integrations to inject messages | `webhook_port`, `webhook_token` in config |
-| **Per-topic routing** | Route Telegram forum topics to specific agents | `topic_routing` per agent |
-| **Streaming modes** | `partial` (edit-in-place) or `off` (single response) | `streaming_mode` per agent |
-| **Smart text chunking** | Split long responses by `\n` before hard split at 4000 chars | Automatic |
-| **Reply safety** | `allow_sending_without_reply` prevents errors on deleted messages | Automatic |
-| **Callback queries** | Prefix-based handler dispatch for inline button clicks | `dispatch_callback_query()` |
-
-### Forward Context
-
-When operator forwards a message, the agent sees who it was from:
-
-```
-# What the agent receives:
-[Forwarded from: John Doe]
-Original message text here
-
-# What second_brain stores (with anti-pollution guard):
-[source:forwarded | forwarded from: john doe]
-[extraction hint: this content was FORWARDED... Do NOT extract as user's own preferences]
-Original message text here
-```
-
-### Webhook API
-
-External services can inject messages into agent queues:
-
-```bash
-curl -X POST http://localhost:8095/hooks/jarvis \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Alert: CPU usage above 90%"}'
-```
-
-Configure in `config.json`:
-```json
-{
-  "webhook_port": 8095,
-  "webhook_token": "YOUR_SECRET_TOKEN"
-}
-```
-
-### Per-Topic Routing
-
-Route Telegram forum (group with topics) threads to specific agents:
-
-```json
-{
-  "name": "jarvis",
-  "topic_routing": {
-    "-1001234567890": {
-      "42": "jarvis",
-      "43": "homer"
-    }
-  }
-}
-```
-
-Messages in topic 42 go to Jarvis, topic 43 to Homer. Messages outside configured topics are ignored.
-
-### Streaming Modes
-
-| Mode | Behavior | Use case |
-|------|----------|----------|
-| `partial` (default) | Edit message in real-time as agent responds | Interactive agents |
-| `off` | Single message after full response | Inbox agents, batch processing |
-
-```json
-{
-  "name": "edith",
-  "streaming_mode": "off"
-}
-```
-
-### Extended config.json
-
-```json
-{
-  "webhook_port": 8095,
-  "webhook_token": "YOUR_SECRET_TOKEN",
-  "agents": [
-    {
-      "name": "jarvis",
-      "bot_token_env": "TG_TOKEN_JARVIS",
-      "workspace": "~/.claude-lab/jarvis/.claude",
-      "model": "opus",
-      "role": "coordinator",
-      "streaming_mode": "partial",
-      "agent_names": ["jarvis", "homer", "edith"],
-      "topic_routing": {}
-    },
-    {
-      "name": "edith",
-      "bot_token_env": "TG_TOKEN_EDITH",
-      "workspace": "~/.claude-lab/edith/.claude",
-      "model": "sonnet",
-      "role": "inbox",
-      "streaming_mode": "off"
-    }
-  ]
-}
-```
-
-## Group Chats
-
-Agents can work in Telegram group chats -- answer questions from multiple users, moderate, provide support. Each group chat gets its own parallel session (independent from private chats).
-
-### Architecture
-
-**Per-chat parallel processing:** each `chat_id` gets its own worker thread. Different chats (private, group1, group2) run in parallel, never block each other. Messages within the same chat are processed sequentially (ordered).
-
-**Session isolation:** `session_id_for(agent, chat_id)` -- each group chat has its own Claude session with its own context history.
-
-### Configuration
-
-```json
-{
-  "allowlist_group_ids": [-1001234567890],
-  "agents": {
-    "jarvis": {
-      "group_allow_all": true,
-      "streaming_mode_group": "off",
-      "system_reminder_group": "You are a support assistant. Answer questions from all group members. Rules: 1) Do not reveal personal data of the operator...",
-      "group_log_ov_user": "group-chat-logs"
-    }
-  }
-}
-```
-
-### Config fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `allowlist_group_ids` | `list[int]` | Telegram group/supergroup chat IDs where the bot is allowed to respond |
-| `group_allow_all` | `bool` | If `true`, bypass user allowlist in groups -- bot answers ALL participants (default: only allowlisted users) |
-| `streaming_mode_group` | `string` | Override streaming mode for groups. Recommended: `"off"` (single response after completion) |
-| `system_reminder_group` | `string` | System prompt injected for group messages. Use to set group-specific behavior, safety rules |
-| `group_log_ov_user` | `string` | second_brain namespace for logging group messages. All messages logged for context (even from non-allowlisted users) |
-
-### Group Context Injection
-
-The gateway can inject recent chat history into the agent's context when responding in groups. Two layers:
-
-1. **second_brain (primary, included):** Gateway pushes all group messages to second_brain with namespace from `group_log_ov_user`. Agent searches OV semantically when building context.
-
-2. **Cognee (optional, self-hosted):** For deeper semantic analysis -- knowledge graph extraction, user profiling, FAQ generation. Requires separate Cognee instance. Config fields: `group_log_jsonl_script` (path to JSONL logger), `cognee_datasets` (mapping chat_id to dataset name). More expensive but enables automatic user profiling and knowledge extraction.
-
-### Per-chat addressing
-
-In groups, the bot only responds when addressed:
-
-- Direct mention: `@botusername question`
-- Reply to bot's message
-- Voice message mentioning bot name (transcribed first, then checked)
-
-### Security
-
-Always use `system_reminder_group` to restrict what the agent can reveal in public groups. Private data of the operator (email, phone, finances), infrastructure details (servers, keys), and internal architecture should never be exposed.
-
-### Setup
-
-1. Create bot via BotFather (or use existing)
-2. Add bot to group as admin
-3. Get group `chat_id` (forward message from group to @userinfobot or check gateway logs)
-4. Add `chat_id` to `allowlist_group_ids` in config.json
-5. Set `group_allow_all: true` if bot should answer all participants
-6. Add `system_reminder_group` with group-specific rules
-7. Set `streaming_mode_group: "off"` (recommended for groups)
-8. Optional: set `group_log_ov_user` for chat history in second_brain
-9. Restart gateway
-
-## Key Design Decisions
-
-### 1. Secrets -- ONE folder for all
-
-All secrets live in `shared/secrets/`. No duplication per agent.
-
-Why: fewer places to manage, rotate, and audit. Agents access via symlinks or env vars.
-
-### 2. Shared skills vs specialized
-
-| Type | Path | Example | Who uses |
-|------|------|---------|----------|
-| **Shared** | `agent-architecture/skills` | groq-voice, memory-consolidate, second_brain-doctor, … | All agents (symlinked) |
-| **Specialized** | `{agent}/.claude/skills/` | custom agent-specific skills | Only that agent |
-
-Shared skills are symlinked into each agent's `skills/` at install time. Specialized skills live only in the agent's workspace.
-
-### 3. One gateway, multiple bots
-
-One `gateway.py` process manages all bots. Per-bot threads poll Telegram independently. Routing is by `bot_token` match to `config.json` agent entry.
-
-Benefits:
-- One process to monitor/restart
-- Shared media-inbound folder
-- Shared transcription (Groq)
-- Unified session management
-
-## second_brain -- Shared Semantic Memory
-
-All agents push to and search from one second_brain instance. Replaces file-based shared state.
-
-```
-OLD: File mirrors          →  NEW: second_brain
-shared/state/tasks.json         create_decision_note / create_error_pattern_note (dual-write)
-shared/state/agents.json        (auto-indexed to semantic store)
-mirrors/sync-cron.sh            agent-side recall + in-session reflection (dual-write)
-```
-
-### Namespacing
-
-Each agent writes under its own user namespace but can search across all:
-
-```bash
-SECOND_BRAIN_BEARER=$(cat ~/.claude-lab/shared/secrets/second_brain.key)
-
-# Agent dual-writes insights to its own namespace during in-session reflection (or manual)
-# Step 1: upload markdown
-curl -X POST "${SECOND_BRAIN_MEMORY_URL}" \
-  -H "X-API-Key: $SECOND_BRAIN_BEARER" \
-  -H "X-second_brain-Account: my-team" \
-  -H "X-second_brain-User: jarvis" \
-  -F "file=@session-summary.md"
-# Step 2: add resource (returns after indexing)
-curl -X POST "${SECOND_BRAIN_MEMORY_URL}" \
-  -H "X-API-Key: $SECOND_BRAIN_BEARER" \
-  -H "X-second_brain-Account: my-team" \
-  -H "X-second_brain-User: jarvis" \
-  -H "Content-Type: application/json" \
-  -d '{"temp_file_id":"<from step 1>","to":"second_brain://notes/jarvis-sessions/2026-04-10","wait":true}'
-
-# Any agent can search across ALL namespaces
-curl -X POST "${SECOND_BRAIN_MEMORY_ROUTER_URL}" \
-  -H "X-API-Key: $SECOND_BRAIN_BEARER" \
-  -H "X-second_brain-Account: my-team" \
-  -H "X-second_brain-User: jarvis" \
-  -d '{"query": "what did homer decide about the API design", "limit": 10}'
-```
-
-> Replace `my-team` with your account name. Replace `jarvis` with the searching agent's name.
-
-## Inter-Agent Communication
-
-3 channels:
-
-| Channel | Use case | Example |
-|---------|----------|---------|
-| **Telegram** | Operator talks to agent directly | Send @homer_bot a code task |
-| **Message bus** | Agent-to-agent delegation | Jarvis sends task to Homer |
-| **second_brain** | Shared knowledge lookup | Homer searches what Edith stored |
-
-### Message bus (agent-to-agent)
-
-Any DB with inbox pattern works -- Redis, SQLite, RTDB, etc.:
-
-```bash
-# Jarvis delegates to Homer
-msgbus send homer \
-  '{"from":"jarvis","body":"Build the API endpoint for /users","priority":"P1"}'
-
-# Homer reads inbox
-msgbus inbox homer
-```
-
-## Orchestration Programs (.prose)
-
-Reusable workflow templates that the coordinator executes:
-
-### build_feature.prose
-
-```
-PROGRAM: Build Feature
-TRIGGER: Operator requests a new feature
-AGENTS: jarvis (plan), homer (code)
-
-STEPS:
-1. Jarvis creates plan (architecture, files, tests)
-2. Jarvis delegates implementation to Homer with plan
-3. Homer codes, tests, commits, creates PR
-4. Jarvis reviews PR
-5. Jarvis confirms completion to operator
-```
-
-### research_brief.prose
-
-```
-PROGRAM: Research Brief
-TRIGGER: Operator asks for research on a topic
-AGENTS: jarvis (review), edith (research)
-
-STEPS:
-1. Jarvis receives request, extracts topic
-2. Jarvis delegates to Edith with structured request
-3. Edith researches, organizes findings
-4. Edith pushes to second_brain
-5. Jarvis presents brief to operator
-```
-
-## Privacy Rules
-
-1. **Agent workspaces are private** -- Homer cannot read Edith's active/episodic.md
-2. **second_brain is shared** -- any agent can search, writes are namespaced
-3. **Message bus inbox is per-agent** -- only the recipient reads their inbox
-4. **Gateway state is per-agent** -- session IDs isolated per (agent, chat)
-5. **Orchestration programs are shared** -- all agents can read templates
-6. **Global rules are shared** -- `~/.claude/` is read by all
-7. **Secrets are shared** -- one folder, all agents access the same keys
-
-## Adding a New Agent (One-Click)
-
-```bash
-# 1. Create Telegram bot via BotFather (optional)
-# 2. Run install script (from cloned repo)
-cd public-architecture-claude-code
-bash install.sh
-
-# What it does:
-# - Asks agent name, role, model, your name
-# - Creates ~/.claude-lab/{agent}/.claude/ with all dirs
-# - Fills templates, replaces {{AGENT_NAME}} etc.
-# - Installs 10 base skills (symlinked)
-# - Wires memory hooks (SessionStart/UserPromptSubmit/Stop/PreCompact) + optional nightly bash housekeeping
-```
+The full protocol -- who creates, claims, closes and verifies -- is in
+`AGENT_ROUTER.md`, which every agent has in context. A task needs the `task-board`
+scope in the agent's token.
+
+### Shared memory
+
+- Every agent writes decisions, error patterns and external findings with the
+  `create_*` tools, within its token's scopes.
+- Every agent searches the whole vault with `recall` before non-trivial work.
+- Writes are attributed to the authenticated agent; the rules for what to write are
+  in `SECONDBRAIN_WRITE_RULES.md`.
+
+## Group chats
+
+The channel plugin can serve several chats and groups from one agent (multichat,
+opt-in): `TELEGRAM_ALLOWED_CHAT_IDS` in the agent's `channel.env`, groups with their
+`-100…` id. Setup and behaviour: `tg-plugin/README.md` → *Multichat*, and
+`tg-plugin/docs/telegram-setup.md`.
+
+In a public group the agent sees messages from people who are not the operator: keep
+personal data, infrastructure and secrets out of its answers, and treat group text as
+untrusted input.
+
+## What is shared and what is not
+
+| Per agent | Shared |
+|-----------|--------|
+| workspace (`~/.claude-lab/<agent>/.claude/`), SOUL, memory files | `~/.claude/CLAUDE.md`, `~/.claude/rules/` |
+| bot, `channel.env`, webhook port, plugin copy | skills (`agent-architecture/skills`, symlinked) |
+| second_brain token and scopes | `~/.claude-lab/shared/secrets/groq-api-key` |
+| systemd unit, tmux session, task poller | second_brain: vault, task board, events |
+
+"Per agent" is a layout convention. All agents run as one OS user, so the operating
+system does not stop one agent from reading another's files or secrets; the
+separation is enforced only by the agents' instructions. Real isolation would need a
+separate OS user per agent, which the installer does not set up.
 
 ## Memory Flow
 
 ```
-OPERATOR MESSAGE (via any Telegram bot)
+OPERATOR MESSAGE (the agent's bot)
     │
     ▼
-GATEWAY → route by bot_token → agent workspace
-    ├── Download media, transcribe audio
-    ├── Invoke: claude -p --resume {sid-agent-chat}
+CHANNEL PLUGIN → injects the message into the live session
     │
     ▼
 AGENT SESSION
-    ├── Reads: SOUL + AGENTS + USER + rules + PASSIVE + ACTIVE + TOOLS
-    ├── Works: code / research / organize / coordinate
-    ├── Writes: response to Telegram
+    ├── In context: SOUL + USER + rules + write rules + AGENT_ROUTER
+    │                + decisions + preferences
+    ├── recall from second_brain before non-trivial work
+    ├── answers through the channel's `reply` tool
     │
     ▼
-POST-RESPONSE (parallel)
-    ├── Stop hook: active-writer.sh → append salience-tagged entry to active/episodic.md
-    └── Stop hook: turn counter → every 20 turns reflect-nudge.sh → live session consolidates
-              │
-              ▼
-EVENT-DRIVEN CONSOLIDATION (no model crons)
-    ├── checkpoint every 20 turns + watchdog idle 10 min → reflect-nudge.sh
-    │        → live session runs memory-consolidate skill → passive/*.md + dual-write to second_brain
-    └── recall: the agent itself, before a non-trivial task (memory_router)
+AFTER THE TURN (Stop hook)
+    ├── active-writer.sh → core/active/episodic.md
+    ├── every 20 turns → reflect-nudge.sh → the session runs memory-consolidate
+    │        → passive/*.md + dual-write to second_brain
+    └── once a day → decay-sweep.sh, archive-roll.sh
 
-NIGHTLY HOUSEKEEPING (optional, pure bash, no model)
-    ├── decay-sweep.sh  → decay passive/ insights (not preferences.md) → archived/superseded/
-    └── archive-roll.sh → size-roll episodic.md → archived/episodic/YYYY-MM.md
+WATCHDOG
+    ├── 10 min idle → reflect-nudge.sh
+    └── task_poller.py → new board tasks into the session
 ```

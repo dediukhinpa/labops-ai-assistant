@@ -193,7 +193,7 @@ Full, layer-specific instructions live in each component's README:
 
 | What is fixed | Who fixes it | How |
 |---|---|---|
-| frozen / dead agent session | `watchdog.sh` | detects a frozen pane → `start-agent.sh` recreates the session (`handoff.md` keeps the latest events) |
+| frozen / dead agent session | `watchdog.sh` | detects a frozen pane → `start-agent.sh` recreates the session (the diary `episodic.md` and the shared brain keep the latest events) |
 | crashed watchdog | `systemd` | `Restart=on-failure` + `RestartSec=15` |
 | orphaned bun (claude died, bun on PID 1) | `watchdog.sh` / `start-agent.sh` | `pkill -9` by the agent's path |
 | MCP server / worker wedged or crash-looping | `second_brain-monitor.sh` (systemd timer) | `systemctl is-active` + an HTTP `/mcp` probe → Telegram alert on the down/up transition |

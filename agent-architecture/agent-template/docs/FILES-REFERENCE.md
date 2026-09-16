@@ -1,244 +1,197 @@
 # Files Reference -- Complete Map
 
-Every file in the agent workspace, its role, who fills it, when it loads, and access rules.
+Every file an agent gets at install, its role, who writes it, whether it is loaded
+into context, and how it ages. Paths are relative to the agent workspace
+`~/.claude-lab/<agent>/.claude/` unless shown in full.
 
 ## Legend
 
-- **Loads:** `always` = every session start, `on-demand` = Read tool / Skill tool, `never` = not loaded
-- **Writer:** who creates/updates the file
-- **Access:** who can read/modify
+- **Loads:** `always` = pulled into every session (`@import` in `CLAUDE.md`, or read
+  by Claude Code itself); `on-demand` = the agent reads it with the Read tool when needed;
+  `never` = not meant for the model.
+- **Writer:** who creates or updates the file after install.
+- **Ages:** whether an automatic job moves old content out.
 
 ---
 
 ## Layer 1: Global (`~/.claude/`)
 
-Shared across ALL agents on this machine. Loaded every session.
+Shared by every agent of this OS user. Written once by `install.sh` when missing.
 
-| File | Role | Loads | Writer | Access |
-|------|------|-------|--------|--------|
-| **CLAUDE.md** | Global rules, code conventions, git policy, project paths | always | operator (manual) | all agents read, only operator edits |
-| **rules/bash.md** | Bash coding standards: `set -euo pipefail`, quoting | always | operator (manual) | all agents read, only operator edits |
-| **rules/python.md** | Python standards: type hints, pathlib, Google docstrings | always | operator (manual) | all agents read, only operator edits |
-| **rules/typescript.md** | TS standards: strict, no any, Zod, interfaces | always | operator (manual) | all agents read, only operator edits |
+| File | Role | Loads | Writer |
+|------|------|-------|--------|
+| **CLAUDE.md** | Rules for every agent: hierarchy, red zone, language, git, security, model changes, principles | always | operator |
+| **rules/bash.md**, **rules/python.md**, **rules/typescript.md** | Code style per language | always | operator |
 
-**Who can touch:** Only the operator. Agents NEVER modify global files.
+If `~/.claude/CLAUDE.md` already holds someone else's rules, the installer writes
+ours next to it as `CLAUDE.md.labops-new` and asks the operator to merge it.
 
 ---
 
-## Layer 2: Identity (`{workspace}/.claude/`)
+## Layer 2: Identity and rules
 
-Per-agent identity. Loaded every session via `@include` directives in CLAUDE.md.
+| File | Role | Loads | Writer |
+|------|------|-------|--------|
+| **CLAUDE.md** | SOUL: role, character, green/red zones, way of working, channel rule (answer only through `reply`), shared-brain duties. Ends with the `@import` list below | always | operator |
+| **core/USER.md** | **Who the operator is**: name, form of address, timezone, language, profile, channels. Facts that rarely change | always | operator, or the agent when asked |
+| **core/rules.md** | **Orders to the agent itself** ("always… / never…") earned from its own mistakes. Empty at install. A rule is added only when the operator says "write yourself a rule", or when a correction repeats and the operator agrees to the proposed rule | always | operator, or the agent after consent (RED) |
+| **SECONDBRAIN_WRITE_RULES.md** | What to write to the shared brain, with which tool, and when | always | operator (RED) |
+| **AGENT_ROUTER.md** | How agents hand work to each other through the task board | always | operator |
+| **core/AGENTS.md** | Models, pipelines, second_brain endpoints, team table | on-demand | operator; agent on a trigger |
+| **tools/TOOLS.md** | Infrastructure map: workspace paths, access zones, skills, secret *paths*, servers, services | on-demand | operator; agent on a trigger |
 
-| File | Role | Loads | Writer | Access |
-|------|------|-------|--------|--------|
-| **CLAUDE.md** | SOUL -- agent character, personality, principles, priorities, workflow rules. Contains `@include` directives that pull in other files | always | operator (manual) | agent reads, only operator edits |
-| **core/AGENTS.md** | Operating rules: models, message bus paths, subagent config, cross-review rules, pipelines, analytics | on-demand (Read tool) | operator (manual) | agent reads, only operator edits |
-| **core/USER.md** | Operator profile: name, timezone, channels, products, communication style | always (@include) | operator + agent (YELLOW) | agent updates with justification as operator evolves |
-| **core/rules.md** | Rules the agent earned from its mistakes; empty at install (zones live in CLAUDE.md) | always (@include) | operator (manual) | agent reads, only operator edits |
-| **tools/TOOLS.md** | Infrastructure map: servers, SSH, Docker, systemd, ports, GitHub, secrets paths | on-demand (Read tool) | operator (manual) or agent with permission | agent reads, agent can suggest edits |
-
-**Note:** AGENTS.md and TOOLS.md are NOT included at startup to save tokens (~18KB). Agents load them on-demand via Read tool when needed.
-
-**Who can touch:** Operator only. These are the agent's constitution -- agent cannot self-modify identity.
+`@import` list in `CLAUDE.md`: `core/USER.md`, `core/rules.md`,
+`SECONDBRAIN_WRITE_RULES.md`, `AGENT_ROUTER.md`, `core/passive/decisions.md`,
+`core/passive/preferences.md`.
 
 ---
 
 ## Layer 3: Memory -- PASSIVE (`core/passive/`)
 
-Consolidated **semantic insights** (role, not age). Written by the live session
-during reflection, never by a background model. Loaded every session.
+Distilled knowledge. Written by the **live session** through the `memory-consolidate`
+skill (every ~20 turns, after ~10 min idle, or on request) -- never by a background
+model. Each entry carries YAML frontmatter (`id`, `created`, `last_recalled`,
+`recall_count`, `half_life_days`, `salience`, `provenance`).
 
-| File | Role | Loads | Writer | Access |
-|------|------|-------|--------|--------|
-| **passive/insights.md** | Synthesised insights from reflection, each with YAML frontmatter (`id`, `created`, `last_recalled`, `recall_count`, `half_life_days`, `salience`, `provenance`) | always (@include) | **live session** (memory-consolidate skill) | agent reads/writes, decay-sweep prunes, operator can edit |
-| **passive/decisions.md** | Architectural/operational decisions | always (@include) | **live session** (during reflection / when a decision is made), dual-written to second_brain | agent reads/writes, operator can edit |
-| **passive/errors.md** | Error patterns and their fixes | always (@include) | **live session** (reflection) | agent reads/writes, operator can edit |
-| **passive/preferences.md** | Operator preferences distilled from episodic | always (@include) | **live session** (reflection) | agent reads/writes, operator can edit |
+| File | Holds | Example | Loads | Ages |
+|------|-------|---------|-------|------|
+| **decisions.md** | **What we chose** about the project/system, with date and reason. A fact about the world, not an order | "2026-09-02: recall moved to int8 embeddings -- the full model hit MemoryMax" | always | yes |
+| **errors.md** | **What broke**: symptom, cause, how not to repeat it | "Stop hook wrote empty turns: the payload key is `last_assistant_message`" | on-demand | yes |
+| **preferences.md** | **How the operator wants work done**, distilled from their corrections | "Documents for people: .docx, no meta sections" | always | **never** |
+| **insights.md** | Any other durable fact that is none of the above | "An empty episodic.md alone does not mean the hook is broken" | on-demand | yes |
 
-**Lifecycle (event-driven, no model cron):**
-1. `active-writer.sh` (Stop hook) appends raw turns to `active/episodic.md` -- never compressed.
-2. Reflection is nudged in-session by `reflect-nudge.sh`: checkpoint every 20 turns (Stop counter) and watchdog idle 10 min. The **live session** reads `episodic.md` and writes insights to `passive/*.md` (via the `memory-consolidate` skill), dual-writing important knowledge to second_brain.
-3. `decay-sweep.sh` (daily, from the Stop hook, pure bash) moves never-reinforced decayed insights (`score < 0.25`) to `archived/superseded/`; `preferences.md` never decays. Reinforcement (`recall_count++`, longer half-life) is done by `memory-consolidate` when an insight comes back.
+How the three look-alike pairs differ:
+- `USER.md` vs `preferences.md` -- who the operator *is* vs how they *want things done*.
+- `rules.md` vs `decisions.md` -- an order to the agent ("I must…") vs a recorded
+  choice ("we chose…").
+- `errors.md` vs `rules.md` -- the lesson from a failure vs the rule that follows once
+  the same correction comes back and the operator agrees.
 
-**Who can touch:** Live session (writes insights), decay-sweep (usage-driven pruning, no model), operator (full access).
+Only `preferences.md` and `decisions.md` cost context on every turn; keep them terse.
+Created on first consolidation: `errors.md`, `insights.md`, `.consolidated-at`
+(watermark: episodic entries older than this are already processed).
 
 ---
 
 ## Layer 4: Memory -- ACTIVE (`core/active/`)
 
-Current-task working memory (role, not age): the raw episodic diary plus the
-handoff. Only `handoff.md` is loaded every session.
+| File | Role | Loads | Writer | Ages |
+|------|------|-------|--------|------|
+| **episodic.md** | Raw append-only diary: one entry per turn, never model-compressed | on-demand | `active-writer.sh` from the Stop hook | size-rolled past 40 KB |
+| **consolidate.request** | Marker asking the session to consolidate (fallback when notify is down) | never | `reflect-nudge.sh`; deleted by `memory-consolidate` | -- |
+| **pre-compact/** | Copies of `episodic.md` taken before each context compaction, newest 10 kept | never | `precompact-hook.sh` | rotated |
 
-| File | Role | Loads | Writer | Access |
-|------|------|-------|--------|--------|
-| **active/handoff.md** | Compact extract from episodic.md: last 10 conversation entries. Injected at session start for continuity without loading the full journal | always (@include) | **hook** (extracts last 10 from episodic.md at session start) | agent reads, hook writes |
-| **active/episodic.md** | Raw, append-only diary of turns: timestamp, source tag, snippets, salience tag. **Never model-compressed** -- only size-rolled to `archived/episodic/` | on-demand (Read tool) | **active-writer.sh** (Stop hook, salience-tagged), gateway append | agent reads, hook/gateway append, archive-roll relocates |
-
-**Entry format:**
+Entry format in `episodic.md`:
 ```
-### YYYY-MM-DD HH:MM [source_tag] [salience]
-**Оператор:** user message snippet (200 chars max)
-**Agent:** agent response snippet (200 chars max)
+### YYYY-MM-DD HH:MM [source] {salience}
+<turn text, snippet capped at MEMORY_SNIPPET_MAX = 200 chars>
 ```
+`source` is the writer (`stop-hook` in practice). `salience` is a pure-bash guess:
+`ephemeral | error | decision | preference | fact`; the session makes the real call
+during consolidation.
 
-**Source tags:** `own_text`, `own_voice`, `forwarded`, `external_media`
-**Salience classes:** `ephemeral` | `error` | `decision` | `preference` | `fact`
-
-**Who can touch:** Stop hook / gateway (append episodic), archive-roll (relocates old episodic, no model), agent (read). Operator can edit.
-
----
-
-## Layer 5: Memory -- ARCHIVE (`core/`)
-
-Archive. NOT loaded into session context. Accessed via Read tool when needed.
-
-| File | Role | Loads | Writer | Access |
-|------|------|-------|--------|--------|
-| **archived/episodic/YYYY-MM.md** | Size-rolled old episodic slices. Episodic text is relocated here, never summarised | never (manual Read) | **archive-roll.sh** (nightly bash, size-roll) | read-only archive |
-| **archived/superseded/*.md** | Decayed/never-recalled insights evicted from `passive/` | never (manual Read) | **decay-sweep.sh** (nightly bash, usage-driven) | read-only archive |
-
-**Who can touch:** Nightly pure-bash housekeeping (archive-roll relocates episodic, decay-sweep evicts decayed insights -- no model), operator (full access).
+The channel plugin has its own episodic writer (`TELEGRAM_MEMORY_ENABLED`), but it
+fires from the Claude Code hooks posted to `/hooks/agent`, which the agent flow does
+not install -- see `tg-plugin/plugin/docs/progress-reporter-setup.md`.
 
 ---
 
-## Layer 6: Semantic Memory -- second_brain (L4)
+## Layer 5: Memory -- ARCHIVE (`core/archived/`)
 
-External semantic database. NOT a file. Accessed via HTTP API.
+Not loaded. Read by hand when history matters.
 
-| Resource | Role | Loads | Writer | Access |
-|----------|------|-------|--------|--------|
-| **second_brain://user/{agent}/memories/*** | Extracted semantic facts from conversations. LLM-powered extraction of preferences, decisions, entities (via second_brain memory MCP) | on-demand (curl) | **gateway.py** (`push_to_second_brain()` in background thread) | agent searches via curl, gateway writes |
-
-**Anti-pollution guards:**
-- `forwarded` messages -> "Do NOT extract as operator's own preferences"
-- `external_media` -> "Not operator's own words"
-- `own_text`/`own_voice` -> no guard (operator's direct words)
-
-**Who can touch:** Gateway (write via API), agent (search via curl), second_brain service (manages storage).
-
----
-
-## Layer 7: Skills (`skills/`)
-
-Callable skills. NOT loaded at session start. Loaded on-demand when Skill tool invoked.
-
-| Path | Role | Loads | Writer | Access |
-|------|------|-------|--------|--------|
-| **skills/{name}/SKILL.md** | Skill definition: frontmatter (description, triggers), instructions, `$ARGUMENTS` | on-demand (Skill tool) | developer (manual) | agent reads when skill called |
-| **skills/{name}/*.sh** | Shell scripts used by skill | on-demand (skill execution) | developer (manual) | agent executes |
-| **skills/{name}/*.py** | Python scripts used by skill | on-demand (skill execution) | developer (manual) | agent executes |
-
-**Skills:** agent-browser, create-agent, groq-voice, memory-consolidate, second_brain-doctor
-
-**Who can touch:** Developer/operator creates skills. Agent can use but not modify.
-
----
-
-## Layer 8: Subagent Definitions (`agents/`)
-
-MD files defining subagent behavior. NOT loaded at session start. Used when Agent tool spawns subagent.
-
-| Path | Role | Loads | Writer | Access |
-|------|------|-------|--------|--------|
-| **agents/{name}.md** | Subagent definition: frontmatter (`model:`, `description:`), instructions | on-demand (Agent tool) | developer (manual) | parent agent reads when spawning |
-
-**Who can touch:** Developer/operator creates. Agent reads when spawning subagents.
-
----
-
-## Layer 9: Scripts (`scripts/`)
-
-Memory-engine helpers. NOT loaded into context. Fired by hooks/watchdog or an
-optional nightly cron. All are pure bash (+ `curl`/`python3` arithmetic); none
-calls a model -- `claude -p` is forbidden repo-wide.
-
-| File | Role | Runs | Writer |
-|------|------|------|--------|
-| **active-writer.sh** | Append salience-tagged entry to `active/episodic.md` | Stop hook (each turn) | developer |
-| **reflect-nudge.sh** | Nudge the **live session** to consolidate (via `agent_router.notify`); the session does the model work | checkpoint every 20 turns + watchdog idle 10 min | developer |
-| **decay-sweep.sh** | Evict never-reinforced decayed insights to `archived/superseded/` (`preferences.md` never decays) | optional nightly cron 03:00 | developer |
-| **archive-roll.sh** | Size-roll `episodic.md` (>40 KB) into `archived/episodic/YYYY-MM.md` | optional nightly cron 03:05 | developer |
-
-**Who can touch:** Developer/operator creates and maintains. Hooks/watchdog/cron execute. Agent can read but should not modify without permission.
-
----
-
-## Layer 10: Secrets (`secrets/`)
-
-Credentials. NEVER loaded into context. NEVER committed to git. NEVER logged.
-
-All secrets in ONE shared folder: `~/.claude-lab/shared/secrets/`
-
-| Path | Role | Access |
+| Path | Role | Writer |
 |------|------|--------|
-| **shared/secrets/second_brain.key** | second_brain API key | scripts read, agent NEVER outputs |
-| **shared/secrets/telegram/bot-token-{agent}** | Telegram bot token (per bot) | gateway reads, agent NEVER outputs |
-| **shared/secrets/db-service-account.json** | Database service account | message bus reads, agent NEVER outputs |
-| **shared/secrets/groq-api-key** | Groq Whisper API key | transcription reads, agent NEVER outputs |
+| **archived/episodic/YYYY-MM.md** | Older diary entries moved out of `episodic.md`; text is relocated, never summarised | `archive-roll.sh` |
+| **archived/superseded/*.md** | Passive entries that decayed without ever being recalled | `decay-sweep.sh` |
 
-**Who can touch:** Operator only. Agent NEVER reads content, NEVER copies between servers, NEVER commits, NEVER outputs to stdout/stderr.
-
----
-
-## Layer 11: Gateway (`shared/gateway/`)
-
-Telegram router. Shared across agents. NOT loaded into agent context.
-
-| File | Role | Writer | Access |
-|------|------|--------|--------|
-| **gateway.py** | Main router: Telegram polling -> Claude subprocess -> response -> memory | developer | developer edits, systemd runs |
-| **config.json** | Agent configs: bot token path, workspace, model, timeout, env vars | developer/operator | developer edits |
-| **state/sid-{agent}-{chat}.txt** | Session ID persistence | gateway (auto) | gateway reads/writes |
-| **media-inbound/*.ogg** | Downloaded voice/media files | gateway (auto) | agent reads via path, auto-cleanup |
-
-**Who can touch:** Developer maintains code. Gateway auto-manages state and media. Agent reads media paths but doesn't modify gateway.
+Both jobs are pure bash (no model) and run at most once a day from the Stop hook
+(marker `state/last-housekeeping`).
 
 ---
 
-## Summary: Context Budget
+## Layer 6: Shared brain -- second_brain (L4)
 
-### Always loaded (every session start)
+Not a file. Four MCP servers over HTTP, listed in `.mcp.json`, each authenticated with
+the agent's Bearer token:
 
-| File | Size | Tokens (~) |
-|------|------|------------|
-| ~/.claude/CLAUDE.md | 7 KB | 3,200 |
-| ~/.claude/rules/*.md | 1 KB | 430 |
-| CLAUDE.md (SOUL) | 8 KB | 3,500 |
-| core/USER.md | 2 KB | 765 |
-| core/rules.md | 4 KB | 1,935 |
-| core/passive/*.md | 3 KB | 1,400 |
-| core/active/handoff.md | 1-4 KB | 450-1,800 |
-| **TOTAL** | **27-33 KB** | **12,130-14,830** |
+| Server | Port | Used for |
+|--------|------|----------|
+| `second_brain-memory` | 5001 | writes: `create_decision_note`, `supersede_decision`, `create_error_pattern_note`, `create_handoff`, ... |
+| `second_brain-memory_router` | 5002 | `recall` -- hybrid search over the whole vault |
+| `second_brain-agent_router` | 5000 | events between agents (`notify`, `list_my_pending`, `ack`) |
+| `second_brain-tasks` | 5003 | the task board (`task_*`) |
 
-### On-demand (not in startup context)
-
-| Resource | Size | When |
-|----------|------|------|
-| core/AGENTS.md | 5 KB | Agent needs models, subagents, pipelines (on-demand Read) |
-| tools/TOOLS.md | 6 KB | Agent needs servers, infrastructure (on-demand Read) |
-| core/active/episodic.md | 8-30 KB | Full journal, loaded by gateway (on-demand Read) |
-| Skills (15) | ~50 KB total | Skill tool invocation |
-| Scripts (30) | ~70 KB total | Never in context |
-| second_brain | unlimited | curl search |
-| Secrets | <1 KB each | Never in context |
+A write succeeds only inside the scopes granted to the token (`AGENT_SCOPES` in
+`agent.env` mirrors them). Default: `decisions, external, knowledge, inbox,
+error-patterns, task-board`.
 
 ---
 
-## Access Matrix
+## Layer 7: Configuration and access
 
-| File | Operator | Agent | Gateway | Hooks/Bash | Other Agents |
-|------|----------|-------|---------|------------|--------------|
-| Global CLAUDE.md | RW | R | - | - | R |
-| SOUL CLAUDE.md | RW | R | - | - | **NO** |
-| AGENTS.md | RW | R | - | - | **NO** |
-| USER.md | RW | R | - | - | **NO** |
-| rules.md | RW | R | - | - | **NO** |
-| TOOLS.md | RW | R (suggest) | - | - | **NO** |
-| passive/*.md | RW | RW (reflection) | - | decay-sweep prunes | **NO** |
-| active/episodic.md | RW | R | W (append) | active-writer appends, archive-roll relocates | **NO** |
-| Skills | RW | R+execute | - | - | shared |
-| Secrets | RW | **NEVER** | R | R | **NEVER** |
-| gateway.py | RW | R | execute | - | - |
-| config.json | RW | R | R | - | - |
+| File | Role | Loads | Writer |
+|------|------|-------|--------|
+| **settings.json** | Claude Code settings: `model`, auto-compact window, allow/deny lists, hooks | read by Claude Code | operator |
+| **.mcp.json** | The four second_brain servers with URL and Bearer token (chmod 600) | read by Claude Code | installer; `connect-agents.sh` in second_brain |
+| **agent.env** | `AGENT_ID`, workspace, service URLs, `AGENT_BEARER`, `AGENT_SCOPES`, `SUMMARY_LANGUAGE` (chmod 600) | never (sourced by the launcher) | installer; `connect-agents.sh` |
 
-**Key rule:** Each agent's workspace is **private**. Other agents CANNOT read another agent's core/, active/, passive/ without explicit operator permission.
+---
+
+## Layer 8: Hooks (`hooks/`) and scripts (`scripts/`)
+
+Copied per agent (each agent owns its copy). Pure bash/python; none calls a model --
+`claude -p` is forbidden repo-wide.
+
+| File | Fired by | Does |
+|------|----------|------|
+| **hooks/heartbeat-hook.sh** | SessionStart, UserPromptSubmit, Pre/PostToolUse, Notification, Stop | touches `state/heartbeat` -- the watchdog's proof of life |
+| **hooks/session-start-hook.sh** | SessionStart | logs the start |
+| **hooks/stop-hook.sh** | Stop (each turn) | diary entry via `active-writer.sh`; line in `logs/verbose-*.jsonl`; consolidation nudge every 20 turns; daily housekeeping |
+| **hooks/precompact-hook.sh** | PreCompact | snapshot to `core/active/pre-compact/`, then `brain-flush.sh` |
+| **scripts/active-writer.sh** | stop-hook | appends one salience-tagged diary entry |
+| **scripts/reflect-nudge.sh** | stop-hook, watchdog idle | asks the live session to run `memory-consolidate` |
+| **scripts/decay-sweep.sh** | stop-hook, daily | moves decayed, never-recalled passive entries to `archived/superseded/`; skips `preferences.md` |
+| **scripts/archive-roll.sh** | stop-hook, daily | moves old diary entries to `archived/episodic/` when `episodic.md` > 40 KB |
+| **scripts/brain-flush.sh** | PreCompact, SessionEnd | sends the diary tail to the shared brain (`inbox/`) as a safety net |
+| **scripts/task-poller.sh** + **task_poller.py** | watchdog | polls the task board every 5 s and delivers new tasks into the session |
+| **scripts/mcp-call.sh** | the scripts above | calls an MCP tool with the required session handshake |
+
+Runtime files: `state/heartbeat`, `state/last-housekeeping`, `state/brain-flush.sha`;
+logs in `logs/` (`hooks.log`, `verbose-YYYY-MM-DD.jsonl`, per-script logs).
+
+---
+
+## Layer 9: Skills, subagents, channel plugin
+
+| Path | Role | Loads |
+|------|------|-------|
+| **skills** | Symlink to `agent-architecture/skills`, shared by every agent: agent-browser, create-agent, groq-voice, memory-consolidate, second_brain-doctor. An edit in the repo reaches all agents at once | on-demand (Skill tool) |
+| **agents/** | Subagent definitions (`<name>.md`); empty at install | on-demand (Agent tool) |
+| **labops-tg-plugin/plugin/** | Private copy of the Telegram channel plugin; `node_modules` links to the shared checkout. Refreshed only when the agent is created | never (runs as the channel MCP server) |
+
+---
+
+## Layer 10: Secrets
+
+Never loaded into context, never committed, never printed.
+
+| Path | What |
+|------|------|
+| `~/.claude-lab/shared/state/<agent>/telegram/channel.env` | Telegram bot token, allowed users, webhook port and token |
+| `~/.claude-lab/shared/state/<agent>/telegram/webhook-token` | the webhook token again, as a flat file for the webhook listener |
+| `~/.claude-lab/shared/secrets/groq-api-key` | Groq key for voice transcription, one for all agents |
+| `.claude/agent.env`, `.claude/.mcp.json` | the agent's second_brain Bearer token |
+
+Channel settings that are not secret live next to `channel.env` in `config.json`
+(`webhook.enabled`, `status.suppress_typing_bubble`).
+
+---
+
+## Access -- what is enforced and what is not
+
+The layers above describe **who is supposed to** change what. The operating system
+does not enforce it: all agents on a host run as one OS user, so any agent can
+technically read and write every file on this page, including other agents'
+workspaces and secrets. Treat the zones as instructions to the model, not as a
+security boundary.

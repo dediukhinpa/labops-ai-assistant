@@ -122,20 +122,35 @@ Claude Code загружает оба уровня. Глобальный все�
 
 ## Память (4 слоя)
 
-Тиры `active/passive/archive` означают **роль**, а не возраст.
+Тиры `active/passive/archive` означают **роль**, а не возраст. Подробно по каждому
+файлу -- [FILES-REFERENCE.md](FILES-REFERENCE.md).
 
-| Слой | Файл | Что хранит | Обновление |
-|------|------|-----------|------------|
-| **IDENTITY** | CLAUDE.md, AGENTS.md, USER.md | Кто ты, кто владелец | Вручную |
-| **RULES** | core/rules.md | Правила, заработанные на ошибках | Оператор или агент по его просьбе |
-| **ACTIVE (episodic)** | core/active/episodic.md | Сырой append-only дневник ходов (salience-тег) | Stop-хук (active-writer.sh), НИКОГДА не сжимается моделью |
-| **PASSIVE** | core/passive/*.md | Семантические инсайты (insights/decisions/errors/preferences) | Живая сессия при рефлексии (скилл memory-consolidate), событийно |
-| **ACTIVE (handoff)** | core/active/handoff.md | Последние 10 записей из журнала | Авто-запись |
-| **ARCHIVE** | core/archived/ | Архив (скрученный episodic, затухшие инсайты) | По запросу + ночной bash-крон (decay-sweep, archive-roll) |
+| Слой | Файл | Что хранит | Кто пишет |
+|------|------|-----------|-----------|
+| **IDENTITY** | CLAUDE.md, core/USER.md | Кто ты; кто оператор (имя, обращение, язык, пояс) | Оператор, агент -- по его просьбе |
+| **RULES** | core/rules.md | Приказы себе «всегда / никогда», заработанные на ошибках | Только с согласия оператора |
+| **ACTIVE** | core/active/episodic.md | Сырой дневник ходов с salience-тегом | Stop-хук (active-writer.sh); моделью не сжимается |
+| **ACTIVE** | core/active/handoff.md | На чём остановился -- для следующей сессии | Сам агент (вместе с `create_handoff`) |
+| **PASSIVE** | core/passive/decisions.md | Что решили, когда и почему | memory-consolidate |
+| **PASSIVE** | core/passive/errors.md | Что сломалось, причина, как не повторить | memory-consolidate |
+| **PASSIVE** | core/passive/preferences.md | Как оператор хочет, чтобы делалось; не стареет | memory-consolidate |
+| **PASSIVE** | core/passive/insights.md | Прочие долговечные факты | memory-consolidate |
+| **ARCHIVE** | core/archived/ | Старый дневник, затухшие записи | decay-sweep.sh, archive-roll.sh |
 
-Правило: IDENTITY, RULES, `passive/decisions.md`, `passive/preferences.md` и `active/handoff.md` -- всегда в контексте. Остальной PASSIVE, episodic.md и ARCHIVE -- только по запросу.
+Как не перепутать:
+- `USER.md` -- кто оператор; `preferences.md` -- как он хочет, чтобы работали.
+- `decisions.md` -- «мы выбрали X» (факт с датой, стареет); `rules.md` -- «я обязан X»
+  (приказ себе, не стареет).
+- `errors.md` -- урок из сбоя; если та же поправка пришла снова -- предложи правило
+  в `rules.md` и запиши его после согласия оператора.
 
-Консолидация **событийная, не по крону**: чекпойнт каждые 20 ходов (счётчик в Stop-хуке) + простой watchdog 10 мин -> reflect-nudge.sh будит живую сессию (фоновая модель запрещена, `claude -p` под запретом). Единственный крон -- опциональная ночная чисто-bash уборка (decay-sweep 03:00, archive-roll 03:05).
+В контексте всегда: CLAUDE.md, USER.md, rules.md, SECONDBRAIN_WRITE_RULES.md,
+AGENT_ROUTER.md, decisions.md, preferences.md. Остальное -- по запросу.
+
+Консолидация **событийная**: чекпойнт каждые 20 ходов (счётчик в Stop-хуке) и
+простой 10 минут (watchdog) -> reflect-nudge.sh будит живую сессию (фоновая модель
+запрещена, `claude -p` под запретом). Уборка (decay-sweep, archive-roll) -- чистый
+bash, раз в сутки из того же Stop-хука; крон не нужен.
 
 ---
 

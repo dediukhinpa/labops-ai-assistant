@@ -1,110 +1,58 @@
 # New Agent Checklist
 
-> **NOTE:** `jarvis` is an example name. Replace with your own agent name.
-
-## 1. Create Workspace
-
-```bash
-AGENT_NAME="jarvis"  # ← replace with your agent name
-
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/{passive,active}
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/archived/{episodic,superseded}
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/tools
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/agents
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/scripts
-
-# Symlink shared skills
-ln -s ~/.claude-lab/shared/skills ~/.claude-lab/${AGENT_NAME}/.claude/skills
-
-# Initialize memory files with headers
-echo "# PASSIVE -- semantic insights" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/insights.md
-echo "# PASSIVE DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/decisions.md
-echo "# Active memory -- raw append-only episodic diary" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/episodic.md
-echo "# PREFERENCES" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/preferences.md
-```
-
-## 2. Write Identity Files
-
-| File | What to write |
-|------|--------------|
-| `.claude/CLAUDE.md` | SOUL: role, character, style, @includes |
-| `core/AGENTS.md` | Models, subagents config, pipelines |
-| `core/USER.md` | Operator profile, preferences |
-| `core/rules.md` | Rules learned from mistakes; zones live in CLAUDE.md |
-| `tools/TOOLS.md` | Available servers, Docker, services |
-
-## 3. Create Telegram Bot
-
-1. Open @BotFather in Telegram
-2. `/newbot` → choose name and username
-3. Copy token to `secrets/telegram/bot-token`
-
-## 4. Configure Gateway
-
-Edit `~/.claude-lab/shared/gateway/config.json`:
-
-```json
-{
-  "agents": {
-    "jarvis": {
-      "enabled": true,
-      "telegram_bot_token_file": "~/.claude-lab/shared/secrets/telegram/bot-token-jarvis",
-      "workspace": "~/.claude-lab/jarvis/.claude",
-      "model": "opus",
-      "timeout_sec": 300
-    }
-  }
-}
-```
-
-## 5. Create Systemd Service
+A new agent is created by `skills/create-agent/new-agent.sh` -- usually by asking the
+Developer agent "create a new agent" (it runs the `create-agent` skill), or directly:
 
 ```bash
-sudo cat > /etc/systemd/system/jarvis-gateway.service << 'EOF'
-[Unit]
-Description=JARVIS Telegram Gateway
-After=network.target
-
-[Service]
-Type=simple
-User=YOUR_USER
-WorkingDirectory=/home/YOUR_USER/.claude-lab/jarvis
-ExecStart=/usr/bin/python3 /home/YOUR_USER/.claude-lab/shared/gateway/gateway.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable jarvis-gateway
-sudo systemctl start jarvis-gateway
+bash ~/labops-ai-assistant/agent-architecture/skills/create-agent/new-agent.sh
 ```
 
-## 6. Setup second_brain Namespace
+Do not build a workspace by hand: the script wires pieces that are easy to miss
+(private plugin copy, webhook port, config.json, scopes, systemd unit).
 
-```bash
-SECOND_BRAIN_BEARER=$(cat ~/.claude-lab/shared/secrets/second_brain.key)
-# second_brain auto-creates namespace on first write
-# Just ensure the key file exists
-```
+## 1. Before you start
 
-## 7. Setup Housekeeping Cron (optional)
+- [ ] second_brain is installed and its four services answer (memory 5001,
+      memory_router 5002, agent_router 5000, tasks 5003)
+- [ ] A Telegram bot from @BotFather: `/newbot`, copy the token
+- [ ] Your Telegram user id (the bot answers only the ids you allow)
+- [ ] Optional: a Groq API key for voice (console.groq.com/keys)
 
-Consolidation is **event-driven**, not cron: reflection is nudged in-session by
-checkpoint (every 20 turns) and watchdog idle (10 min) -- no model crons. The only
-cron is optional nightly **pure-bash** housekeeping (no model):
+## 2. What the script does (steps it prints)
 
-```bash
-0 3 * * * /path/to/scripts/decay-sweep.sh      # 03:00 -- reinforce + decay passive/ -> archived/superseded/
-5 3 * * * /path/to/scripts/archive-roll.sh     # 03:05 -- size-roll episodic.md -> archived/episodic/YYYY-MM.md
-```
+| Step | Result |
+|------|--------|
+| 0. Dependencies | checks `claude`, `bun`, `curl`, `jq`, `tmux` |
+| 1. Configuration | name, role, description, model (alias, default `sonnet`), language, form of address |
+| 2. Shared-brain token | issues a Bearer with `decisions,external,knowledge,inbox,error-patterns,task-board` |
+| 3. Workspace | runs `agent-template/install.sh` non-interactively: see [FILES-REFERENCE.md](FILES-REFERENCE.md) |
+| 4. Telegram channel | `channel.env`, webhook token, `config.json`, private plugin copy |
+| 5. Voice | stores the Groq key in `~/.claude-lab/shared/secrets/groq-api-key` |
+| 6. Autostart | `claude-agent-<agent>.service` (systemd → watchdog → tmux + claude) |
+| 7. Smoke test | memory_router answers, Telegram `getMe` passes |
 
-## 8. Test
+Anything that could not be finished is listed at the end as "degraded", with the
+command to fix it.
 
-1. Send message to Telegram bot
-2. Verify response arrives
-3. Check `core/active/episodic.md` has the salience-tagged entry
-4. Check `core/passive/preferences.md` exists (CLAUDE.md imports it)
-5. Verify other agent can message via inbox
+## 3. Fill in by hand afterwards
+
+The installer leaves these as `TODO: fill in`:
+
+- [ ] `core/USER.md` -- your name, profile, communication style, what you need from this agent
+- [ ] `core/AGENTS.md` -- the team table
+- [ ] `tools/TOOLS.md` -- servers and services this agent works with
+- [ ] `CLAUDE.md` -- the extra red-zone line, if the role needs one
+
+Leave `core/rules.md` empty: rules are added later, from the agent's own mistakes.
+
+## 4. Verify
+
+- [ ] `systemctl is-active claude-agent-<agent>` → `active`
+- [ ] Message the bot → 👀 reaction, "typing…", then an answer
+- [ ] `core/active/episodic.md` got a new `### … [stop-hook] {…}` entry
+- [ ] `state/heartbeat` is fresh
+- [ ] `python3 ~/labops-ai-assistant/agent-architecture/skills/second_brain-doctor/scripts/second_brain_doctor.py --agent <agent>` is green
+- [ ] Another agent can hand it a task through the board (see `AGENT_ROUTER.md`)
+
+No cron is needed: consolidation is nudged in-session and housekeeping runs from the
+Stop hook once a day.

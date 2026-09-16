@@ -7,30 +7,32 @@ Essential commands for daily work with Claude Code. Organized by workflow.
 
 ## Core Workflow
 
+Built into Claude Code:
+
 | Command | What it does | When to use |
 |---------|-------------|-------------|
-| `/plan` | Create implementation plan before coding | **Always start here.** Before any feature or fix |
-| `/tdd` | Test-driven development workflow | Writing new feature -- tests first, then code |
+| Plan mode (`Shift+Tab`) | Plan before touching files | Before any non-trivial feature or fix |
 | `/code-review` | Quality + security review | After writing code, before commit |
-| `/verify` | Build + lint + test in one step | Before creating PR |
-| `/compact` | Compress conversation context | When agent starts forgetting or slowing down |
+| `/compact` | Compress conversation context | When the agent starts forgetting or slowing down |
 | `/clear` | Reset conversation (free, instant) | Between unrelated tasks |
+| `/cost` | Token usage of the session | Checking where tokens go |
+
+`/tdd`, `/verify`, `/fix`, `/refactor` are **not** built in: they exist only if you add
+a plugin or your own skill that defines them (see *Superpowers Commands* below).
+
+In an agent driven from Telegram these commands are typed in the tmux session, not in
+the chat; the chat has its own commands (`/reset force`, `/status`, `/doctor`).
 
 ## Decision Tree: What Command Do I Need?
 
 ```
 Starting a task?
-  └── /plan (always plan first)
-
-Writing code?
-  ├── New feature → /tdd (tests first)
-  ├── Bug fix → /fix (if using skill)
-  └── Refactor → /refactor (if using skill)
+  └── plan mode (plan first)
 
 Code is written?
   ├── Review it → /code-review
-  ├── Run tests → /verify
-  └── Ready to merge → /commit or create PR manually
+  ├── Run tests → the project's own test command
+  └── Ready to merge → commit and open a PR
 
 Context issues?
   ├── Agent is confused → /compact
@@ -56,27 +58,27 @@ Context issues?
 | `git diff` | See exact changes | Review before commit |
 | `/commit` | Create commit (if skill installed) | After verified chunk of work |
 
-## Superpowers Commands
+## Superpowers Commands (optional plugin)
 
-These require the Superpowers plugin:
+These come from the third-party Superpowers plugin. The installer does **not** install
+it, so agents do not have these commands unless you add the plugin yourself:
 
 | Command | What it does | When to use |
 |---------|-------------|-------------|
 | `/plan` | Structured implementation plan | Before any non-trivial work |
 | `/tdd` | Test-driven development scaffold | New features |
-| `/code-review` | Multi-perspective review | Before merge |
 | `/brainstorm` | Explore ideas before implementation | Creative or ambiguous tasks |
 | `/debug` | Systematic debugging workflow | When something breaks |
 
 ## Tips for Beginners
 
-1. **Always /plan first** -- even for "quick" tasks. Plans catch issues before they cost time.
+1. **Plan first** -- even for "quick" tasks. Plans catch issues before they cost time.
 
 2. **Use /clear between tasks** -- it's free and prevents context pollution.
 
 3. **Use /compact at logical breakpoints** -- after research (before implementation), after implementation (before testing).
 
-4. **Use Opus as primary model for all coding.** Sonnet only for subagents (search, research, parallel exploration). Code quality requires the best model.
+4. **Pick the model per role.** `create-agent` defaults to `sonnet`; choose `opus` or `fable` for agents that write a lot of code. Changing a model is the operator's call.
 
 5. **Check /cost regularly** -- understand where tokens go.
 
@@ -84,8 +86,8 @@ These require the Superpowers plugin:
 
 | When you want to... | Use |
 |---------------------|-----|
-| Run a quick action | **Command** (`/plan`, `/tdd`, `/verify`) |
-| Apply specialized knowledge | **Skill** (groq-voice, web-search, code-review) |
+| Run a quick action | **Command** (`/compact`, `/clear`, `/code-review`) |
+| Apply specialized knowledge | **Skill** (groq-voice, memory-consolidate, agent-browser) |
 | Delegate a complex task | **Agent** (subagent via Agent tool) |
 
 Commands are for **you** (operator). Skills are for **knowledge**. Agents are for **delegation**.

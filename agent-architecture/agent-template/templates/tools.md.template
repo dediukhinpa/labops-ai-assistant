@@ -13,7 +13,7 @@
 | IDENTITY (red) | CLAUDE.md, core/rules.md | operator, or the agent when the operator asks |
 | PROFILE (yellow) | core/USER.md, core/AGENTS.md, tools/TOOLS.md | agent, on a trigger |
 | PASSIVE (yellow) | core/passive/ -- decisions, preferences, errors, insights | memory-consolidate; aged entries move to core/archived/ via decay-sweep.sh, preferences stay |
-| ACTIVE (yellow) | core/active/episodic.md, core/active/handoff.md | Stop hook, automatically; rolled by size via archive-roll.sh |
+| ACTIVE (yellow) | core/active/episodic.md | Stop hook, automatically; rolled by size via archive-roll.sh |
 | SKILLS | skills/* | operator -- the directory is shared by every agent |
 | L4 | second_brain shared semantic memory | agents, via MCP |
 

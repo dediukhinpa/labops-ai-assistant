@@ -1,25 +1,29 @@
 # agent-template
 
 Complete Claude Code agent workspace template, wired to a shared **second_brain** MCP
-server (memory + memory_router + agent_router). Ported from
+server (memory + memory_router + agent_router + tasks). Ported from
 `public-architecture-claude-code` and adapted: the upstream semantic-memory
 backend is replaced with second_brain MCP memory_router (HTTP + Bearer + JSON-RPC).
 
 ## Two ways to use this
 
-### 1. Standalone (recommended)
+### 1. Standalone
 
-Create a fresh per-agent workspace at `~/.claude-lab/<agent-id>/.claude/`:
+The usual path is not this script but `agent-architecture/install.sh` (first agent)
+and the `create-agent` skill (every next one): they call this installer
+non-interactively and add the Telegram channel, voice and autostart on top.
+
+To create a bare per-agent workspace at `~/.claude-lab/<agent-id>/.claude/` by hand:
 
 ```bash
-cd public-second_brain-agentos/agent-template
+cd labops-ai-assistant/agent-architecture/agent-template
 bash install.sh
 ```
 
 The installer asks for agent identity, operator profile, and **second_brain
 connection** (`MCP_HOST` host/IP, `AGENT_BEARER`, `AGENT_SCOPES`). It renders
 templates, copies scripts and hooks, writes `.mcp.json`, and optionally
-symlinks the shared skills bundle from `../skills/`.
+symlinks the shared skills directory `agent-architecture/skills`.
 
 Then:
 
@@ -53,8 +57,8 @@ and never block the harness on failure.
 ```
 ~/.claude-lab/<agent-id>/.claude/
 |-- CLAUDE.md                  # SOUL / identity
-|-- .mcp.json                  # second_brain memory/memory_router/agent_router endpoints (chmod 600)
-|-- settings.json              # Claude Code hooks (SessionStart/Stop/PreCompact)
+|-- .mcp.json                  # second_brain memory/memory_router/agent_router/tasks endpoints (chmod 600)
+|-- settings.json              # model, permissions, hooks (heartbeat, SessionStart, Stop, PreCompact, SessionEnd)
 |-- agent.env                  # source this to export MCP_HOST/SECOND_BRAIN_*_URL/AGENT_BEARER
 |-- core/
 |   |-- USER.md
@@ -62,15 +66,14 @@ and never block the harness on failure.
 |   |-- AGENTS.md
 |   |-- passive/                  # semantic insights: decisions + preferences (in context), errors, insights
 |   |-- active/
-|   |   |-- episodic.md          # raw append-only diary
-|   |   `-- handoff.md
+|   |   `-- episodic.md          # raw append-only diary
 |   `-- archived/               # episodic/ (size-rolled) + superseded/ (decayed insights)
 |-- tools/TOOLS.md
 |-- scripts/                   # memory engine + board delivery: active-writer, reflect-nudge,
 |                              #   decay-sweep, archive-roll, brain-flush, mcp-call, task-poller.sh, task_poller.py
 |-- hooks/                     # session-start, stop, precompact, heartbeat
 |-- logs/
-`-- skills/                    # symlink to ../skills/ shared bundle
+`-- skills/                    # symlink to agent-architecture/skills (shared by every agent)
 ```
 
 ## Directory layout (this template)
@@ -132,7 +135,7 @@ agent-template/
 | Upstream semantic-memory backend (HTTP REST `/api/v1/...`) | second_brain MCPs (HTTP MCP transport, JSON-RPC 2.0, Bearer auth) |
 | Bearer/API key under `~/.claude-lab/shared/secrets/` (file on disk) | Bearer in `.mcp.json` `Authorization: Bearer ${AGENT_BEARER}` (chmod 600) |
 | Upstream session-sync script (uploads ACTIVE+PASSIVE to the memory server) | No sync script: the agent queries second_brain itself before a task, and `memory-consolidate` dual-writes what it distils |
-| Standalone install | Lives inside the public-second_brain-agentos distro alongside the server, inbox-agent, and skills bundle |
+| Standalone install | Lives in the `labops-ai-assistant` monorepo next to the orchestration, the skills and the Telegram plugin; second_brain is a separate repo |
 | Hooks described in docs only | Concrete `hooks/*.sh` shipped, wired via `templates/settings.json.template` |
 
 ## License

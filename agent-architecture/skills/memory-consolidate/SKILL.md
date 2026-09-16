@@ -23,11 +23,25 @@ reusable *knowledge*. Do it yourself in-session — there is no background model
 
 2. **Distil insights — don't copy.** Across the new entries, extract *conclusions*
    (e.g. not "operator asked about deploys" but "operator wants deploys announced in
-   Telegram before they start"). Route by kind:
-   - decision → `core/passive/decisions.md`
-   - error / failure pattern → `core/passive/errors.md`
-   - durable preference / working rule → `core/passive/preferences.md`
-   - everything else worth keeping → `core/passive/insights.md`
+   Telegram before they start"). Route each one by the first question it answers "yes":
+
+   | Question | File | Example |
+   |---|---|---|
+   | Did we **choose** something about the project/system, with a reason? | `core/passive/decisions.md` | "2026-09-02: switched recall to int8 embeddings — the full model hit MemoryMax" |
+   | Did something **break**, and do we now know the cause and how to avoid it? | `core/passive/errors.md` | "Stop hook wrote empty turns: the payload key is `last_assistant_message`" |
+   | Is it **how the operator wants work done** — style, format, process? | `core/passive/preferences.md` | "Documents for people: .docx, no meta sections, explain terms in place" |
+   | Anything else durable and useful later? | `core/passive/insights.md` | "An empty episodic.md alone does not mean the hook is broken" |
+
+   Not yours to write here:
+   - **Who the operator is** (name, address, timezone, language, channels) is
+     `core/USER.md` — edited by the operator, or by you when they ask.
+   - **An imperative rule for your own behaviour** ("always… / never…") is
+     `core/rules.md` (RED). Consolidation never writes it: when the same correction
+     shows up a second time, *propose* the rule in your reply and add it only after
+     the operator agrees. A preference says what the operator likes; a rule says what
+     you must do.
+   - A decision is a fact about the world with a date; a rule is an order to
+     yourself. "We chose X" → decisions; "I must X" → proposed rule.
 
 3. **Add metadata.** Prepend each new insight with YAML frontmatter:
    ```yaml
@@ -49,10 +63,20 @@ reusable *knowledge*. Do it yourself in-session — there is no background model
    `recall_count` and extend `half_life_days` on the existing note.
 
 5. **Dual-write what matters.** For durable, shareable knowledge, also write to
-   second_brain using the fixed tools per `SECONDBRAIN_WRITE_RULES.md`:
-   `create_decision_note`, `create_error_pattern_note`, `create_preference` →
-   `create_personal_note`, general → `create_project_note`. Write only within your
-   `can_write_scopes`. Idempotent by sha256 — safe to re-run.
+   second_brain using the fixed tools per `SECONDBRAIN_WRITE_RULES.md`. Each tool
+   writes to one scope, and the call fails unless that scope is in your token
+   (`AGENT_SCOPES` in `agent.env` mirrors it) and the tool is in your tool list:
+
+   | Local file | Tool | Scope | Works on a standard install |
+   |---|---|---|---|
+   | decisions.md | `create_decision_note` (`supersede_decision` to replace one) | `decisions` | yes |
+   | errors.md | `create_error_pattern_note` | `error-patterns` | yes |
+   | preferences.md | `create_personal_note` | `personal` | no — scope not in the token, keep it local |
+   | insights.md, from an external source | `create_external_note` (`source`, `url`) | `external` | no — the memory server runs the `core` tool set, keep it local |
+   | insights.md, about the project/business | `create_project_note` | `projects` | no — scope not in the token, keep it local |
+
+   Scope or tool missing → keep the insight local and say so in your reply; never
+   retry under another tool just to get it written. Idempotent by sha256 — safe to re-run.
 
 6. **Advance the watermark.** Write the current ISO-8601 UTC time to
    `core/passive/.consolidated-at`, and delete `core/active/consolidate.request`

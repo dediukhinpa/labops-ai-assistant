@@ -8,7 +8,7 @@ set -euo pipefail
 # nothing guaranteed a flush before the two moments knowledge is actually lost:
 # context compaction and session end. This script is that guarantee -- wired to
 # the PreCompact and SessionEnd hooks. It is a SAFETY NET, not a replacement
-# for the write rules: it dumps the episodic tail + handoff into inbox/ via
+# for the write rules: it dumps the episodic tail into inbox/ via
 # create_handoff so a human or the next session can recover; curated notes
 # (decisions, knowledge) must still be written in-session by the model.
 #
@@ -21,7 +21,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
 EPISODIC="$WS/core/active/episodic.md"
-HANDOFF="$WS/core/active/handoff.md"
 STATE_DIR="$WS/state"
 MARKER="$STATE_DIR/brain-flush.sha"
 LOG="$WS/logs/hooks.log"
@@ -43,11 +42,9 @@ if [ -z "${AGENT_BEARER:-}" ] || [ "${AGENT_BEARER:-}" = "CHANGE_ME" ] \
     exit 0
 fi
 
+# Локальный handoff.md убран: ни хук, ни агент его не писали, и в сброс всегда
+# уходила одна пустая шапка. Итог сессии в inbox/ -- только хвост дневника.
 BODY_SRC=""
-[ -s "$HANDOFF" ]  && BODY_SRC+="## handoff.md
-$(cat "$HANDOFF")
-
-"
 [ -s "$EPISODIC" ] && BODY_SRC+="## episodic tail
 $(tail -n "$FLUSH_TAIL_LINES" "$EPISODIC")"
 if [ -z "$BODY_SRC" ]; then
