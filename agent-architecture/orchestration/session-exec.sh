@@ -21,10 +21,20 @@ HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
 
 # shellcheck source=lib/agent-env.sh
 . "$HERE/lib/agent-env.sh"
+# shellcheck source=lib/deep-sleep-continue.sh
+. "$HERE/lib/deep-sleep-continue.sh"
 
 resolve_agent_env "$AGENT"
 
 CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
+
+# Продолжить прежнюю сессию, если этот старт — пробуждение из глубокого сна
+# (labops-web-app: PR 7 плана тарифов), а не обычный краш-рестарт: см.
+# lib/deep-sleep-continue.sh. RESUME_FLAG пуст на обычном старте — тогда
+# массив ниже просто не добавляет claude лишний аргумент.
+RESUME_FLAG="$(deep_sleep_continue_flag || true)"
+RESUME_ARGS=()
+[ -n "$RESUME_FLAG" ] && RESUME_ARGS=("$RESUME_FLAG")
 
 # --settings обязателен, а не декоративен: CWD — каталог плагина, поэтому
 # .mcp.json находится, но claude канонизирует симлинк плагина в его настоящее
@@ -40,4 +50,5 @@ CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
 exec "$CLAUDE_BIN" \
   --settings "$AGENT_WORKSPACE/settings.json" \
   --dangerously-skip-permissions \
-  --dangerously-load-development-channels server:labops-channel
+  --dangerously-load-development-channels server:labops-channel \
+  "${RESUME_ARGS[@]}"
