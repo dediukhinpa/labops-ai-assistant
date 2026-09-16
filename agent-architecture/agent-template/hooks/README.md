@@ -11,7 +11,7 @@ so the harness is never stalled.
 
 | File | Hook event | Purpose |
 |---|---|---|
-| `session-start-hook.sh` | `SessionStart` | Log session start (and whether `core/active/handoff.md` has content). Never edits `episodic.md`. |
+| `session-start-hook.sh` | `SessionStart` | Log session start. Never edits `episodic.md`. |
 | `stop-hook.sh` | `Stop` (end of each turn) | Append a salience-tagged episodic entry to `core/active/episodic.md` (via `scripts/active-writer.sh`) + a verbose JSON line to `logs/verbose-YYYY-MM-DD.jsonl`; increment the turn counter and, every `MEMORY_CHECKPOINT_EVERY_N_TURNS` (default 20), fire `scripts/reflect-nudge.sh --reason checkpoint`; once a day run `decay-sweep.sh` + `archive-roll.sh`. |
 | `precompact-hook.sh` | `PreCompact` | Snapshot `core/active/episodic.md` to `core/active/pre-compact/recent-<ts>.md`; keep newest `KEEP_SNAPSHOTS` (default 10); then `scripts/brain-flush.sh --reason precompact`. |
 | `heartbeat-hook.sh` | SessionStart, UserPromptSubmit, Pre/PostToolUse, Notification, Stop | Touch `state/heartbeat` -- the watchdog reads it as the liveness signal. |

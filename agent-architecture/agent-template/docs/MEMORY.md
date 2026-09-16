@@ -18,7 +18,6 @@ File-by-file reference: [FILES-REFERENCE.md](FILES-REFERENCE.md).
 ├─────────────────────────────────────────────────────┤
 │  ACTIVE (current-task working memory)                │
 │  active/episodic.md   raw diary        (on demand)   │
-│  active/handoff.md    where I left off (in context)  │
 ├─────────────────────────────────────────────────────┤
 │  PASSIVE (distilled knowledge)                       │
 │  decisions.md, preferences.md          (in context)  │
@@ -45,7 +44,6 @@ The question that decides where something goes:
 | How does the operator want work done? | `core/passive/preferences.md` | memory-consolidate |
 | Any other durable fact? | `core/passive/insights.md` | memory-consolidate |
 | What happened this turn? | `core/active/episodic.md` | Stop hook |
-| Where did I leave off? | `core/active/handoff.md` | the agent itself |
 
 The pairs that look alike:
 
@@ -82,10 +80,6 @@ covered by `errors.md` + `rules.md` and by `core/archived/`.
 - **episodic.md** — raw, append-only diary of turns, salience-tagged. Written by
   `active-writer.sh` from the Stop hook. **Never model-compressed**; only size-rolled
   to `archived/episodic/`. Read on demand, never loaded at startup.
-- **handoff.md** — a short "where I left off" note, loaded every session. No hook
-  writes it: the agent updates it itself together with `create_handoff`
-  (`SECONDBRAIN_WRITE_RULES.md`). An agent that never does keeps the one-line header
-  from install.
 - **pre-compact/** — copies of `episodic.md` taken before each compaction (newest 10).
 
 Entry format:
@@ -155,13 +149,17 @@ rewritten.
 Dual-write mapping (a write needs the scope in the token; default scopes are
 `decisions, external, knowledge, inbox, error-patterns, task-board`):
 
-| Local file | second_brain tool | Scope | Default |
-|------------|-------------------|-------|---------|
-| decisions.md | `create_decision_note` | `decisions` | yes |
+| Local file | second_brain tool | Scope | Standard install |
+|------------|-------------------|-------|------------------|
+| decisions.md | `create_decision_note`, `supersede_decision` | `decisions` | yes |
 | errors.md | `create_error_pattern_note` | `error-patterns` | yes |
-| preferences.md | `create_personal_note` | `personal` | no — stays local |
-| insights.md (external source) | `create_external_note` | `external` | yes |
-| insights.md (project/business) | `create_project_note` | `projects` | no — stays local |
+| preferences.md | `create_personal_note` | `personal` | no — scope not in the token, stays local |
+| insights.md (external source) | `create_external_note` | `external` | no — tool hidden in the `core` tool set, stays local |
+| insights.md (project/business) | `create_project_note` | `projects` | no — scope not in the token, stays local |
+
+The memory server exposes `create_external_note` only with `SECOND_BRAIN_TOOLS=all`;
+the standard install runs `core`. Enabling it, or adding scopes to a token, is the
+operator's call.
 
 ### Decay (decay-sweep.sh, daily)
 
@@ -191,7 +189,7 @@ Both jobs run from the Stop hook at most once per
   `brain-flush.sh --reason precompact`.
 - **SessionEnd** — `brain-flush.sh --reason session-end`.
 
-`brain-flush.sh` sends the diary tail + `handoff.md` to second_brain `inbox/`
+`brain-flush.sh` sends the diary tail to second_brain `inbox/`
 (`create_handoff`), skipping when nothing changed since the last flush. It is a safety
 net, not a substitute for writing decisions as they happen.
 
@@ -246,7 +244,6 @@ BPE tokenizers split Cyrillic into more tokens than Latin.
 | AGENT_ROUTER.md (Russian) | ~10 KB | ~4,600 |
 | **Fixed subtotal** | **~25 KB** | **~9,600** |
 | passive/decisions.md + preferences.md | grows: ~17 KB after two months on a live agent | ~7,700 |
-| active/handoff.md | 0-4 KB | 0-1,800 |
 
 Not loaded, whatever their size: `episodic.md` (tens of KB a day), `errors.md`,
 `insights.md`, `archived/`, `core/AGENTS.md`, `tools/TOOLS.md`.

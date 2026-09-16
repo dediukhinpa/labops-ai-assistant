@@ -116,7 +116,7 @@ Every session starts by loading these files:
 ### How to keep it lean
 
 1. **CLAUDE.md under 200 lines** -- Anthropic's recommendation. Move reference material to skills.
-2. **Keep episodic out of context** -- `episodic.md` is the raw diary, loaded on-demand (not @include); `archive-roll.sh` size-rolls it to `archived/episodic/`. What loads is the compact `handoff.md`. See MEMORY.md.
+2. **Keep episodic out of context** -- `episodic.md` is the raw diary, loaded on-demand (not @include); `archive-roll.sh` size-rolls it to `archived/episodic/`. What loads is the distilled `decisions.md` and `preferences.md`. See MEMORY.md.
 3. **Prune TOOLS.md** -- Remove servers/services you don't actively use.
 4. **Don't duplicate rules** -- Global `~/.claude/rules/*.md` apply to all agents. Don't repeat in per-agent rules.
 
@@ -160,10 +160,10 @@ Pattern: [thing] [action] [reason]. [next step].
 
 | Mistake | Why it's bad | Fix |
 |---------|-------------|-----|
-| Using Sonnet for code | Code quality suffers | Opus for code, Sonnet only for subagents |
+| A light model on a code-heavy agent | Code quality suffers | `opus` / `fable` for agents that write a lot of code (operator's call) |
 | Never compacting | Context pollution, quality drops | `/compact` at logical breakpoints |
 | CLAUDE.md > 200 lines | Agent ignores instructions | Extract to skills, keep core lean |
-| Loading raw episodic into context | episodic diary eats 70% of context | Load `handoff.md`, keep `episodic.md` on-demand (see MEMORY.md) |
+| Loading raw episodic into context | episodic diary eats 70% of context | Load only the distilled `passive/` files, keep `episodic.md` on-demand (see MEMORY.md) |
 | Running everything in one session | Context fills up | `/clear` between unrelated tasks |
 | Not checking /cost | Surprise bills or slow responses | Check periodically |
 

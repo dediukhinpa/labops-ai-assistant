@@ -316,7 +316,7 @@ if you need that.
 | SessionStart | `hooks/session-start-hook.sh` | logs the session start |
 | Stop | `hooks/stop-hook.sh` | diary entry (`scripts/active-writer.sh`), line in `logs/verbose-*.jsonl`, consolidation nudge every 20 turns (`scripts/reflect-nudge.sh`), daily `decay-sweep.sh` + `archive-roll.sh` |
 | PreCompact | `hooks/precompact-hook.sh` | snapshot of `episodic.md` to `core/active/pre-compact/`, then `scripts/brain-flush.sh` |
-| SessionEnd | `scripts/brain-flush.sh --reason session-end` | sends the diary tail + handoff to the shared brain (`inbox/`) |
+| SessionEnd | `scripts/brain-flush.sh --reason session-end` | sends the diary tail to the shared brain (`inbox/`) |
 
 All of them are fail-open: an error is logged to `logs/hooks.log` and the hook
 exits 0, so a broken hook never blocks the session.

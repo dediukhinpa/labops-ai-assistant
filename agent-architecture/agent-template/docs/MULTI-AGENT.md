@@ -117,7 +117,7 @@ CHANNEL PLUGIN → injects the message into the live session
     ▼
 AGENT SESSION
     ├── In context: SOUL + USER + rules + write rules + AGENT_ROUTER
-    │                + decisions + preferences + handoff
+    │                + decisions + preferences
     ├── recall from second_brain before non-trivial work
     ├── answers through the channel's `reply` tool
     │

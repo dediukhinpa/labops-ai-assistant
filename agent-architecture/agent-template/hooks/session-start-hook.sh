@@ -19,7 +19,6 @@ WS="${AGENT_WORKSPACE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 AGENT_ID="${AGENT_ID:-$(basename "$(dirname "$WS")")}"
 LOGDIR="$WS/logs"
 HOOK_LOG="$LOGDIR/hooks.log"
-HANDOFF="$WS/core/active/handoff.md"
 
 mkdir -p "$LOGDIR"
 touch "$HOOK_LOG"
@@ -27,10 +26,5 @@ touch "$HOOK_LOG"
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [session-start] $1" >> "$HOOK_LOG"; }
 
 log "session started (agent=${AGENT_ID})"
-
-# Surface handoff to the user via stderr (visible in hook output)
-if [ -f "$HANDOFF" ] && [ -s "$HANDOFF" ]; then
-    log "handoff present: $(wc -l <"$HANDOFF") lines"
-fi
 
 exit 0

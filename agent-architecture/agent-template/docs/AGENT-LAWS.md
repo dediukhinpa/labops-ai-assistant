@@ -145,7 +145,7 @@ Claude Code загружает оба уровня. Глобальный все�
   в `rules.md` и запиши его после согласия оператора.
 
 В контексте всегда: CLAUDE.md, USER.md, rules.md, SECONDBRAIN_WRITE_RULES.md,
-AGENT_ROUTER.md, decisions.md, preferences.md, handoff.md. Остальное -- по запросу.
+AGENT_ROUTER.md, decisions.md, preferences.md. Остальное -- по запросу.
 
 Консолидация **событийная**: чекпойнт каждые 20 ходов (счётчик в Stop-хуке) и
 простой 10 минут (watchdog) -> reflect-nudge.sh будит живую сессию (фоновая модель

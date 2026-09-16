@@ -188,7 +188,7 @@ Mode (B) fires **only** on a non-empty input field — otherwise a clean idle pr
 
 | What is fixed | Who fixes it | How |
 |---|---|---|
-| frozen / dead agent session | `watchdog.sh` | detects a frozen pane → `start-agent.sh` recreates the session (`handoff.md` keeps the latest events) |
+| frozen / dead agent session | `watchdog.sh` | detects a frozen pane → `start-agent.sh` recreates the session (the diary `episodic.md` and the shared brain keep the latest events) |
 | crashed watchdog | `systemd` | `Restart=on-failure` + `RestartSec=15` |
 | orphaned bun (claude died, bun on PID 1) | `watchdog.sh` / `start-agent.sh` | `pkill -9` by the agent's path |
 | second_brain services | `systemd` | separate `second_brain-*.service` units |
@@ -232,14 +232,14 @@ Mode (B) fires **only** on a non-empty input field — otherwise a clean idle pr
 
 ## Agent memory layers
 
-Memory is organised by **role**, not by age, and split into two *kinds*: **episodic** (a raw diary of what happened) and **semantic** (distilled insights — what was learned). `active/` holds the raw diary and the handoff, `passive/` the curated semantic knowledge, `archive/` the cold store; the fourth layer is the shared brain `labops-second-brain` over MCP. Consolidation (episodic → passive insights) is **event-driven, not cron**: the live session is nudged to reflect on a checkpoint (every ~20 turns) or after ~10 min idle — there is no background model (`claude -p` is forbidden). Truth hierarchy: **live check (exec/grep) → second_brain (shared brain) → git history → local memory**. When memory contradicts the check, the check wins.
+Memory is organised by **role**, not by age, and split into two *kinds*: **episodic** (a raw diary of what happened) and **semantic** (distilled insights — what was learned). `active/` holds the raw diary, `passive/` the curated semantic knowledge, `archive/` the cold store; the fourth layer is the shared brain `labops-second-brain` over MCP. Consolidation (episodic → passive insights) is **event-driven, not cron**: the live session is nudged to reflect on a checkpoint (every ~20 turns) or after ~10 min idle — there is no background model (`claude -p` is forbidden). Truth hierarchy: **live check (exec/grep) → second_brain (shared brain) → git history → local memory**. When memory contradicts the check, the check wins.
 
 ```mermaid
 %%{init: {'theme':'base','themeVariables':{'primaryColor':'#EDE9FE','primaryTextColor':'#4C1D95','primaryBorderColor':'#8B5CF6','lineColor':'#8B5CF6','secondaryColor':'#F1F5F9','tertiaryColor':'#ffffff','clusterBkg':'transparent','clusterBorder':'#B794F4','fontFamily':'Helvetica,Arial,sans-serif'}}}%%
 flowchart LR
   subgraph local["Agent local memory (workspace files)"]
     L1["L1 IDENTITY<br/>CLAUDE.md · rules.md · USER.md<br/>(always in context)"]
-    L2["L2 ACTIVE<br/>episodic.md (raw diary) · handoff.md"]
+    L2["L2 ACTIVE<br/>episodic.md (raw diary)"]
     L3["L3 PASSIVE (semantic)<br/>insights · decisions · errors · preferences<br/>ARCHIVE: archived/{episodic,superseded} (on demand)"]
   end
   L4["L4 SHARED BRAIN<br/>labops-second-brain · memory_router/memory/agent_router/tasks over MCP"]
@@ -256,14 +256,14 @@ flowchart LR
 | Layer | Files / source | In context | Who writes |
 |---|---|---|---|
 | **L1 Identity** | `CLAUDE.md`, `rules.md`, `USER.md` | always (`@import`) | Operator; the agent only when asked (RED zone) |
-| **L2 Active** | `active/episodic.md` (raw diary, salience-tagged), `active/handoff.md` | `handoff.md` only; the diary is read by consolidation | `active-writer.sh` (Stop hook) writes episodic |
+| **L2 Active** | `active/episodic.md` (raw diary, salience-tagged) | nothing; the diary is read by consolidation | `active-writer.sh` (Stop hook) writes episodic |
 | **L3 Passive** (semantic) | `passive/insights.md · decisions.md · errors.md · preferences.md` (distilled insights + decay frontmatter) | `decisions.md` + `preferences.md` always; the rest on demand | the **live session** during reflection (skill `memory-consolidate`); `decay-sweep.sh` prunes everything except `preferences.md` |
 | **ARCHIVE** | `archived/episodic/YYYY-MM.md`, `archived/superseded/` | no — on demand (Read) | `archive-roll.sh` / `decay-sweep.sh` (pure bash) |
 | **L4 Shared** | second_brain `memory_router` / `memory` / `agent_router` / `tasks` (the board) | no — on demand (MCP) | per RBAC scopes (dual-write on reflection) |
 
 Episodic is **never model-compressed** — only size-rolled to `archived/episodic/`; the semantic layer is *synthesised* from it (reversible via `provenance`). File access zones: **RED** (`CLAUDE.md`, `rules.md`, `USER.md`) — Operator only; **YELLOW** (`passive/*`, `AGENTS.md`, `TOOLS.md`) — agent with justification; **GREEN** (`active/episodic.md`) — written automatically by the Stop hook.
 
-The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SECONDBRAIN_WRITE_RULES.md) — a single canonical file (RED zone). `agent-template/install.sh` copies it into the workspace root alongside `AGENT_ROUTER.md`, and both are **@-imported by `CLAUDE.md`** (`@SECONDBRAIN_WRITE_RULES.md`, `@AGENT_ROUTER.md`). Until 2026-09-02 neither document was copied at all — the poller told agents to consult `AGENT_ROUTER.md` and the file did not exist in any workspace. Four disciplines: (1) `recall` **before** writing — don't breed duplicates; (2) **dual-write** what matters — both to the local `.md` and to second_brain (idempotent by sha256); (3) write **immediately**, not "later" (knowledge compaction does not flush); (4) write into your own `scope`. The write tools are hard-fixed in code: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_personal_note` (→ `personal`), `create_project_note` (→ `projects`), `create_handoff`, `append_daily_log`, `supersede_decision`.
+The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SECONDBRAIN_WRITE_RULES.md) — a single canonical file (RED zone). `agent-template/install.sh` copies it into the workspace root alongside `AGENT_ROUTER.md`, and both are **@-imported by `CLAUDE.md`** (`@SECONDBRAIN_WRITE_RULES.md`, `@AGENT_ROUTER.md`). Until 2026-09-02 neither document was copied at all — the poller told agents to consult `AGENT_ROUTER.md` and the file did not exist in any workspace. Four disciplines: (1) `recall` **before** writing — don't breed duplicates; (2) **dual-write** what matters — both to the local `.md` and to second_brain (idempotent by sha256); (3) write **immediately**, not "later" (knowledge compaction does not flush); (4) write into your own `scope`. The write tools are hard-fixed in code: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_personal_note` (→ `personal`), `create_project_note` (→ `projects`), `create_handoff`, `append_daily_log`, `supersede_decision`. A standard install lets an agent use only `create_decision_note`, `supersede_decision`, `create_error_pattern_note` and `create_handoff`: the memory server runs the `core` tool set (no `create_external_note`), and the default token has no `personal`, `projects` or `daily` scope. The rest stays local until the operator enables it.
 
 ---
 
@@ -284,7 +284,7 @@ The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SEC
 ├── core/
 │   ├── USER.md · rules.md · AGENTS.md
 │   ├── passive/{decisions,preferences}.md   # PASSIVE, in context; errors/insights appear with consolidation
-│   └── active/{episodic.md, handoff.md, archived/, pre-compact/}
+│   └── active/{episodic.md, pre-compact/}
 ├── tools/TOOLS.md
 ├── scripts/             # episodic writer, reflect nudge, decay/archive housekeeping,
 │                       #   brain-flush, mcp-call helper, task-board poller
@@ -363,31 +363,26 @@ A hook is **not a server**: the Claude Code engine emits an event at a defined m
 
 | Event | Hook (`agent-template/hooks/`) | What it does |
 |---|---|---|
-| **SessionStart** | `session-start-hook.sh` | logs the start and whether `handoff.md` has content. Recall under a task is the agent's own job — `CLAUDE.md` tells it to query the shared brain before non-trivial work. In a swarm, also `agent-boot-sequence.sh`: 👀 on fresh messages + `agent_router.list_my_pending()` (pull delegated tasks — a pull safeguard) |
-| **Stop** | `stop-hook.sh` | appends a salience-tagged episodic entry to `active/episodic.md` (via `active-writer.sh`) + a verbose JSON line to `logs/verbose-*.jsonl`; increments the turn counter and, every ~20 turns, nudges in-session consolidation (`reflect-nudge.sh`); at most once a day kicks background housekeeping (`decay-sweep.sh` + `archive-roll.sh`) so rotation is a default, not an optional cron. In a swarm, also `read-receipt-hook.ts` (POST `/hooks/react` → 👌) and `reflect-error-pattern.sh` |
-| **PreCompact** | `precompact-hook.sh` | snapshots `active/episodic.md` into `active/pre-compact/` before auto-compaction, keeps the last `KEEP_SNAPSHOTS` (10); then `brain-flush.sh` — a safety-net dump of handoff + episodic tail into the shared brain's inbox (`create_handoff`, fail-open, sha-deduped, no-op on the `CHANGE_ME` bearer) |
+| **SessionStart** | `session-start-hook.sh` | logs the start. Recall under a task is the agent's own job — `CLAUDE.md` tells it to query the shared brain before non-trivial work. Delegated tasks reach the session through the board poller (below) |
+| **Stop** | `stop-hook.sh` | appends a salience-tagged episodic entry to `active/episodic.md` (via `active-writer.sh`) + a verbose JSON line to `logs/verbose-*.jsonl`; increments the turn counter and, every ~20 turns, nudges in-session consolidation (`reflect-nudge.sh`); at most once a day kicks background housekeeping (`decay-sweep.sh` + `archive-roll.sh`) so rotation is a default, not an optional cron. In a swarm, also `read-receipt-hook.ts` (POST `/hooks/react` → 👌) |
+| **PreCompact** | `precompact-hook.sh` | snapshots `active/episodic.md` into `active/pre-compact/` before auto-compaction, keeps the last `KEEP_SNAPSHOTS` (10); then `brain-flush.sh` — a safety-net dump of the episodic tail into the shared brain's inbox (`create_handoff`, fail-open, sha-deduped, no-op on the `CHANGE_ME` bearer) |
 | **SessionEnd** | `scripts/brain-flush.sh --reason session-end` | same safety-net flush at session end — the second moment knowledge would otherwise be lost |
 
 All hooks carry an `sdk-guard`: on `CLAUDE_SDK_CHILD=1` (or `entrypoint=sdk-ts`) they exit immediately, so they don't loop inside child Agent-SDK sessions.
 
 ### Swarm automation
 
-Most scripts in [`orchestration/`](orchestration/) are trigger-driven "one-shots" (cron / event). The exception is the **task poller**: `lib/task-poller-launch.sh` (sourced by both `watchdog.sh` and `start-agent.sh`) keeps one long-lived daemon per agent — `agent-template/scripts/task-poller.sh` supervising `task_poller.py`, which holds a single MCP session open and polls the board every 5 s. It was a bash loop re-handshaking on every tick until 2026-09-02; the rewrite cut it from ~8% of a core to ~0.3%. The agent roster is taken via `orchestration/lib/agents.sh::list_agents` — **not hardcoded**: first `$CLAUDE_LAB/agents.conf` (one line per agent-id, see `agents.conf.example`), otherwise a scan of `$CLAUDE_LAB/*/.claude` excluding infra directories (`shared`, `logs`, `mcp-servers`).
+[`orchestration/`](orchestration/) runs the agents themselves (unit, watchdog, session) plus the `second_brain-monitor` timer. The one long-lived helper is the **task poller**: `lib/task-poller-launch.sh` (sourced by both `watchdog.sh` and `start-agent.sh`) keeps one long-lived daemon per agent — `agent-template/scripts/task-poller.sh` supervising `task_poller.py`, which holds a single MCP session open and polls the board every 5 s. It was a bash loop re-handshaking on every tick until 2026-09-02; the rewrite cut it from ~8% of a core to ~0.3%. The agent roster is taken via `orchestration/lib/agents.sh::list_agents` — **not hardcoded**: first `$CLAUDE_LAB/agents.conf` (one line per agent-id, see `agents.conf.example`), otherwise a scan of `$CLAUDE_LAB/*/.claude` excluding infra directories (`shared`, `logs`, `mcp-servers`).
 
 <details>
 <summary><b>Orchestration scripts</b></summary>
 
 | Script | Trigger | Purpose |
 |---|---|---|
-| `heartbeat-all.sh` | cron, once a minute | heartbeat only for live tmux sessions → the supervisor tells live agents from dead ones (dead agents' `last_seen` goes stale, their tasks get reclaimed) |
-| `night-learnings.sh` | cron, 02:00 UTC | nightly learnings cycle: `agent_router.notify` each → review 7-day learnings → update `rules.md` |
-| `message-reaction-daemon.sh` | per-agent background daemon | sets 👀 on **every** inbound (text/voice/stickers) immediately, polling every ~3 s |
-| `start-reaction-daemons.sh` | `@reboot` | brings up reaction daemons for all roster agents, with PID files |
-| `set-message-reaction.sh` / `handle-incoming-messages.sh` | helpers | reaction and inbound-handling primitives |
-| `vault-audit-broadcast.sh` + `second_brain-vault-audit.sh` | on demand / cron | broadcasts a task to the swarm to check and fill in the shared vault |
-| `agent-boot-sequence.sh` | SessionStart | deterministically pulls delegated tasks (`list_my_pending`) |
-| `reflect-error-pattern.sh` | Stop | nudge to record an error-pattern on a correction from the Operator |
-| `tg-send.sh`, `second_brain-heartbeat.py` | helpers | sending to TG, heartbeat client |
+| `watchdog.sh <agent>` | the unit's `ExecStart` | keeps the session alive, recovers a wedged pane, serves `/doctor` and `/reset` |
+| `doctor.sh <agent> [--fix]` | `/doctor`, or by hand | checks the agent; with `--fix` repairs what is safe to repair |
+| `second_brain-monitor.sh` | systemd timer | alerts in Telegram when the shared brain is down |
+| `tg-send.sh` | helper | sends a Telegram message (used by `lib/notify.sh`) |
 | `lib/task-poller-launch.sh` | sourced by `watchdog.sh` / `start-agent.sh` | starts and supervises the per-agent board poller (the one long-running exception) |
 | `stop-agent.sh <agent>` | the unit's `ExecStop` | tears down exactly one agent — its tmux session, its board poller, its orphaned bun channel |
 | `session-exec.sh` | the tmux pane command | builds the session environment inside the pane, then `exec`s into `claude` — no secrets on the command line |
@@ -569,7 +564,7 @@ Secrets live in `~/.claude-lab/<agent>/.claude/secrets/` with `chmod 600` and ar
 <details>
 <summary><b>How does an agent survive a crash?</b></summary>
 
-Self-healing is nested: systemd holds the watchdog (`Restart=on-failure`, `RestartSec=15`), the watchdog detects a frozen/dead tmux pane and has `start-agent.sh` recreate the session, and an orphaned channel server (bun on PID 1) is reaped by path. `handoff.md` carries the latest events across a restart.
+Self-healing is nested: systemd holds the watchdog (`Restart=on-failure`, `RestartSec=15`), the watchdog detects a frozen/dead tmux pane and has `start-agent.sh` recreate the session, and an orphaned channel server (bun on PID 1) is reaped by path. The latest events survive a restart in the diary `episodic.md` and in the shared brain.
 
 </details>
 

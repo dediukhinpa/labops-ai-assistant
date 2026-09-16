@@ -59,7 +59,7 @@ Project `CLAUDE.md` может включать другие файлы:
 @core/USER.md
 @core/rules.md
 @core/passive/decisions.md
-@core/active/handoff.md
+@core/passive/preferences.md
 ```
 
 Пути относительны **директории, где лежит project CLAUDE.md**, не относительно CWD.
@@ -156,7 +156,7 @@ External imports:
 ├── core/                                  ← разделённая память (@-include)
 │   ├── USER.md
 │   ├── rules.md
-│   ├── active/{episodic.md, handoff.md}
+│   ├── active/episodic.md
 │   ├── passive/{decisions.md}
 │   └── ...
 └── labops-tg-plugin/              ← плагин (внутри workspace!)

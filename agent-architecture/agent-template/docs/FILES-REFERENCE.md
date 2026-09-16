@@ -42,7 +42,7 @@ ours next to it as `CLAUDE.md.labops-new` and asks the operator to merge it.
 
 `@import` list in `CLAUDE.md`: `core/USER.md`, `core/rules.md`,
 `SECONDBRAIN_WRITE_RULES.md`, `AGENT_ROUTER.md`, `core/passive/decisions.md`,
-`core/passive/preferences.md`, `core/active/handoff.md`.
+`core/passive/preferences.md`.
 
 ---
 
@@ -78,7 +78,6 @@ Created on first consolidation: `errors.md`, `insights.md`, `.consolidated-at`
 | File | Role | Loads | Writer | Ages |
 |------|------|-------|--------|------|
 | **episodic.md** | Raw append-only diary: one entry per turn, never model-compressed | on-demand | `active-writer.sh` from the Stop hook | size-rolled past 40 KB |
-| **handoff.md** | Short "where I left off" note for the next session | always | the agent itself, alongside `create_handoff` (see `SECONDBRAIN_WRITE_RULES.md`). No hook writes it: if the agent never does, it stays the one-line header from install | no |
 | **consolidate.request** | Marker asking the session to consolidate (fallback when notify is down) | never | `reflect-nudge.sh`; deleted by `memory-consolidate` | -- |
 | **pre-compact/** | Copies of `episodic.md` taken before each context compaction, newest 10 kept | never | `precompact-hook.sh` | rotated |
 
@@ -118,7 +117,7 @@ the agent's Bearer token:
 
 | Server | Port | Used for |
 |--------|------|----------|
-| `second_brain-memory` | 5001 | writes: `create_decision_note`, `create_error_pattern_note`, `create_external_note`, `create_handoff`, ... |
+| `second_brain-memory` | 5001 | writes: `create_decision_note`, `supersede_decision`, `create_error_pattern_note`, `create_handoff`, ... |
 | `second_brain-memory_router` | 5002 | `recall` -- hybrid search over the whole vault |
 | `second_brain-agent_router` | 5000 | events between agents (`notify`, `list_my_pending`, `ack`) |
 | `second_brain-tasks` | 5003 | the task board (`task_*`) |
@@ -154,7 +153,7 @@ Copied per agent (each agent owns its copy). Pure bash/python; none calls a mode
 | **scripts/reflect-nudge.sh** | stop-hook, watchdog idle | asks the live session to run `memory-consolidate` |
 | **scripts/decay-sweep.sh** | stop-hook, daily | moves decayed, never-recalled passive entries to `archived/superseded/`; skips `preferences.md` |
 | **scripts/archive-roll.sh** | stop-hook, daily | moves old diary entries to `archived/episodic/` when `episodic.md` > 40 KB |
-| **scripts/brain-flush.sh** | PreCompact, SessionEnd | sends the diary tail + handoff to the shared brain (`inbox/`) as a safety net |
+| **scripts/brain-flush.sh** | PreCompact, SessionEnd | sends the diary tail to the shared brain (`inbox/`) as a safety net |
 | **scripts/task-poller.sh** + **task_poller.py** | watchdog | polls the task board every 5 s and delivers new tasks into the session |
 | **scripts/mcp-call.sh** | the scripts above | calls an MCP tool with the required session handshake |
 

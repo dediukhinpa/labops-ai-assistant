@@ -36,7 +36,6 @@
     │       │   @AGENT_ROUTER.md
     │       │   @core/passive/decisions.md
     │       │   @core/passive/preferences.md
-    │       │   @core/active/handoff.md
     │       ├── SECONDBRAIN_WRITE_RULES.md
     │       ├── AGENT_ROUTER.md
     │       ├── settings.json          model, permissions, hooks
@@ -53,7 +52,6 @@
     │       │   │   └── insights.md    other durable facts
     │       │   ├── active/
     │       │   │   ├── episodic.md    raw diary, one entry per turn
-    │       │   │   ├── handoff.md     where I left off (in context)
     │       │   │   └── pre-compact/   diary snapshots before compaction
     │       │   └── archived/
     │       │       ├── episodic/YYYY-MM.md  diary entries rolled out by size

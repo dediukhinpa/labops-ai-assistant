@@ -82,7 +82,6 @@ Copy the printed token into the installer prompt.
 |   |-- passive/                # decisions + preferences (in context), errors, insights
 |   |-- active/
 |   |   |-- episodic.md          # raw append-only diary (Stop hook appends, salience-tagged)
-|   |   |-- handoff.md         # where I left off; written by the agent itself (in context)
 |   |   `-- pre-compact/       # PreCompact snapshots (rotated)
 |   `-- archived/
 |       |-- episodic/          # size-rolled old episodic slices (YYYY-MM.md)
@@ -116,8 +115,8 @@ source ~/.claude-lab/<agent-id>/.claude/agent.env
 claude --project ~/.claude-lab/<agent-id>/.claude
 ```
 
-On session start, the `SessionStart` hook logs the start and whether
-`core/active/handoff.md` has content. There is no recall hook: before a
+On session start, the `SessionStart` hook logs the start. There is no
+recall hook: before a
 non-trivial task the agent queries the shared brain itself (`CLAUDE.md` says so),
 keyed on the real task.
 
@@ -166,7 +165,7 @@ Re-run `install.sh` with a different agent name. Each agent gets its own
 2. **Inside an existing repo:** copy `templates/mcp.json.template`,
    `templates/settings.json.template`, `scripts/`, `hooks/` into the repo's
    `.claude/` directory and render placeholders manually. The hooks tolerate
-   absent files (handoff, episodic.md) and won't break the harness.
+   absent files (episodic.md, passive/) and won't break the harness.
 
 Either way the wire protocol to second_brain is identical: HTTP MCP transport, Bearer
 in `Authorization` header, JSON-RPC 2.0 in the body.

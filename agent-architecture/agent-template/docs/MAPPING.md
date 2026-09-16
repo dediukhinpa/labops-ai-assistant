@@ -33,7 +33,6 @@ CLAUDE.md                    # SOUL: personality, principles (entry point)
   @AGENT_ROUTER.md              # handing work to other agents (task board)
   @core/passive/decisions.md    # decisions (always in context)
   @core/passive/preferences.md  # how the operator wants things done
-  @core/active/handoff.md       # where I left off (written by the agent itself)
   # On-demand (Read tool, NOT @include -- saves ~18KB):
   # core/AGENTS.md            # models, subagents, pipelines
   # tools/TOOLS.md            # servers, services, paths
@@ -131,7 +130,7 @@ started by the Stop hook -- automated and predictable, no cron.
 | `~/.claude-lab/{agent}/.claude/` | Per-agent project directory | Claude Code project scope |
 | `core/` | Identity + memory files | Our convention (core = essential) |
 | `core/passive/` | Semantic insights (consolidated) | Our convention (passive = knowledge, recalled on demand) |
-| `core/active/` | Raw episodic diary + handoff | Our convention (active = current-task working memory) |
+| `core/active/` | Raw episodic diary | Our convention (active = current-task working memory) |
 | `core/archived/` | Aged-out episodic + decayed insights | Our convention (archive = cold storage) |
 | `tools/` | Infrastructure descriptions | OpenClaw convention (TOOLS.md) |
 | `skills/` | Callable commands | Claude Code official |

@@ -65,18 +65,18 @@ reusable *knowledge*. Do it yourself in-session — there is no background model
 5. **Dual-write what matters.** For durable, shareable knowledge, also write to
    second_brain using the fixed tools per `SECONDBRAIN_WRITE_RULES.md`. Each tool
    writes to one scope, and the call fails unless that scope is in your token
-   (`AGENT_SCOPES` in `agent.env` mirrors it):
+   (`AGENT_SCOPES` in `agent.env` mirrors it) and the tool is in your tool list:
 
-   | Local file | Tool | Scope | In the default agent scopes |
+   | Local file | Tool | Scope | Works on a standard install |
    |---|---|---|---|
-   | decisions.md | `create_decision_note` | `decisions` | yes |
+   | decisions.md | `create_decision_note` (`supersede_decision` to replace one) | `decisions` | yes |
    | errors.md | `create_error_pattern_note` | `error-patterns` | yes |
-   | preferences.md | `create_personal_note` | `personal` | no — keep it local |
-   | insights.md, from an external source | `create_external_note` (+ `source_url`) | `external` | yes |
-   | insights.md, about the project/business | `create_project_note` | `projects` | no — keep it local |
+   | preferences.md | `create_personal_note` | `personal` | no — scope not in the token, keep it local |
+   | insights.md, from an external source | `create_external_note` (`source`, `url`) | `external` | no — the memory server runs the `core` tool set, keep it local |
+   | insights.md, about the project/business | `create_project_note` | `projects` | no — scope not in the token, keep it local |
 
-   Scope missing → keep the insight local and say so in your reply; never retry
-   under another tool just to get it written. Idempotent by sha256 — safe to re-run.
+   Scope or tool missing → keep the insight local and say so in your reply; never
+   retry under another tool just to get it written. Idempotent by sha256 — safe to re-run.
 
 6. **Advance the watermark.** Write the current ISO-8601 UTC time to
    `core/passive/.consolidated-at`, and delete `core/active/consolidate.request`

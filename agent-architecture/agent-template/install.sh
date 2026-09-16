@@ -184,7 +184,6 @@ SHARED="${LAB_DIR}/shared"
 log "Creating directory structure..."
 
 mkdir -p "${WORKSPACE}/core/passive"
-mkdir -p "${WORKSPACE}/core/active/archived"
 mkdir -p "${WORKSPACE}/core/active/pre-compact"
 mkdir -p "${WORKSPACE}/core/archived"
 mkdir -p "${WORKSPACE}/tools"
@@ -193,11 +192,10 @@ mkdir -p "${WORKSPACE}/scripts"
 mkdir -p "${WORKSPACE}/hooks"
 mkdir -p "${WORKSPACE}/logs"
 mkdir -p "${SHARED}/secrets"
-mkdir -p "${SHARED}/skills"
-mkdir -p "${SHARED}/scripts"
 mkdir -p "${GLOBAL_DIR}/rules"
-
-echo "# Active context -- last 10 entries" > "${WORKSPACE}/core/active/handoff.md"
+# Не создаём core/active/archived, shared/skills, shared/scripts и handoff.md: в них
+# никто не писал и никто их не читал. Скиллы -- ссылка на репозиторий, архив дневника --
+# core/archived/episodic, итог сессии уходит в общий мозг (brain-flush.sh).
 
 # ============================================================
 # Step 5: Render templates (envsubst-style {{VAR}} and ${VAR})

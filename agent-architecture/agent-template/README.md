@@ -66,8 +66,7 @@ and never block the harness on failure.
 |   |-- AGENTS.md
 |   |-- passive/                  # semantic insights: decisions + preferences (in context), errors, insights
 |   |-- active/
-|   |   |-- episodic.md          # raw append-only diary
-|   |   `-- handoff.md
+|   |   `-- episodic.md          # raw append-only diary
 |   `-- archived/               # episodic/ (size-rolled) + superseded/ (decayed insights)
 |-- tools/TOOLS.md
 |-- scripts/                   # memory engine + board delivery: active-writer, reflect-nudge,

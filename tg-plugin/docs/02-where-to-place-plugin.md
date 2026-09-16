@@ -27,7 +27,7 @@ Tilde `~` корректно раскрывается и на Linux (`/home/<use
 
 Workspace агента — это каталог на диске, в котором лежат:
 - `CLAUDE.md` — system-инструкции для агента (роль, стиль, ограничения, доступы)
-- `core/` — память агента (decisions, learnings, active/recent, handoff)
+- `core/` — память агента (passive: decisions, preferences, errors, insights; active: дневник episodic.md)
 - `.mcp.json` — MCP-серверы которые подключены к этому агенту
 - `settings.json` — settings Claude Code для этого workspace (permissions, hooks)
 - (опционально) каталог с вашим плагином
@@ -43,8 +43,7 @@ Workspace агента — это каталог на диске, в котор�
 │   ├── USER.md
 │   ├── rules.md
 │   ├── active/
-│   │   ├── episodic.md
-│   │   └── handoff.md
+│   │   └── episodic.md
 │   ├── passive/
 │   │   └── decisions.md
 │   └── ...
@@ -213,7 +212,7 @@ Project `CLAUDE.md` часто использует `@-include` для подг�
 @core/USER.md
 @core/rules.md
 @core/passive/decisions.md
-@core/active/handoff.md
+@core/passive/preferences.md
 ```
 
 Если эти пути выходят за пределы CWD (что бывает всегда, когда CWD = `plugin/` внутри workspace), Claude Code при первом запуске спросит:

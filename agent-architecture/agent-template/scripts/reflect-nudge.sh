@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # `claude -p` is forbidden repo-wide, so reflection (episodic -> passive insights)
 # is NOT done by a background model call. Instead this script nudges the running
-# session via agent_router.notify (the same proven path night-learnings.sh uses);
+# session via agent_router.notify;
 # the session then runs the `memory-consolidate` skill with its own tools.
 #
 # Graceful degrade: if the shared brain is unreachable (single-agent / file-only),
@@ -45,7 +45,7 @@ log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [reflect-nudge] $1" >> "$HOOK_LOG";
 # shellcheck source=mcp-call.sh
 . "$SCRIPT_DIR/mcp-call.sh"
 
-# Bearer: prefer env, else parse the agent's own .mcp.json (as night-learnings does).
+# Bearer: prefer env, else parse the agent's own .mcp.json.
 #
 # Разбираем .mcp.json как JSON, а не как строки -- та же поломка, что уже
 # чинили в task-poller.sh. Прежний `grep -A3 agent_router` зависел от

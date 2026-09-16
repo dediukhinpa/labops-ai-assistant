@@ -39,8 +39,7 @@ The session is not restarted per message: it keeps its context until compaction,
   ├── @SECONDBRAIN_WRITE_RULES.md   what to write to the shared brain
   ├── @AGENT_ROUTER.md              handing work to other agents
   ├── @core/passive/decisions.md    what we chose and why
-  ├── @core/passive/preferences.md  how the operator wants work done
-  └── @core/active/handoff.md       where I left off
+  └── @core/passive/preferences.md  how the operator wants work done
 ```
 
 Not loaded (read on demand): `core/AGENTS.md`, `tools/TOOLS.md`,
@@ -92,13 +91,13 @@ Stop hook (every turn) -> active-writer.sh -> episodic.md (raw diary, salience-t
   |     archive-roll.sh  episodic.md > 40 KB -> archived/episodic/YYYY-MM.md
   |
 PreCompact -> snapshot to core/active/pre-compact/ + brain-flush.sh
-SessionEnd -> brain-flush.sh  (diary tail + handoff -> second_brain inbox/)
+SessionEnd -> brain-flush.sh  (diary tail -> second_brain inbox/)
 ```
 
 Why the diary stays out of context: it grows by tens of KB a day. Loading it would
 spend most of the startup context on raw logs and make the agent follow its
-instructions worse. What loads instead is the short, distilled part: `decisions.md`,
-`preferences.md`, `handoff.md`.
+instructions worse. What loads instead is the short, distilled part: `decisions.md` and
+`preferences.md`.
 
 ## Inter-Agent Communication
 

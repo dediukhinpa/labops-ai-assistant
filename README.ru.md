@@ -193,7 +193,7 @@ bash install.sh
 
 | Что чинится | Кто чинит | Как |
 |---|---|---|
-| зависшая / мёртвая сессия агента | `watchdog.sh` | детектит замёрзшую панель → `start-agent.sh` пересоздаёт сессию (`handoff.md` хранит последние события) |
+| зависшая / мёртвая сессия агента | `watchdog.sh` | детектит замёрзшую панель → `start-agent.sh` пересоздаёт сессию (последние события остаются в дневнике `episodic.md` и в общем мозге) |
 | упавший watchdog | `systemd` | `Restart=on-failure` + `RestartSec=15` |
 | осиротевший bun (claude умер, bun на PID 1) | `watchdog.sh` / `start-agent.sh` | `pkill -9` по пути агента |
 | зависший / крешлупящий MCP-сервер или worker | `second_brain-monitor.sh` (systemd timer) | `systemctl is-active` + HTTP-проба `/mcp` → Telegram-алерт на переходе down/up |

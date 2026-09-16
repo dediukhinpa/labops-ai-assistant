@@ -106,7 +106,7 @@ demand, so they cost no context until needed.
 │   ├── rules.md              ← empty until the agent earns rules
 │   ├── AGENTS.md             ← models, team
 │   ├── passive/              ← decisions, preferences, errors, insights (auto)
-│   ├── active/               ← diary + handoff (auto)
+│   ├── active/               ← diary (auto)
 │   └── archived/             ← old diary, decayed entries (auto)
 ├── tools/TOOLS.md            ← infrastructure map
 ├── hooks/, scripts/          ← memory engine (no cron, no background model)
