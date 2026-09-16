@@ -1070,6 +1070,39 @@ else
   printf '%s\n' "$ui_bad" | sed 's/^/      /'
 fi
 
+echo "── 25. Статус агента виден в Telegram ──"
+
+# 25a. Регрессия 16.09.2026: у клиента после install.sh developer не показывал
+# «Печатает…». Плагин прячет этот бабл (suppress_typing_bubble=true) и ждёт,
+# что карточку прогресса нарисуют хуки Claude Code в /hooks/agent, а их в
+# агентском флоу никто не ставит — в чате не оставалось ничего. config.json,
+# который пишет new-agent.sh, обязан гасить подавление в обеих ветках: и когда
+# файла ещё нет, и когда он уже есть.
+NA="skills/create-agent/new-agent.sh"
+if grep -q '"status": {"suppress_typing_bubble": false}' "$NA" \
+   && grep -q 'suppress_typing_bubble //= false' "$NA"; then
+  ok "new-agent.sh включает агенту статус «Печатает…» в config.json"
+else
+  bad "new-agent.sh не включает status.suppress_typing_bubble=false — свежий агент молчит в Telegram"
+fi
+
+# 25b. Установщик плагина раньше обещал, что хуки «ставит agent-template при
+# создании агента». В его settings.json только heartbeat и память — обещание
+# было ложным и прятало причину пропавшего статуса.
+if grep -q 'их ставит agent-template при создании агента' ../tg-plugin/install.sh; then
+  bad "tg-plugin/install.sh снова обещает хуки от agent-template — их там нет"
+else
+  ok "tg-plugin/install.sh не выдаёт ненастроенные хуки за настроенные"
+fi
+
+# 25c. Поведение самого плагина (что бабл действительно уходит) закреплено
+# юнит-тестом на стороне tg-plugin — он обязан существовать.
+if [ -f ../tg-plugin/plugin/tests/status/typing-visibility.test.ts ]; then
+  ok "tg-plugin: юнит-тест видимости статуса на месте"
+else
+  bad "пропал tg-plugin/plugin/tests/status/typing-visibility.test.ts"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✓ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0
