@@ -30,38 +30,42 @@ Do not set MAX_THINKING_TOKENS, SUBAGENT_MODEL, or CLAUDE_AUTOCOMPACT_PCT_OVERRI
 
 ### Core principle
 
-**Opus for code and decisions, Sonnet for subagents and bulk work.** No half-measures — code quality requires the best model. Subagents handle volume.
+**The strongest model for code and decisions, a cheaper one for subagents and bulk
+work.** The model is the operator's decision; `create-agent` asks for it and
+defaults to `sonnet`.
 
 ### Model roles
 
-| Model | ID | Role | Use for |
-|---|---|---|---|
-| **Opus 4.7** | claude-opus-4-7 | **Primary** | Code writing, review, planning, coordination |
-| **Sonnet 4.6** | claude-sonnet-4-6 | **Subagents** | Research, search, exploration, data collection |
-| **Haiku 4.5** | claude-haiku-4-5-20251001 | **Light tasks** | Quick lookups, simple transforms, low-cost operations |
-| **Codex GPT-5.4** | OpenAI | **Optional** | Double review (second opinion alongside Opus) |
-| **Sonar** | Perplexity | **Optional** | Web research, fact-checking |
+Agents are configured with **aliases**, not version numbers: an alias always points at
+the latest model of its tier, a number in a doc silently goes stale. A full model name
+in `settings.json` pins a version on purpose.
 
-> **Opus via OpenRouter — NEVER.** Use native Anthropic API or Anthropic Max subscription ($100-200/mo).
+| Alias | Role | Use for |
+|---|---|---|
+| **fable** / **opus** | Primary for heavy work | Code writing, review, planning, coordination |
+| **sonnet** | Default primary; subagents | Everyday agents, research, search, exploration |
+| **haiku** | Light tasks | Quick lookups, simple transforms |
+| Model from another vendor | Optional | Second opinion in a double review |
+| Perplexity Sonar | Optional (`RESEARCH_MODEL`) | Web research, fact-checking |
 
-### Cost comparison (Anthropic Max subscription)
+> **Opus via OpenRouter — NEVER.** Use the native Anthropic API or a Claude subscription.
 
-| Model | Input | Output | Relative cost |
-|-------|-------|--------|---------------|
-| **Sonnet 4.6** | $3/M | $15/M | **1x** (baseline for subagents) |
-| **Opus 4.7** | $15/M | $75/M | **~5x** (worth it for code quality) |
+### Cost
 
-> **On Max subscription ($100-200/mo):** All models included. Cost = rate limit consumption, not $. Sonnet subagents = faster responses + less context consumed.
+Current per-token prices are on the Anthropic pricing page; they change, so they are
+not copied here. On a subscription all models are included and the cost is rate-limit
+consumption, not money: cheaper subagents mean faster answers and less of the limit
+spent.
 
 ### Practical model strategy
 
 | Agent role | Model | Why |
 |-----------|-------|-----|
-| Coordinator | Opus | Deep reasoning for routing, planning |
-| Coder | Opus | Code quality requires the best model |
-| Code reviewer | Opus + Codex GPT-5.4 | Double review — two independent models |
-| Subagents (search, analysis) | Sonnet | Fast, cost-effective for bulk work |
-| Web research | Sonar (Perplexity) | Specialized for web search |
+| Coordinator | opus / fable | Deep reasoning for routing, planning |
+| Coder | opus / fable | Code quality needs the strongest model |
+| Code reviewer | opus + a model from another vendor | Two independent opinions |
+| Subagents (search, analysis) | sonnet | Fast, cost-effective for bulk work |
+| Web research | Perplexity Sonar | Specialized for web search |
 
 ## Context Management
 

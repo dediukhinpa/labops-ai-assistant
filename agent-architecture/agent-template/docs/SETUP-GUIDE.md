@@ -2,7 +2,7 @@
 
 Step-by-step setup for an agent workspace wired to a shared second_brain MCP server.
 
-This is the "client-side" of the public-second_brain-agentos distro. The "server-side"
+This is the "client-side" of the `labops-ai-assistant` monorepo. The "server-side"
 (memory MCP, memory_router MCP, agent_router MCP, task MCP, Postgres + pgvector)
 lives in the separate `labops-second-brain` repo: it is documented in its
 `docs/setup.md` and installed via its `scripts/install-vps.sh` (the paths below are
@@ -14,12 +14,13 @@ your agent) before running `install.sh` here.
 
 `agent-template/install.sh` creates `~/.claude-lab/<agent-id>/.claude/`. Inside,
 a four-layer memory pyramid (IDENTITY -> PASSIVE -> ACTIVE -> ARCHIVE) lives as Markdown
-files. A `.mcp.json` points Claude Code at three remote MCP servers --
+files. A `.mcp.json` points Claude Code at four remote MCP servers --
 **memory** (write decisions / knowledge / external notes, default port 5001),
 **memory_router** (read shared semantic memory, default port 5002),
-**agent_router** (notify other agents, default port 5000) -- each on its own
+**agent_router** (notify other agents, default port 5000),
+**tasks** (the task board, default port 5003) -- each on its own
 port, all Bearer-authenticated. Local hooks
-(`session-start`, `stop`, `precompact`) keep the local memory fresh; recall
+(`heartbeat`, `session-start`, `stop`, `precompact`) keep the local memory fresh; recall
 under a task is the agent's own job -- `CLAUDE.md` tells it to query the shared
 brain before non-trivial work.
 
@@ -36,8 +37,12 @@ brain before non-trivial work.
 
 ## One-command install
 
+The usual path is `agent-architecture/install.sh` for the first agent and the
+`create-agent` skill for the next ones -- they call this installer
+non-interactively and add Telegram, voice and autostart. To run it by hand:
+
 ```bash
-cd ~/path/to/public-second_brain-agentos/agent-template
+cd ~/labops-ai-assistant/agent-architecture/agent-template
 bash install.sh
 ```
 
@@ -47,14 +52,17 @@ The script asks for:
 2. Operator profile (name, address, timezone, language)
 3. **second_brain connection** (MCP host — host/IP only, Bearer token, comma-separated scopes)
 
-Default scopes: `decisions,external,knowledge,inbox`. Issue the token
-on the server with matching scopes:
+Default scopes of this bare installer: `decisions,external,knowledge,inbox`.
+`create-agent` uses the full set `decisions,external,knowledge,inbox,error-patterns,task-board`
+-- without `task-board` the agent cannot take tasks, without `error-patterns` it
+cannot share error patterns. Issue the token on the server with matching scopes
+(the second_brain installer does it for existing agents via `connect-agents.sh`):
 
 ```bash
 # on the second_brain VPS
 python3 /opt/second_brain/scripts/issue-agent-token.py \
     --agent <agent-id> \
-    --scopes decisions,external,knowledge,inbox
+    --scopes decisions,external,knowledge,inbox,error-patterns,task-board
 ```
 
 Copy the printed token into the installer prompt.
@@ -64,27 +72,27 @@ Copy the printed token into the installer prompt.
 ```
 ~/.claude-lab/<agent-id>/.claude/
 |-- CLAUDE.md                  # SOUL: who the agent is
-|-- .mcp.json                  # second_brain memory/memory_router/agent_router endpoints (chmod 600)
-|-- settings.json              # Claude Code hooks (SessionStart/UserPromptSubmit/Stop/PreCompact)
-|-- agent.env                  # source this to export MCP_HOST/SECOND_BRAIN_*_URL/AGENT_BEARER
+|-- .mcp.json                  # second_brain memory/memory_router/agent_router/tasks endpoints (chmod 600)
+|-- settings.json              # model, permissions, hooks (heartbeat, SessionStart, Stop, PreCompact, SessionEnd)
+|-- agent.env                  # MCP_HOST, SECOND_BRAIN_*_URL, AGENT_BEARER, AGENT_SCOPES (chmod 600)
 |-- core/
 |   |-- USER.md                # operator profile
-|   |-- rules.md               # rules learned from mistakes
+|   |-- rules.md               # orders to self, earned from mistakes (empty at install)
 |   |-- AGENTS.md              # team / models / pipelines
 |   |-- passive/                # decisions + preferences (in context), errors, insights
 |   |-- active/
 |   |   |-- episodic.md          # raw append-only diary (Stop hook appends, salience-tagged)
-|   |   |-- handoff.md         # last-N entries used by SessionStart
+|   |   |-- handoff.md         # where I left off; written by the agent itself (in context)
 |   |   `-- pre-compact/       # PreCompact snapshots (rotated)
 |   `-- archived/
 |       |-- episodic/          # size-rolled old episodic slices (YYYY-MM.md)
 |       `-- superseded/        # decayed passive insights
 |-- tools/TOOLS.md             # infra map
-|-- scripts/                   # active-writer, reflect-nudge,
-|                              # decay-sweep, archive-roll
+|-- scripts/                   # active-writer, reflect-nudge, decay-sweep, archive-roll,
+|                              # brain-flush, mcp-call, task-poller.sh, task_poller.py
 |-- hooks/                     # session-start, stop, precompact, heartbeat
 |-- logs/                      # hooks.log, verbose-YYYY-MM-DD.jsonl
-`-- skills/                    # symlink to ../skills/ (shared bundle)
+`-- skills/                    # symlink to agent-architecture/skills (shared by every agent)
 ```
 
 `~/.claude/CLAUDE.md` and `~/.claude/rules/{bash,python,typescript}.md` are
@@ -93,17 +101,13 @@ created globally on first run.
 ## Verifying second_brain connectivity
 
 ```bash
-source ~/.claude-lab/<agent-id>/.claude/agent.env
-
-curl -sS -H "Authorization: Bearer ${AGENT_BEARER}" \
-     -H "Accept: application/json, text/event-stream" \
-     -H "Content-Type: application/json" \
-     -X POST "${SECOND_BRAIN_MEMORY_ROUTER_URL}" \
-     --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+python3 ~/labops-ai-assistant/agent-architecture/skills/second_brain-doctor/scripts/second_brain_doctor.py --agent <agent-id>
 ```
 
-Expected: JSON-RPC response listing `recall`, `get`, `related`, `recent`,
-`stats` (the memory_router MCP tools).
+The doctor performs the MCP handshake, checks the token, runs a `recall` and looks
+at the hooks. A bare `curl` with `tools/list` is not a valid check: the MCP
+transport is session-based, so without `initialize` every server answers
+`400 Missing session ID` whatever the token.
 
 ## Launching the agent
 
@@ -125,24 +129,24 @@ On each turn end, `Stop` hook appends a salience-tagged entry to `episodic.md`
 background model -- `claude -p` is forbidden).
 
 Before Claude Code auto-compacts context, `PreCompact` hook snapshots
-`episodic.md` to `core/active/pre-compact/recent-<ts>.md`.
+`episodic.md` to `core/active/pre-compact/recent-<ts>.md` and runs
+`brain-flush.sh`, which sends the diary tail to the shared brain; `SessionEnd`
+does the same flush when the session closes.
 
-## Housekeeping cron (optional)
+## Housekeeping (no cron needed)
 
 Consolidation is **event-driven** (checkpoint every 20 turns + watchdog idle 10
-min), so there are no model crons. The only cron is optional nightly **pure-bash**
-housekeeping:
+min), so there are no model crons. Housekeeping is pure bash and runs from the
+`Stop` hook at most once a day (`MEMORY_HOUSEKEEPING_INTERVAL_SEC`, default 86400):
 
-```cron
-0 3 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/decay-sweep.sh
-5 3 * * * AGENT_WORKSPACE=$HOME/.claude-lab/<agent-id>/.claude bash $HOME/.claude-lab/<agent-id>/.claude/scripts/archive-roll.sh
-```
+- `decay-sweep.sh` moves never-reinforced decayed insights to
+  `archived/superseded/` (`preferences.md` never decays);
+- `archive-roll.sh` size-rolls `episodic.md` into `archived/episodic/YYYY-MM.md`
+  once it passes 40 KB.
 
-`decay-sweep.sh` moves never-reinforced decayed insights to `archived/superseded/`
-(`preferences.md` never decays); `archive-roll.sh`
-size-rolls `episodic.md` into `archived/episodic/YYYY-MM.md`. Both are pure bash +
-Python arithmetic -- no model call, so episodic text is never summarised, only
-relocated.
+Both are pure bash + Python arithmetic -- no model call, so episodic text is never
+summarised, only relocated. An agent that never finishes a turn never runs them;
+you can still call either script by hand with `AGENT_WORKSPACE` set.
 
 ## Adding more agents to the same shared brain
 
@@ -171,7 +175,7 @@ in `Authorization` header, JSON-RPC 2.0 in the body.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| recall returns `403` | token has no `inbox` (or relevant) scope, or wrong agent | re-issue with `issue-agent-token.py --scopes ...` |
+| recall or a write fails with a permission error | token lacks the scope (e.g. `task-board`, `error-patterns`), or wrong agent | run `sudo bash /opt/second_brain/scripts/connect-agents.sh` on the brain host, or re-issue with `issue-agent-token.py --scopes ...` |
 | recall returns empty results | second_brain DB has no notes yet | use `create_decision_note` first, or backfill from existing decisions.md |
 | `Stop` hook never fires | `settings.json` not picked up | confirm `claude --project` points at the workspace dir that contains `settings.json` |
 | `archive-roll.sh` skips silently | `episodic.md` < `EPISODIC_ROLL_KB` (40 KB) | by design; only rolls once the diary grows |

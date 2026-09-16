@@ -301,115 +301,37 @@ stdout from exit-0 hooks on `SessionStart` and `UserPromptSubmit` is added to Cl
 
 ---
 
-## Production Hooks (multi-agent pattern)
+## What an agent actually gets
 
-These hooks form the production memory and safety pipeline for agents running via Telegram gateway.
+`agent-template/install.sh` installs **only** the hooks below, wired by
+`templates/settings.json.template` (details: [../hooks/README.md](../hooks/README.md)).
+None of the "universal" or "project-specific" examples above is installed -- in
+particular there is no `block-dangerous.sh` or `protect-files.sh`, so nothing but the
+three `permissions.deny` lines in `settings.json` stops a command. Add them yourself
+if you need that.
 
-### All production hooks
+| Event | Script | What it does |
+|-------|--------|--------------|
+| SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop | `hooks/heartbeat-hook.sh` | touches `state/heartbeat` -- the watchdog's proof of life |
+| SessionStart | `hooks/session-start-hook.sh` | logs the session start |
+| Stop | `hooks/stop-hook.sh` | diary entry (`scripts/active-writer.sh`), line in `logs/verbose-*.jsonl`, consolidation nudge every 20 turns (`scripts/reflect-nudge.sh`), daily `decay-sweep.sh` + `archive-roll.sh` |
+| PreCompact | `hooks/precompact-hook.sh` | snapshot of `episodic.md` to `core/active/pre-compact/`, then `scripts/brain-flush.sh` |
+| SessionEnd | `scripts/brain-flush.sh --reason session-end` | sends the diary tail + handoff to the shared brain (`inbox/`) |
 
-| Hook | Event | Description |
-|------|-------|-------------|
-| block-dangerous.sh | PreToolUse (Bash) | Blocks rm -rf, push --force, DROP TABLE |
-| protect-files.sh | PreToolUse (Edit/Write) | Protects .env, .pem, .key, secrets/ |
-| log-commands.sh | PostToolUse (Bash) | Logs every command |
-| session-bootstrap.sh | SessionStart | Loads top-5 learnings, checks inbox, heartbeat |
-| auto-recall.mjs | UserPromptSubmit | Semantic search in second_brain |
-| local-recall.sh | UserPromptSubmit | Local grep in TOOLS/AGENTS |
-| correction-detector.sh | UserPromptSubmit | Catches correction phrases, triggers learning |
-| bash-firewall.sh | PreToolUse (Bash) | Additional bash command filtering |
-| review-reminder.sh | PostToolUse | After 10+ edits, reminds code review |
-| activity-logger.sh | PostToolUse | Audit trail (local JSONL) |
-| auto-capture.mjs | Stop | Captures conversation to second_brain |
-| write-handoff.sh | Stop | Generates handoff.md (last 10 entries) |
-| flush-to-second_brain.sh | PreCompact | Saves ACTIVE+PASSIVE to OV before compaction |
-| compact-notify.sh | PreCompact | Notifies about compaction |
-| close-heartbeat.sh | Stop | Sets agent status offline |
+All of them are fail-open: an error is logged to `logs/hooks.log` and the hook
+exits 0, so a broken hook never blocks the session.
 
-### SessionStart
-
-| Hook | Purpose |
-|------|---------|
-| **session-bootstrap.sh** | Loads top-scored learnings from `episodes.jsonl`, checks inbox for pending messages, sets agent heartbeat to `online`. First thing that runs — ensures the agent starts with full context. |
-
-### UserPromptSubmit
-
-| Hook | Purpose |
-|------|---------|
-| **auto-recall.mjs** | Sends user prompt to second_brain shared semantic memory, returns relevant memories as injected context. Adds long-term memory without consuming CLAUDE.md space. |
-| **local-recall.sh** | Grep-searches local reference files (TOOLS.md, AGENTS.md) for keywords extracted from user prompt. Fast fallback when second_brain is unavailable. |
-| **correction-detector.sh** | Pattern-matches correction phrases in user messages ("not like that", "wrong", "I said"). When detected, injects a reminder to capture a learning via `learnings-engine.mjs capture`. |
-
-### PreToolUse
-
-| Hook | Purpose |
-|------|---------|
-| **block-dangerous.sh** | Blocks dangerous Bash commands (`rm -rf`, `push --force`, `DROP TABLE`) with exit 2. First line of defense. |
-| **protect-files.sh** | Blocks edits to `.env`, `.pem`, `.key`, `secrets/` files. Protects sensitive paths from accidental modification. |
-| **bash-firewall.sh** | Additional Bash command filtering beyond block-dangerous. Configurable pattern list. Non-negotiable safety layer. |
-
-### PostToolUse
-
-| Hook | Purpose |
-|------|---------|
-| **log-commands.sh** | Logs every Bash command with timestamp. Silent — never blocks. Essential for post-incident analysis. |
-| **activity-logger.sh** | Appends every tool call (tool name, arguments, timestamp) to a local JSONL file. Broader than log-commands — covers all tools, no external dependencies. |
-| **review-reminder.sh** | Tracks cumulative Edit/Write count in the session. After 10+ edits, injects a reminder to spawn a `code-reviewer` subagent before marking the task complete. |
-
-### PreCompact
-
-| Hook | Purpose |
-|------|---------|
-| **flush-to-second_brain.sh** | Pushes current ACTIVE+PASSIVE memory to second_brain before compaction destroys context. Ensures no knowledge is lost during long sessions. |
-| **compact-notify.sh** | Alerts about upcoming compaction — logs a warning and optionally notifies the coordinator. |
-
-### Stop
-
-| Hook | Purpose |
-|------|---------|
-| **auto-capture.mjs** | Captures incremental conversation content to second_brain for semantic indexing. Runs on every response completion — builds the agent's long-term memory automatically. |
-| **write-handoff.sh** | Generates deterministic `handoff.md` from `episodic.md` — extracts last 10 entries, active topics, modified files, and pending messages. Next session starts where this one left off. |
-| **close-heartbeat.sh** | Updates agent status to `offline`. Coordinator uses this to know which agents are available. |
-
-### Production settings.json
-
-All 12 hooks wired together. Replace `{agent}` with your agent directory name (e.g., `agent-a`):
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/session-bootstrap.sh", "timeout": 10}
-    ]}],
-    "UserPromptSubmit": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "node $HOME/.second_brain/claude-code-memory-plugin/scripts/auto-recall.mjs", "timeout": 5},
-      {"type": "command", "command": "node $HOME/.second_brain/claude-code-memory-plugin/scripts/local-recall.mjs", "timeout": 5},
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/correction-detector.sh", "timeout": 3}
-    ]}],
-    "PreToolUse": [{"matcher": "Bash", "hooks": [
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/bash-firewall.sh", "timeout": 5}
-    ]}],
-    "PostToolUse": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/activity-logger.sh", "timeout": 5},
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/review-reminder.sh", "timeout": 3}
-    ]}],
-    "PreCompact": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/flush-to-second_brain.sh", "timeout": 5},
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/compact-notify.sh", "timeout": 5}
-    ]}],
-    "Stop": [{"matcher": "", "hooks": [
-      {"type": "command", "command": "node $HOME/.second_brain/claude-code-memory-plugin/scripts/auto-capture.mjs", "timeout": 10},
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/close-heartbeat.sh", "timeout": 5},
-      {"type": "command", "command": "$HOME/.claude-lab/{agent}/hooks/write-handoff.sh", "timeout": 5}
-    ]}]
-  }
-}
-```
+Earlier drafts of this page listed a "production" set (`session-bootstrap.sh`,
+`auto-recall.mjs`, `correction-detector.sh`, `write-handoff.sh`,
+`close-heartbeat.sh`, ...). Those scripts are not part of this repo: recall is done by
+the agent itself before a task (see `CLAUDE.md`), corrections are picked up by
+`memory-consolidate`, and liveness comes from `heartbeat-hook.sh`.
 
 ---
 
-## Complete settings.json (all hooks)
+## Complete settings.json (example, not installed)
 
-Everything combined — universal + project-specific. Remove what you don't need:
+The universal and project-specific examples above combined. Remove what you don't need:
 
 ```json
 {

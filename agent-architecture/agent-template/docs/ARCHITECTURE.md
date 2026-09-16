@@ -1,250 +1,135 @@
 # Agent Architecture — Local Files + second_brain
 
-No external databases. Only local files and semantic search.
+Each agent is one long-lived interactive Claude Code session. Memory lives in local
+Markdown files plus the shared second_brain; no background model is ever called
+(`claude -p` is forbidden in agent traffic).
 
 ## Entry Points
 
 ```
 Operator
-├── Terminal (SSH/local) → Claude Code (interactive)
-└── Telegram (@bot)      → JARVIS Gateway (autonomous)
+├── Telegram (one bot per agent) → channel plugin → the agent's live session
+└── Terminal (SSH/local)          → tmux attach -t labops-<agent>  (the same session)
 ```
 
-## Agents
+## Process Tree
 
-| Agent | Mode | Permissions | Session | Gateway |
-|-------|------|-------------|---------|---------|
-| Claude Code | Interactive | Manual approve | Long (hours) | No (standard CLI) |
-| JARVIS | Autonomous | Bypass | Short (request-response) | Yes (systemd) |
+```
+systemd  claude-agent-<agent>.service
+  └── orchestration/watchdog.sh <agent>        keeps the session alive, restarts a wedged turn
+        ├── tmux session labops-<agent>
+        │     └── claude --dangerously-skip-permissions (TUI, cwd = labops-tg-plugin/plugin)
+        │           └── labops-channel MCP server (bun, the Telegram plugin)
+        │                 ├── Telegram long-poller (getUpdates)
+        │                 └── internal webhook 127.0.0.1:6000+N (/hooks/*)
+        └── scripts/task-poller.sh → task_poller.py   delivers board tasks every 5 s
+```
+
+The session is not restarted per message: it keeps its context until compaction,
+`/reset force` or a watchdog restart.
 
 ## Context Loading (at session start)
 
 ```
-Claude Code launch
-│
-├── ~/.claude/CLAUDE.md           global rules
-├── ~/.claude/rules/*.md          language rules
-│
-└── {agent}/.claude/CLAUDE.md     agent SOUL
-    ├── @core/USER.md             operator profile
-    ├── @core/rules.md            learned rules
-    ├── @core/passive/decisions.md   decisions
-    ├── @core/passive/preferences.md how the operator wants things done
-    └── @core/active/handoff.md      compact extract (last 10 entries)
-
-~10-25K tokens (episodic.md is NOT loaded -- on-demand Read only)
+~/.claude/CLAUDE.md                 rules for every agent
+~/.claude/rules/*.md                language rules
+{agent}/.claude/CLAUDE.md           SOUL
+  ├── @core/USER.md                 who the operator is
+  ├── @core/rules.md                orders to self, earned from mistakes
+  ├── @SECONDBRAIN_WRITE_RULES.md   what to write to the shared brain
+  ├── @AGENT_ROUTER.md              handing work to other agents
+  ├── @core/passive/decisions.md    what we chose and why
+  ├── @core/passive/preferences.md  how the operator wants work done
+  └── @core/active/handoff.md       where I left off
 ```
 
-## Session Management
+Not loaded (read on demand): `core/AGENTS.md`, `tools/TOOLS.md`,
+`core/active/episodic.md`, `core/passive/errors.md`, `core/passive/insights.md`,
+`core/archived/`, skills (Skill tool), second_brain (`recall`).
+
+## Message Flow
 
 ```
-Session lifecycle:
-  1. First message   → new session ID (UUID), saved in state/sid-{agent}-{chat}.txt
-  2. Subsequent msgs → claude --resume <session_id> (preserves context)
-  3. /reset force    → watchdog types /clear after the current turn; SessionEnd
-                       flushes the diary to second_brain, context starts clean
-```
-
-Key commands:
-- `claude --continue` — resume last conversation
-- `claude --resume` — pick from session list
-- `claude -n "name"` — name a session
-- `/rewind` or `Esc+Esc` — restore from checkpoint (conversation, code, or both)
-
-Checkpoints are created on every Claude action and persist across sessions.
-
-## On-Demand (NOT in context)
-
-```
-ARCHIVE memory    → Read tool (core/archived/)
-Skills         → Skill tool (shared/skills/)
-second_brain L4  → curl ${SECOND_BRAIN_MEMORY_ROUTER_URL} (or set MCP_HOST to Tailscale IP for multi-VPS)
-Web search     → Perplexity / DuckDuckGo
-```
-
-## Complete Data Flow
-
-End-to-end path from operator message to memory persistence:
-
-```
-OPERATOR sends message (Telegram)
+OPERATOR writes to the agent's bot
     |
     v
-GATEWAY (systemd service, always running)
-    | 1. Receive message (long-polling thread)
-    | 2. Classify source:
-    |    - own_text: operator typed directly
-    |    - own_voice: operator sent voice message
-    |    - forwarded: operator forwarded from another chat
-    |    - external_media: photo/video/document (not voice)
-    | 3. Download media if present (20MB limit)
-    | 4. Transcribe voice via Groq Whisper (whisper-large-v3-turbo)
-    |    - If transcription fails: message still processed, marked as failed
-    | 5. Launch Claude Code: claude -p --resume <session_id>
-    |    - Session ID stored in state/sid-{agent}-{chat}.txt
-    |    - If no session file: new session (claude -p --session-id <uuid>)
-    |    - Context loaded via @include from CLAUDE.md
-    | 6. Stream progress to Telegram (real-time status updates)
-    | 7. Get response from Claude Code
+CHANNEL PLUGIN (inside the session)
+    | 1. getUpdates; drops senders not in TELEGRAM_ALLOWED_USER_IDS
+    | 2. voice: transcribed with Groq Whisper when a key is configured
+    |    (otherwise the agent runs the groq-voice skill itself)
+    | 3. 👀 reaction, "typing…" status
+    | 4. MCP notification -> the message is injected into the live session
     |
     v
-MEMORY WRITE (parallel, after every message)
-    | A. ACTIVE: append to core/active/episodic.md (ALWAYS, all source tags)
-    |    - fcntl.LOCK_EX for concurrent safety
-    |    - Format: ### YYYY-MM-DD HH:MM [source_tag]
-    |    - Snippet: 200 chars user + 200 chars agent
-    |    - Emergency trim: if >20KB, keep last 600 lines
-    |
-    | B. PASSIVE: insights consolidated by the LIVE SESSION during reflection
-    |    - Nudged by reflect-nudge.sh (checkpoint every 20 turns + watchdog idle 10 min)
-    |    - Session reads episodic.md -> writes passive/*.md (memory-consolidate skill)
-    |    - Important knowledge dual-written to second_brain (create_decision_note, ...)
-    |    - No background model: `claude -p` is forbidden repo-wide
-    |
-    | C. RECALL: the agent itself, before a non-trivial task
-    |    - second_brain memory_router recall, keyed on the real task
+CLAUDE CODE SESSION
+    | recall from second_brain before non-trivial work (CLAUDE.md)
+    | works with tools; hooks fire on every event (heartbeat, Stop, PreCompact)
+    | answers ONLY through the channel's `reply` tool --
+    | text written in the session is invisible to the operator
     |
     v
-REPLY to operator in Telegram (markdown -> HTML, chunked at 4000 chars)
+REPLY in Telegram (formatted, split to fit the 4096-char limit)
+
+After the turn: Stop hook -> active-writer.sh -> core/active/episodic.md
 ```
 
-This is the critical path. Every message follows this exact sequence. Memory writes never block the response -- they happen in parallel after Claude Code returns.
+## Memory Consolidation and Housekeeping
 
-## Why Keeping Episodic Out of Context Matters
-
-The episodic diary (`episodic.md`) grows to 80KB+ per day. The redesign never loads
-it into context: what loads is the compact `handoff.md` +
-`passive/decisions.md` and `passive/preferences.md`. The raw diary stays on-demand (Read tool) and is
-size-rolled to `archived/episodic/` by `archive-roll.sh`. The problem it avoids:
-80KB of raw conversation logs equals ~36,000 tokens -- roughly 70% of the startup
-context at Opus level.
-
-Quality degrades when context is bloated with raw logs. The agent spends most of its
-attention on unstructured conversation history instead of identity, rules, and tools.
-This is measurable -- an agent carrying 80KB of raw episodic performs noticeably
-worse at following instructions than one with 20KB of structured facts.
-
-Consolidation solves this WITHOUT a background model: the **live session** reflects
-(nudged by `reflect-nudge.sh`) and distils many raw turns into a handful of semantic
-insights in `passive/`. Episodic text is never model-compressed -- only role-promoted
-(into insights) and size/usage-rolled (into `archived/`) by pure bash.
-
-| Metric | Loading raw episodic | Consolidated (recall + insights) |
-|--------|--------------------|--------------------|
-| Episodic in context | 80 KB+ | 0 (on-demand only) |
-| Loaded memory (handoff + decisions + preferences) | n/a | 5-11 KB |
-| Tokens consumed by memory | ~36,000 | ~2,500-5,000 |
-| Startup context used | ~70% | ~10-15% |
-| Background model cost | n/a | $0 (reflection runs in the live session) |
-| Agent instruction-following | Degraded | Optimal |
-
-The system exists not to save money but to keep context CLEAN. An agent carrying 80KB
-of raw conversation logs performs worse than one with a few KB of structured facts --
-even though both fit within the 1M token window.
-
-## Gateway Flow (Telegram → Claude Code)
+Event-driven, no cron, no background model.
 
 ```
-Operator (Telegram)
-    │ voice / text / photo
-    ▼
-Gateway (systemd service)
-    │ 1. Receive message (polling thread)
-    │ 2. Classify source (own_text / own_voice / forwarded / external_media)
-    │ 3. Download media (photo, video, document — 20MB limit)
-    │ 4. Transcribe voice ([Groq](https://groq.com) Whisper — whisper-large-v3-turbo)
-    │ 5. Launch Claude Code (claude -p --resume <session_id>)
-    │ 6. Stream progress (real-time status in Telegram: plan, tools, subagents)
-    │ 7. Write to ACTIVE (core/active/episodic.md — fcntl lock, 200 char snippets)
-    │ 8. Insights consolidated in-session during reflection (dual-write to second_brain)
-    │ 9. Reply in Telegram (markdown → HTML, chunked at 4000 chars)
-    ▼
-Claude Code (model)
-    │ context loaded via @include
-    ▼
-Response to operator
+Stop hook (every turn) -> active-writer.sh -> episodic.md (raw diary, salience-tagged)
+  |
+  +-- reflect-nudge.sh (every 20 turns; watchdog after 10 min idle)
+  |     -> agent_router.notify (or core/active/consolidate.request)
+  |     -> the LIVE session runs memory-consolidate:
+  |        episodic -> passive/{decisions,errors,preferences,insights}.md
+  |        + dual-write to second_brain within the token's scopes
+  |
+  +-- once a day (Stop hook, pure bash):
+  |     decay-sweep.sh   passive entries that decayed unrecalled -> archived/superseded/
+  |                      (preferences.md never decays)
+  |     archive-roll.sh  episodic.md > 40 KB -> archived/episodic/YYYY-MM.md
+  |
+PreCompact -> snapshot to core/active/pre-compact/ + brain-flush.sh
+SessionEnd -> brain-flush.sh  (diary tail + handoff -> second_brain inbox/)
 ```
+
+Why the diary stays out of context: it grows by tens of KB a day. Loading it would
+spend most of the startup context on raw logs and make the agent follow its
+instructions worse. What loads instead is the short, distilled part: `decisions.md`,
+`preferences.md`, `handoff.md`.
 
 ## Inter-Agent Communication
 
-Agents communicate via local inbox files or shared message bus:
+All coordination goes through second_brain, never through local files:
+
+- **Task board** (`second_brain-tasks`, `task_*`): the sender creates a task for an
+  assignee; `task_poller.py` delivers it into the assignee's session; the assignee
+  claims, works and closes it. See `AGENT_ROUTER.md`.
+- **Events** (`second_brain-agent_router`): `notify`, `broadcast`, `escalate`,
+  `list_my_pending`, `ack` -- also used for the consolidation nudge.
+- **Shared memory**: what one agent writes, the others find with `recall`.
+
+## second_brain (shared memory, L4)
+
+A separate repo (`labops-second-brain`): Postgres + pgvector, an Obsidian-style vault
+as the source of truth, four MCP services.
 
 ```
-Agent A → shared/messages/inbox/{agent-b}
-Agent B → shared/messages/inbox/{agent-a}
+${SECOND_BRAIN_MEMORY_URL}        writes      default http://${MCP_HOST}:5001/mcp
+${SECOND_BRAIN_MEMORY_ROUTER_URL} recall      default http://${MCP_HOST}:5002/mcp
+${SECOND_BRAIN_AGENT_ROUTER_URL}  events      default http://${MCP_HOST}:5000/mcp
+${SECOND_BRAIN_TASKS_URL}         task board  default http://${MCP_HOST}:5003/mcp
 ```
 
-## second_brain (Local Semantic Search)
+- Auth: per-agent Bearer token; a write succeeds only inside the token's scopes.
+- Recall: hybrid search (vectors + full text, fused with RRF), weighted by note type
+  and freshness.
+- Transport: MCP streamable HTTP -- `initialize` first, then calls with the returned
+  `Mcp-Session-Id` (`scripts/mcp-call.sh` does it for the hooks).
 
-[second_brain](https://github.com/volcengine/second_brain) -- open-source context database for AI agents. Manages memories, resources, and skills through a filesystem paradigm with tiered context loading.
-
-```
-${SECOND_BRAIN_MEMORY_URL}        (write, default http://${MCP_HOST}:5001/mcp)
-${SECOND_BRAIN_MEMORY_ROUTER_URL} (recall, default http://${MCP_HOST}:5002/mcp)
-${SECOND_BRAIN_AGENT_ROUTER_URL}  (swarm, default http://${MCP_HOST}:5000/mcp)
-MCP_HOST = host/IP only (set to Tailscale IP for multi-VPS — check ss -tlnp)
-│
-├── Account: {org}
-│   ├── User: claude-code    (own embeddings)
-│   └── User: jarvis         (own embeddings)
-│
-├── Write: dual-write of insights by the LIVE SESSION during reflection
-│   Trigger: reflect-nudge.sh (checkpoint every 20 turns + watchdog idle 10 min)
-│   Method: create_decision_note / create_error_pattern_note / ... (recall-before-write)
-│   No background model, no batch upload: `claude -p` is forbidden repo-wide
-│
-└── Recall: the agent itself, before a non-trivial task
-    POST ${SECOND_BRAIN_MEMORY_ROUTER_URL} (JSON-RPC tools/call recall)
-    {"query": "topic", "limit": 5}   # RRF over embeddings + FTS
-```
-
-Install: `pip install second_brain --upgrade`
-
-## Memory Consolidation (event-driven) and Housekeeping
-
-Consolidation is **event-driven**, not cron. Reflection is done by the **live
-session** (no background model -- `claude -p` is forbidden); scripts only nudge it.
-
-```
-Stop hook (every turn) -> active-writer.sh -> ACTIVE (episodic.md, salience-tagged)
-  |     raw, append-only diary -- NEVER model-compressed
-  |
-  +-- reflect-nudge.sh (checkpoint every 20 turns + watchdog idle 10 min)
-  |     -> agent_router.notify -> LIVE SESSION runs memory-consolidate skill
-  |     -> reads episodic.md, writes passive/*.md insights (YAML frontmatter),
-  |        dual-writes important knowledge to second_brain
-  |
-  +-- decay-sweep.sh (daily bash from the Stop hook, no model)
-  |     evict never-reinforced decayed insights (score<0.25); preferences.md never decays
-  |     -> archived/superseded/
-  |
-  +-- archive-roll.sh (nightly bash, no model)
-  |     episodic.md >40KB -> archived/episodic/YYYY-MM.md (relocated, not summarised)
-  |
-  +-- /compact, /reset (manual gateway commands)
-        Extract/save key context, start fresh session
-
-L4     -> second_brain, dual-write of insights during in-session reflection
-         Method: create_decision_note / create_error_pattern_note (recall-before-write)
-```
-
-Was **4 model crons** -> now **0 model crons + 1 optional bash housekeeping cron**.
-
-### Recommended crontab (optional, pure bash, no model)
-
-```crontab
-# Nightly housekeeping only. Consolidation is event-driven (hooks + watchdog).
-# 1. Decay sweep: reinforce recalled insights, evict decayed ones -> archived/superseded/
-0 3 * * * /path/to/decay-sweep.sh
-
-# 2. Archive roll: size-roll episodic.md -> archived/episodic/YYYY-MM.md
-5 3 * * * /path/to/archive-roll.sh
-```
-
-Consolidation (episodic -> passive insights) needs no cron: it fires in-session on
-the checkpoint counter (every 20 turns) and on watchdog idle (10 min).
-
-### Telegram commands (tg-plugin)
+## Telegram commands (tg-plugin)
 
 | Command | What it does |
 |---------|-------------|
@@ -255,3 +140,8 @@ the checkpoint counter (every 20 turns) and on watchdog idle (10 min).
 | `/help` | Show available commands |
 
 `/new` was removed: in Claude Code "new session" and "reset" are the same `/clear`.
+
+## Session commands (terminal)
+
+- `claude --continue` — resume the last conversation (the watchdog uses it after a deep sleep)
+- `/rewind` or `Esc+Esc` — restore from a checkpoint

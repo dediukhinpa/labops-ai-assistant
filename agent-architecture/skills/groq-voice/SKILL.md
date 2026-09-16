@@ -14,8 +14,10 @@ When you see `<media:audio>`, you MUST:
 1. Extract the .ogg file path from the `[media attached: /path/to/file.ogg ...]` line
 2. Run the transcription script:
 ```
-exec 'bash ~/.claude/skills/groq-voice/transcribe.sh "/path/to/file.ogg"'
+bash "$AGENT_WORKSPACE/skills/groq-voice/transcribe.sh" "/path/to/file.ogg"
 ```
+   (`skills/` in the agent workspace is a link to the shared skills directory;
+   there is no copy under `~/.claude/skills/`.)
 3. Use the transcript text to understand what the user said
 4. Respond to the user's spoken message naturally
 5. Do NOT mention the transcription process unless asked

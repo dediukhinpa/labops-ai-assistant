@@ -1,251 +1,134 @@
 # Your First Agent
 
-Step-by-step guide to creating your first working agent. By the end, you'll have an agent that reviews your code through Telegram.
+A worked example: a **code reviewer** agent you talk to in Telegram. It gets its own
+workspace, SOUL, bot and memory, and shares the second_brain with the rest of the
+swarm.
 
-> **Prerequisites:** Complete steps 1-6 from [SETUP-GUIDE.md](SETUP-GUIDE.md) first.
+> **Prerequisites:** the first agent (Developer) is installed by
+> `agent-architecture/install.sh`, and second_brain is running. See
+> [SETUP-GUIDE.md](SETUP-GUIDE.md).
 
-## What You're Building
+## Step 1: Create the agent
 
-A **code reviewer** agent that:
-- Lives in its own workspace
-- Has its own SOUL (identity, style, rules)
-- Connects to Telegram (you message it, it reviews your code)
-- Remembers your conversations (ACTIVE/PASSIVE/ARCHIVE memory)
-
-## Step 1: Create the Workspace
+Ask Developer in Telegram: *"Create a new agent: code reviewer"*. It runs the
+`create-agent` skill and asks you one thing at a time. Or run the script yourself:
 
 ```bash
-AGENT_NAME="reviewer"  # ← your agent name (any name you want)
-
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/core/{passive,active}
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/tools
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/agents
-mkdir -p ~/.claude-lab/${AGENT_NAME}/.claude/scripts
-
-# Symlink shared skills
-ln -s ~/.claude-lab/shared/skills ~/.claude-lab/${AGENT_NAME}/.claude/skills
-
-# Create empty memory files
-echo "# PASSIVE DECISIONS" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/decisions.md
-echo "# Active memory -- raw append-only episodic diary" > ~/.claude-lab/${AGENT_NAME}/.claude/core/active/episodic.md
-echo "# PREFERENCES" > ~/.claude-lab/${AGENT_NAME}/.claude/core/passive/preferences.md
+AGENT_NAME="Reviewer" \
+AGENT_ROLE="Code reviewer" \
+AGENT_ROLE_DESCRIPTION="Senior code reviewer: finds bugs, security issues and architectural problems." \
+PRIMARY_MODEL="sonnet" \
+TELEGRAM_BOT_TOKEN="<token from @BotFather>" \
+TELEGRAM_ALLOWED_USER_IDS="<your Telegram id>" \
+bash ~/labops-ai-assistant/agent-architecture/skills/create-agent/new-agent.sh
 ```
 
-## Step 2: Write the SOUL (CLAUDE.md)
+The script creates `~/.claude-lab/reviewer/.claude/`, issues a second_brain token,
+connects the bot, and starts `claude-agent-reviewer.service`. Checklist of what it
+does: [CHECKLIST.md](CHECKLIST.md).
 
-This is the most important file. It defines WHO your agent is.
+## Step 2: Tune the SOUL (`CLAUDE.md`)
 
-Create `~/.claude-lab/reviewer/.claude/CLAUDE.md`:
+The template already has the parts every agent needs -- the channel rule (answer
+only through `reply`), the shared-brain duties and the `@import` list. Edit only the
+top of the file:
 
 ```markdown
-# Code Reviewer -- Senior Engineer
+# Reviewer -- Code reviewer
 
 ## SOUL
 
-**Role:** Senior code reviewer. Finds bugs, security issues, and architectural problems.
+**Role:** Senior code reviewer. Finds bugs, security issues and architectural problems.
 
 **Character:** Thorough, direct, constructive. Points out issues AND suggests fixes.
 
 **Style:**
 - Start with a summary: "3 issues found: 1 critical, 2 minor"
 - Show the problem, then the fix
-- No fluff, no praise for basic things
 - Code examples over explanations
 
-**Principles:**
-1. Security first -- always check for injection, auth, secrets
-2. Readability matters -- code is read 10x more than written
-3. Tests are not optional -- no PR without tests
-4. Simple > clever -- if it needs a comment, simplify it
+**Green zone (on my own):**
+- Reading code, running tests and linters, writing review comments
 
-## Memory Layers
-
-@core/USER.md
-@core/rules.md
-@core/passive/decisions.md
-@core/active/handoff.md
+**Red zone (ask the operator first)** -- on top of the shared red zone in `~/.claude/CLAUDE.md`:
+- Changing code (review only)
+- Commits and pushes
 ```
 
-> **Key:** The `@core/...` lines tell Claude Code to load those files into context every session. AGENTS.md and TOOLS.md are loaded on-demand via Read tool to save ~18KB tokens.
+Keep the `## Talking to the operator`, `## Shared brain` and `## Memory Layers`
+sections as they are.
 
-## Step 3: Write AGENTS.md
+## Step 3: Fill in `core/USER.md`
 
-Create `~/.claude-lab/reviewer/.claude/core/AGENTS.md`:
-
-```markdown
-# AGENTS.md
-
-## Models
-
-- **Primary:** Claude Sonnet 4.6 (fast, good for review)
-- **Subagents:** Native Claude Code Agent tool
-
-## Subagents
-
-- Maximum 3 subagents simultaneously
-- Use for: searching codebase, running tests, checking docs
-
-## second_brain (optional)
-
-- Host: `${MCP_HOST}` — hostname/IP only (no protocol or port); use Tailscale IP for multi-VPS
-- Key: ~/.claude-lab/shared/secrets/second_brain.key
-- Search: POST `${SECOND_BRAIN_MEMORY_ROUTER_URL}` (default `http://${MCP_HOST}:5002/mcp`) — JSON-RPC tools/call recall
-- Write: POST `${SECOND_BRAIN_MEMORY_URL}` (default `http://${MCP_HOST}:5001/mcp`)
-- Recall: the agent queries memory_router itself before a task; dual-write of insights during in-session reflection (see MEMORY.md)
-```
-
-## Step 4: Write USER.md
-
-Create `~/.claude-lab/reviewer/.claude/core/USER.md`:
+The installer leaves most of it as `TODO`. It describes **who you are**, not how the
+work should be done:
 
 ```markdown
-# USER.md
-
-**Name:** [your name]
-**Role:** [developer / student / entrepreneur]
-**Language:** Russian
+**Name:** Alex
+**Address as:** Alex
 **Timezone:** UTC+3
+**Language:** Russian
 
-## What I Need
+## Profile
+Backend developer, Python and Go.
 
-- Honest code reviews (don't sugar-coat)
-- Security-focused analysis
-- Performance suggestions when relevant
-- Keep it concise
+## What operator needs from this agent
+- Honest reviews, no sugar-coating
+- Security first
 ```
 
-## Step 5: Write rules.md
+## Step 4: Leave `core/rules.md` empty
 
-Create `~/.claude-lab/reviewer/.claude/core/rules.md`:
+It is for rules the agent earns from its own mistakes. Your review checklist and
+format belong in `CLAUDE.md` (the SOUL). Your taste -- "severity labels in capitals",
+"line numbers always" -- will land in `core/passive/preferences.md` by itself once you
+correct the agent a couple of times.
 
-```markdown
-# Rules
+## Step 5: Optional -- `core/AGENTS.md` and `tools/TOOLS.md`
 
-## Boundaries
+Fill in the team table and the servers the reviewer may touch. Both are read on
+demand, so they cost no context until needed.
 
-- Don't modify code without asking -- review only
-- Don't commit anything
-- Ask before large-scale suggestions
-- Flag security issues as CRITICAL
+## Step 6: Test it
 
-## Review Checklist
-
-Every review must check:
-1. Security (injection, auth, secrets in code)
-2. Error handling (edge cases, error messages)
-3. Tests (exist? cover edge cases?)
-4. Naming (clear, consistent)
-5. Complexity (can it be simpler?)
-
-## Format
-
-- Summary first, details after
-- Use severity labels: CRITICAL, WARNING, NOTE
-- Include line numbers
-- Show fix examples
-```
-
-## Step 6: Write TOOLS.md
-
-Create `~/.claude-lab/reviewer/.claude/tools/TOOLS.md`:
-
-```markdown
-# TOOLS.md
-
-## My Workspace
-
-- **CLAUDE.md**: identity
-- **Core**: AGENTS, USER, rules, passive, active, MEMORY
-- **Skills**: shared (symlinked)
-- **Secrets**: ~/.claude-lab/shared/secrets/
-
-## GitHub
-
-- CLI: gh (authorized)
-- Workflow: branches + PR, never push to main
-```
-
-## Step 7: Connect to Telegram
-
-### Option A: Interactive (claude-code-telegram plugin)
-
-Quick setup, works like a terminal in Telegram:
-
-```bash
-# Install plugin
-pip install claude-code-telegram  # or: uv tool install claude-code-telegram
-
-# Create bot via @BotFather in Telegram
-# Set env vars:
-export CLAUDE_CODE_TELEGRAM_BOT_TOKEN="your-token"
-export CLAUDE_CODE_TELEGRAM_ALLOWED_USERS="your-user-id"
-export CLAUDE_CODE_TELEGRAM_WORKDIR="$HOME/.claude-lab/reviewer/.claude"
-
-# Run
-claude-code-telegram
-```
-
-### Option B: Autonomous (Telegram Gateway)
-
-Full-featured: voice messages, progress display, memory:
-
-```bash
-# Clone gateway
-git clone https://github.com/your-org/telegram-gateway.git
-cd jarvis-telegram-gateway
-
-# Configure
-cp config.example.json config.json
-# Edit config.json: set bot token, workspace, user ID
-
-# Run
-python3 gateway.py
-```
-
-See [jarvis-telegram-gateway](https://github.com/your-org/telegram-gateway) for details.
-
-## Step 8: Test It
-
-1. Send your bot a message: "Review this code: [paste code]"
-2. Or send a GitHub PR link: "Review this PR"
-3. Check that `core/active/episodic.md` has the conversation entry
+1. Send the bot: "Review this code: [paste code]"
+2. Expect 👀, "typing…", then the review
+3. `core/active/episodic.md` has a new `[stop-hook]` entry
+4. After ~20 turns the agent consolidates: new entries appear in `core/passive/`
 
 ## What You Built
 
 ```
-~/.claude-lab/reviewer/
-└── .claude/
-    ├── CLAUDE.md              ← SOUL (identity)
-    ├── core/
-    │   ├── AGENTS.md          ← models, subagents
-    │   ├── USER.md            ← your profile
-    │   ├── rules.md           ← review rules
-    │   ├── passive/decisions.md, preferences.md  ← decisions, operator preferences (auto)
-    │   ├── active/episodic.md      ← conversation log (auto)
-    │   └── archived/          ← archive (auto)
-    ├── tools/TOOLS.md         ← available tools
-    ├── skills/ → shared       ← shared skills (symlink)
-    ├── agents/                ← subagent definitions
-    └── scripts/               ← memory compression (cron)
+~/.claude-lab/reviewer/.claude/
+├── CLAUDE.md                 ← SOUL (+ @imports)
+├── core/
+│   ├── USER.md               ← who you are
+│   ├── rules.md              ← empty until the agent earns rules
+│   ├── AGENTS.md             ← models, team
+│   ├── passive/              ← decisions, preferences, errors, insights (auto)
+│   ├── active/               ← diary + handoff (auto)
+│   └── archived/             ← old diary, decayed entries (auto)
+├── tools/TOOLS.md            ← infrastructure map
+├── hooks/, scripts/          ← memory engine (no cron, no background model)
+├── skills → shared skills    ← symlink
+├── labops-tg-plugin/plugin/  ← Telegram channel
+└── settings.json, .mcp.json, agent.env
 ```
 
 ## What's Next
 
-1. **Add more agents** -- see [MULTI-AGENT.md](MULTI-AGENT.md) for 3-agent setup
-2. **Set up memory compression** -- see [MEMORY.md](MEMORY.md) for cron scripts
-3. **Create custom skills** -- see [SKILLS.md](SKILLS.md)
-4. **Try different SOUL** -- change personality, add domain expertise
-5. **Install Superpowers** -- `/plan`, `/tdd`, `/code-review` workflows
+1. **Hand it work from other agents** -- task board, see `AGENT_ROUTER.md` and [MULTI-AGENT.md](MULTI-AGENT.md)
+2. **Learn how memory flows** -- [MEMORY.md](MEMORY.md)
+3. **Create custom skills** -- [SKILLS.md](SKILLS.md)
 
 ## Agent Ideas
 
 | Agent | SOUL Focus | Model |
 |-------|-----------|-------|
-| **Code Reviewer** | Security, quality, architecture | Sonnet |
-| **Coder** | Write code, tests, deploy | Opus |
-| **Researcher** | Web search, summarize, organize | Sonnet |
-| **Writer** | Content, posts, documentation | Sonnet |
-| **DevOps** | Servers, deploy, monitoring | Opus |
-| **Inbox** | Receive links, organize knowledge | Sonnet |
+| **Code Reviewer** | Security, quality, architecture | sonnet |
+| **Coder** | Write code, tests, deploy | opus |
+| **Researcher** | Web search, summarize, organize | sonnet |
+| **Writer** | Content, posts, documentation | sonnet |
+| **DevOps** | Servers, deploy, monitoring | opus |
 
 Each agent = its own workspace + its own SOUL + its own Telegram bot.

@@ -13,11 +13,13 @@ so the harness is never stalled.
 |---|---|---|
 | `session-start-hook.sh` | `SessionStart` | Log session start (and whether `core/active/handoff.md` has content). Never edits `episodic.md`. |
 | `stop-hook.sh` | `Stop` (end of each turn) | Append a salience-tagged episodic entry to `core/active/episodic.md` (via `scripts/active-writer.sh`) + a verbose JSON line to `logs/verbose-YYYY-MM-DD.jsonl`; increment the turn counter and, every `MEMORY_CHECKPOINT_EVERY_N_TURNS` (default 20), fire `scripts/reflect-nudge.sh --reason checkpoint`; once a day run `decay-sweep.sh` + `archive-roll.sh`. |
-| `heartbeat-hook.sh` | every event | Touch `state/heartbeat` -- the watchdog reads it as the liveness signal. |
+| `precompact-hook.sh` | `PreCompact` | Snapshot `core/active/episodic.md` to `core/active/pre-compact/recent-<ts>.md`; keep newest `KEEP_SNAPSHOTS` (default 10); then `scripts/brain-flush.sh --reason precompact`. |
+| `heartbeat-hook.sh` | SessionStart, UserPromptSubmit, Pre/PostToolUse, Notification, Stop | Touch `state/heartbeat` -- the watchdog reads it as the liveness signal. |
+
+`SessionEnd` runs `scripts/brain-flush.sh --reason session-end` directly (no wrapper hook).
 
 Recall under a task is not a hook: `CLAUDE.md` tells the agent to query the shared
 brain itself before non-trivial work, keyed on the real task.
-| `precompact-hook.sh` | `PreCompact` | Snapshot `core/active/episodic.md` to `core/active/pre-compact/recent-<ts>.md`; keep newest `KEEP_SNAPSHOTS` (default 10). |
 
 ## Environment
 
@@ -32,12 +34,12 @@ Hooks read these env vars (all optional):
 | `MEMORY_HOUSEKEEPING_INTERVAL_SEC` | stop | 86400 (how often decay-sweep + archive-roll run) |
 | `KEEP_SNAPSHOTS` | precompact | 10 |
 
-`install.sh` writes `MCP_HOST`, the three `SECOND_BRAIN_*_URL` vars, and
-`AGENT_BEARER` to a per-agent `agent.env` file that you `source` before
-launching Claude Code, or you can export them in your shell profile.
+`install.sh` writes `MCP_HOST`, the four `SECOND_BRAIN_*_URL` vars,
+`AGENT_BEARER` and `AGENT_SCOPES` to a per-agent `agent.env` file that the launcher
+sources before starting Claude Code.
 `MCP_HOST` is the host/IP only (no protocol or port); the `SECOND_BRAIN_*_URL`
 vars are the actual per-service endpoint URLs (memory `:5001`, memory_router
-`:5002`, agent_router `:5000` by default) and can be overridden directly for
+`:5002`, agent_router `:5000`, tasks `:5003` by default) and can be overridden directly for
 remote deployments fronted by your own reverse proxy.
 
 ## Wiring

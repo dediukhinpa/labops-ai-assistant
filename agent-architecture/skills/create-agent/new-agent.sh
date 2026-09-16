@@ -15,7 +15,7 @@
 #   AGENT_NAME AGENT_ROLE AGENT_ROLE_DESCRIPTION CHARACTER_TRAITS
 #   PRIMARY_MODEL OPERATOR_NAME OPERATOR_ADDRESS TIMEZONE LANGUAGE
 #   MCP_HOST (default: 127.0.0.1, colocated) AGENT_SCOPES
-#   SECOND_BRAIN_MEMORY_URL/_MEMORY_ROUTER_URL/_AGENT_ROUTER_URL (override for remote/reverse-proxy)
+#   SECOND_BRAIN_MEMORY_URL/_MEMORY_ROUTER_URL/_AGENT_ROUTER_URL/_TASKS_URL (override for remote/reverse-proxy)
 #   TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USER_IDS
 #   NEW_AGENT_BEARER (готовый Bearer нового агента; иначе выдаётся сам)
 #   NONINTERACTIVE=1 (не задавать вопросов -- только значения по умолчанию)

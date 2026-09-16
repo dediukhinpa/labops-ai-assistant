@@ -1,94 +1,87 @@
 # File Structure
 
-> **NOTE:** Agent names (`claude-code`, `jarvis`) are examples. Replace with your own.
+> **NOTE:** Agent ids (`developer`, `carmella`) are examples. Replace with your own.
+> What each file holds and who writes it: [FILES-REFERENCE.md](FILES-REFERENCE.md).
 
 ## Directory Layout
 
 ```
 ~/
-├── .claude/                           GLOBAL (all agents read this)
-│   ├── CLAUDE.md                      global rules, conventions
+├── .claude/                           GLOBAL (every agent of this OS user reads it)
+│   ├── CLAUDE.md                      rules shared by all agents
 │   └── rules/
 │       ├── bash.md                    set -euo pipefail...
 │       ├── python.md                  type hints, pathlib...
 │       └── typescript.md              strict, no any...
 │
+├── labops-ai-assistant/agent-architecture/
+│   └── skills/                        the shared skills (every workspace links here)
+│
 └── .claude-lab/
     ├── shared/                        SHARED RESOURCES
-    │   ├── secrets/                   ONE folder for all secrets
-    │   │   ├── .env                   shared env vars
-    │   │   ├── groq-api-key           Groq Whisper API key
-    │   │   ├── second_brain.key         second_brain API key
-    │   │   ├── db-service-account.json  database service account
-    │   │   └── telegram/
-    │   │       ├── bot-token-agent1   per-bot tokens
-    │   │       └── bot-token-agent2
-    │   ├── skills/                    shared skills (symlinked)
-    │   │   ├── groq-voice/            voice transcription
-    │   │   ├── memory-consolidate/    свёртка эпизодической памяти
-    │   │   └── ...                    (10 base skills total)
-    │   └── gateway/                   Telegram gateway
-    │       ├── gateway.py
-    │       ├── config.json
-    │       ├── state/                 session files per agent
-    │       └── media-inbound/         downloaded media
+    │   ├── secrets/
+    │   │   └── groq-api-key           Groq Whisper key (one for all agents)
+    │   └── state/<agent>/telegram/    per-agent channel state
+    │       ├── channel.env            bot token, allowed users, webhook port + token
+    │       ├── config.json            webhook.enabled, status.suppress_typing_bubble
+    │       └── webhook-token          webhook token as a flat file
     │
-    ├── claude-code/                   WORKSPACE: Agent 1 (example name)
-    │   └── .claude/
-    │       ├── CLAUDE.md              SOUL (identity, character)
+    ├── developer/                     AGENT 1 (example id)
+    │   ├── logs/watchdog.log          systemd unit output
+    │   └── .claude/                   workspace
+    │       ├── CLAUDE.md              SOUL + @imports:
     │       │   @core/USER.md
     │       │   @core/rules.md
+    │       │   @SECONDBRAIN_WRITE_RULES.md
+    │       │   @AGENT_ROUTER.md
     │       │   @core/passive/decisions.md
+    │       │   @core/passive/preferences.md
     │       │   @core/active/handoff.md
-    │       │
+    │       ├── SECONDBRAIN_WRITE_RULES.md
+    │       ├── AGENT_ROUTER.md
+    │       ├── settings.json          model, permissions, hooks
+    │       ├── .mcp.json              4 second_brain servers + Bearer (chmod 600)
+    │       ├── agent.env              service URLs, Bearer, scopes (chmod 600)
     │       ├── core/
-    │       │   ├── AGENTS.md          models, subagents config
-    │       │   ├── USER.md            operator profile
-    │       │   ├── rules.md           rules learned from mistakes
-    │       │   ├── passive/          semantic insights (consolidated)
-    │       │   │   ├── insights.md    reflection insights (YAML frontmatter)
-    │       │   │   ├── decisions.md   architectural/operational decisions
-    │       │   │   ├── errors.md      error patterns
-    │       │   │   └── preferences.md operator preferences
+    │       │   ├── USER.md            who the operator is
+    │       │   ├── rules.md           orders to self, earned from mistakes
+    │       │   ├── AGENTS.md          models, pipelines, team
+    │       │   ├── passive/           distilled by memory-consolidate
+    │       │   │   ├── decisions.md   what we chose and why (in context)
+    │       │   │   ├── preferences.md how the operator wants work done (in context, never decays)
+    │       │   │   ├── errors.md      what broke and how to avoid it
+    │       │   │   └── insights.md    other durable facts
     │       │   ├── active/
-    │       │   │   ├── episodic.md      raw append-only diary of turns
-    │       │   │   └── handoff.md    compact extract (last 10 entries, @include)
+    │       │   │   ├── episodic.md    raw diary, one entry per turn
+    │       │   │   ├── handoff.md     where I left off (in context)
+    │       │   │   └── pre-compact/   diary snapshots before compaction
     │       │   └── archived/
-    │       │       ├── episodic/YYYY-MM.md  size-rolled episodic slices
-    │       │       └── superseded/    decayed insights
-    │       │
-    │       ├── tools/
-    │       │   └── TOOLS.md           servers, Docker, services
-    │       │
-    │       ├── skills/ → ../../shared/skills (symlink)
+    │       │       ├── episodic/YYYY-MM.md  diary entries rolled out by size
+    │       │       └── superseded/    decayed passive entries
+    │       ├── tools/TOOLS.md         infrastructure map
+    │       ├── hooks/                 heartbeat, session-start, stop, precompact
+    │       ├── scripts/               active-writer, reflect-nudge, decay-sweep, archive-roll,
+    │       │                          brain-flush, mcp-call, task-poller.sh, task_poller.py
+    │       ├── skills → ~/labops-ai-assistant/agent-architecture/skills (symlink)
     │       ├── agents/                subagent .md definitions
-    │       └── scripts/
-    │           ├── active-writer.sh      Stop hook: append salience-tagged episodic entry
-    │           ├── reflect-nudge.sh      nudge live session to consolidate (no model in bg)
-    │           ├── decay-sweep.sh        nightly bash: decay passive/ -> archived/superseded/
-    │           └── archive-roll.sh       nightly bash: size-roll episodic -> archived/episodic/
+    │       ├── labops-tg-plugin/plugin/  private copy of the Telegram channel
+    │       ├── state/                 heartbeat, last-housekeeping, brain-flush.sha
+    │       └── logs/                  hooks.log, verbose-YYYY-MM-DD.jsonl
     │
-    └── jarvis/                        WORKSPACE: Agent 2 (example name)
-        └── .claude/
-            ├── CLAUDE.md              SOUL (different character)
-            │   (same @include structure)
-            ├── core/
-            │   (same structure as agent 1)
-            ├── tools/TOOLS.md
-            ├── skills/ → ../../shared/skills (symlink)
-            ├── agents/
-            └── scripts/
+    └── carmella/                      AGENT 2 (example id) -- same layout
+
+/etc/systemd/system/claude-agent-<agent>.service   autostart: systemd → watchdog → tmux + claude
 ```
 
 ## What's Isolated vs Shared
 
-| Isolated (per agent) | Shared |
-|---------------------|--------|
-| CLAUDE.md (SOUL) | ~/.claude/CLAUDE.md (global) |
-| rules.md (learned rules) | ~/.claude/rules/*.md |
-| TOOLS.md (servers) | shared/skills/ |
-| ACTIVE episodic.md (journal) | shared/gateway/ |
-| PASSIVE decisions.md | shared/secrets/ |
-| ARCHIVE core/archived/ | second_brain (namespaced) |
-| Subagents | |
-| Scripts (per-agent cron) | |
+| Per agent | Shared |
+|-----------|--------|
+| CLAUDE.md (SOUL), core/, tools/TOOLS.md | ~/.claude/CLAUDE.md, ~/.claude/rules/*.md |
+| hooks/, scripts/ (copies) | skills (one directory, symlinked) |
+| settings.json, .mcp.json, agent.env | shared/secrets/groq-api-key |
+| channel.env, bot, webhook port | second_brain (vault and task board) |
+| plugin copy, systemd unit, tmux session | the OS user the agents run as |
+
+"Per agent" is a layout convention, not an access boundary: all agents run as one OS
+user and can read each other's files.
