@@ -58,6 +58,18 @@ TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 sed -e "s|__AGENT__|$AGENT_ID|g" -e "s|__USER__|$RUN_USER|g" \
     -e "s|__ORCH__|$ORCH|g" -e "s|__LAB__|$LAB|g" "$UNIT_TEMPLATE" > "$TMP"
+# Каталог лога должен существовать до старта: systemd открывает
+# StandardOutput=append:... сам, ещё до watchdog.sh, и без каталога юнит
+# уходит в цикл падений с 209/STDOUT (клиент, 17.09.2026 — юнит ставили
+# вручную, logs/ не было). Создаём от имени пользователя, а не от root:
+# путь лежит в его доме, root не должен ходить по чужим симлинкам.
+LOG_DIR="$LAB/$AGENT_ID/logs"
+if [ "$(id -u)" -eq 0 ]; then
+  runuser -u "$RUN_USER" -- mkdir -p "$LOG_DIR" \
+    || die "не удалось создать $LOG_DIR от имени $RUN_USER"
+else
+  mkdir -p "$LOG_DIR"
+fi
 install -m 644 "$TMP" "$UNIT_DIR/$UNIT_NAME"
 echo "labops-agent-unit: записан $UNIT_DIR/$UNIT_NAME"
 "$SYSTEMCTL" daemon-reload

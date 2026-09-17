@@ -46,6 +46,7 @@ grep -qx 'User=agentuser' "$U" || fail "User не из SUDO_USER"
 grep -qF "ExecStart=$TMP/orch/watchdog.sh dev" "$U" || fail "ExecStart не на watchdog агента"
 grep -qF "append:$TMP/lab/dev/logs/watchdog.log" "$U" || fail "лог не в каталоге агента"
 [ "$(stat -c %a "$U")" = "644" ] || fail "права юнита не 644"
+[ -d "$TMP/lab/dev/logs" ] || fail "каталог логов не создан — юнит упадёт с 209/STDOUT"
 grep -qx 'daemon-reload' "$TMP/systemctl.log" || fail "нет daemon-reload"
 grep -qx 'enable --now claude-agent-dev.service' "$TMP/systemctl.log" || fail "нет enable --now"
 
