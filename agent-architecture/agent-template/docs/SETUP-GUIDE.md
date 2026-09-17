@@ -53,16 +53,17 @@ The script asks for:
 3. **second_brain connection** (MCP host — host/IP only, Bearer token, comma-separated scopes)
 
 Default scopes of this bare installer: `decisions,external,knowledge,inbox`.
-`create-agent` uses the full set `decisions,external,knowledge,inbox,error-patterns,task-board`
+`create-agent` uses the full set `decisions,external,knowledge,inbox,error-patterns,task-board,personal,projects,daily,personal,projects,daily`
 -- without `task-board` the agent cannot take tasks, without `error-patterns` it
-cannot share error patterns. Issue the token on the server with matching scopes
+cannot share error patterns, and without `personal`, `projects`, `daily`
+the `create_personal_note`, `create_project_note`, `append_daily_log` calls are refused. Issue the token on the server with matching scopes
 (the second_brain installer does it for existing agents via `connect-agents.sh`):
 
 ```bash
 # on the second_brain VPS
 python3 /opt/second_brain/scripts/issue-agent-token.py \
     --agent <agent-id> \
-    --scopes decisions,external,knowledge,inbox,error-patterns,task-board
+    --scopes decisions,external,knowledge,inbox,error-patterns,task-board,personal,projects,daily,personal,projects,daily
 ```
 
 Copy the printed token into the installer prompt.

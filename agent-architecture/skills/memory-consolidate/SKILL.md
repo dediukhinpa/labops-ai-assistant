@@ -71,9 +71,9 @@ reusable *knowledge*. Do it yourself in-session — there is no background model
    |---|---|---|---|
    | decisions.md | `create_decision_note` (`supersede_decision` to replace one) | `decisions` | yes |
    | errors.md | `create_error_pattern_note` | `error-patterns` | yes |
-   | preferences.md | `create_personal_note` | `personal` | no — scope not in the token, keep it local |
+   | preferences.md | `create_personal_note` | `personal` | yes |
    | insights.md, from an external source | `create_external_note` (`source`, `url`) | `external` | no — the memory server runs the `core` tool set, keep it local |
-   | insights.md, about the project/business | `create_project_note` | `projects` | no — scope not in the token, keep it local |
+   | insights.md, about the project/business | `create_project_note` | `projects` | yes |
 
    Scope or tool missing → keep the insight local and say so in your reply; never
    retry under another tool just to get it written. Idempotent by sha256 — safe to re-run.
