@@ -24,7 +24,7 @@ Do not build a workspace by hand: the script wires pieces that are easy to miss
 |------|--------|
 | 0. Dependencies | checks `claude`, `bun`, `curl`, `jq`, `tmux` |
 | 1. Configuration | name, role, description, model (alias, default `sonnet`), language, form of address |
-| 2. Shared-brain token | issues a Bearer with `decisions,external,knowledge,inbox,error-patterns,task-board` |
+| 2. Shared-brain token | issues a Bearer with `decisions,knowledge,inbox,error-patterns,task-board,personal,projects,daily` |
 | 3. Workspace | runs `agent-template/install.sh` non-interactively: see [FILES-REFERENCE.md](FILES-REFERENCE.md) |
 | 4. Telegram channel | `channel.env`, webhook token, `config.json`, private plugin copy |
 | 5. Voice | stores the Groq key in `~/.claude-lab/shared/secrets/groq-api-key` |

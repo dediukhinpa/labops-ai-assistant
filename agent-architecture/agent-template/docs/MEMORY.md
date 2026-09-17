@@ -147,19 +147,17 @@ Reflection is **synthesis**, not compression: `episodic.md` itself is never
 rewritten.
 
 Dual-write mapping (a write needs the scope in the token; default scopes are
-`decisions, external, knowledge, inbox, error-patterns, task-board`):
+`decisions, knowledge, inbox, error-patterns, task-board, personal, projects, daily`):
 
 | Local file | second_brain tool | Scope | Standard install |
 |------------|-------------------|-------|------------------|
 | decisions.md | `create_decision_note`, `supersede_decision` | `decisions` | yes |
 | errors.md | `create_error_pattern_note` | `error-patterns` | yes |
-| preferences.md | `create_personal_note` | `personal` | no — scope not in the token, stays local |
-| insights.md (external source) | `create_external_note` | `external` | no — tool hidden in the `core` tool set, stays local |
-| insights.md (project/business) | `create_project_note` | `projects` | no — scope not in the token, stays local |
+| preferences.md | `create_personal_note` | `personal` | yes |
+| insights.md (project/business) | `create_project_note` | `projects` | yes |
+| insights.md (other reference knowledge) | `create_knowledge_note` | `knowledge` | yes |
 
-The memory server exposes `create_external_note` only with `SECOND_BRAIN_TOOLS=all`;
-the standard install runs `core`. Enabling it, or adding scopes to a token, is the
-operator's call.
+Adding scopes to a token is the operator's call.
 
 ### Decay (decay-sweep.sh, daily)
 

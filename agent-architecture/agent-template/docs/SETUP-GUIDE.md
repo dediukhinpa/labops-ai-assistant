@@ -15,7 +15,7 @@ your agent) before running `install.sh` here.
 `agent-template/install.sh` creates `~/.claude-lab/<agent-id>/.claude/`. Inside,
 a four-layer memory pyramid (IDENTITY -> PASSIVE -> ACTIVE -> ARCHIVE) lives as Markdown
 files. A `.mcp.json` points Claude Code at four remote MCP servers --
-**memory** (write decisions / knowledge / external notes, default port 5001),
+**memory** (write decisions / error patterns / personal and project notes, default port 5001),
 **memory_router** (read shared semantic memory, default port 5002),
 **agent_router** (notify other agents, default port 5000),
 **tasks** (the task board, default port 5003) -- each on its own
@@ -52,17 +52,18 @@ The script asks for:
 2. Operator profile (name, address, timezone, language)
 3. **second_brain connection** (MCP host — host/IP only, Bearer token, comma-separated scopes)
 
-Default scopes of this bare installer: `decisions,external,knowledge,inbox`.
-`create-agent` uses the full set `decisions,external,knowledge,inbox,error-patterns,task-board`
+Default scopes of this bare installer: `decisions,knowledge,inbox`.
+`create-agent` uses the full set `decisions,knowledge,inbox,error-patterns,task-board,personal,projects,daily`
 -- without `task-board` the agent cannot take tasks, without `error-patterns` it
-cannot share error patterns. Issue the token on the server with matching scopes
+cannot share error patterns, and without `personal`, `projects`, `daily`
+the `create_personal_note`, `create_project_note`, `append_daily_log` calls are refused. Issue the token on the server with matching scopes
 (the second_brain installer does it for existing agents via `connect-agents.sh`):
 
 ```bash
 # on the second_brain VPS
 python3 /opt/second_brain/scripts/issue-agent-token.py \
     --agent <agent-id> \
-    --scopes decisions,external,knowledge,inbox,error-patterns,task-board
+    --scopes decisions,knowledge,inbox,error-patterns,task-board,personal,projects,daily
 ```
 
 Copy the printed token into the installer prompt.

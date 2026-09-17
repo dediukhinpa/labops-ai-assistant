@@ -75,7 +75,7 @@ scope in the agent's token.
 
 ### Shared memory
 
-- Every agent writes decisions, error patterns and external findings with the
+- Every agent writes decisions, error patterns, personal, project and knowledge notes with the
   `create_*` tools, within its token's scopes.
 - Every agent searches the whole vault with `recall` before non-trivial work.
 - Writes are attributed to the authenticated agent; the rules for what to write are
