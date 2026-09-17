@@ -420,6 +420,31 @@ and an uncommitted edit here does not go live by itself. After `git pull`, publi
 update to every agent with `bash orchestration/sync-skills.sh`; skills you put into the
 shared directory yourself are left alone.
 
+## Runtime copy in `/opt/labops/ai-assistant`
+
+Agents do not run from your checkout either. `install.sh` puts a root-owned copy of the
+monorepo into `/opt/labops/ai-assistant` — committed files of `agent-architecture` and
+`tg-plugin` (git `HEAD`) plus the plugin's `node_modules` — and systemd starts
+`watchdog.sh` from there. Deleting the clone, moving it or switching it to another
+branch no longer stops live agents, and an agent cannot rewrite its own orchestration.
+The same copy is used by the web app's client runtime.
+
+The copy is rebuilt by the root helper `/usr/local/sbin/labops-runtime-deploy`. The agent
+user may run it via `sudo -n` without a password; it takes no path arguments (only
+`--dry-run`) — the source checkout and its owner are written by `install.sh` to
+`/etc/labops/runtime.conf` (root, 644). After `git pull`:
+
+```bash
+sudo /usr/local/sbin/labops-runtime-deploy   # also refreshes the shared skills
+```
+
+The helper does not restart agents. Units that still start from a checkout (installed
+before this change) are listed with the two commands that move them to the copy
+(`labops-agent-unit … /opt/labops/ai-assistant/agent-architecture/orchestration …` and
+`systemctl restart`) — run them when convenient. Note: the agent user can redeploy the copy
+from the recorded checkout, which it owns, so the copy protects against a lost or switched
+clone, not against the agent itself.
+
 | Skill | What it does | Needs |
 |---|---|---|
 | `create-agent` | rolls out a new agent end to end: identity, bot, voice, autostart, smoke test | — |

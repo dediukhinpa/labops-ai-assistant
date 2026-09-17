@@ -57,10 +57,11 @@ LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"
 # And even when run from a checkout, the standalone labops-agent-architecture clone may lag a whole generation
 # behind the labops-ai-assistant monorepo (the source of truth) — an agent
 # scaffolded from it would silently miss current hooks/scripts. Resolution
-# order: explicit AGENT_ARCH_DIR → repo the copy came from → monorepo →
-# script-relative → standalone.
+# order: explicit AGENT_ARCH_DIR → repo the copy came from → root-owned runtime
+# copy (labops-runtime-deploy) → monorepo → script-relative → standalone.
 for cand in "${AGENT_ARCH_DIR:-}" \
             "$(cat "$SKILL_DIR/../.labops-repo" 2>/dev/null || true)" \
+            "/opt/labops/ai-assistant/agent-architecture" \
             "$HOME/labops-ai-assistant/agent-architecture" \
             "$REPO_DIR" \
             "$HOME/labops-agent-architecture"; do

@@ -1169,6 +1169,28 @@ else
   bad "установщик снова ссылается на skills/ в репозитории"
 fi
 
+echo "── 27. Агенты работают из копии роя в /opt, а не из checkout ──"
+# 17.09.2026: watchdog, шаблон агента и плагин брались из checkout оператора —
+# удалённый или переключённый на другую ветку клон ронял живых агентов.
+unit "labops-runtime-deploy: копия из git HEAD, замена целиком — юнит-тест зелёный" \
+     "labops-runtime-deploy: юнит-тест провален (orchestration/labops-runtime-deploy.test.sh)" \
+     bash orchestration/labops-runtime-deploy.test.sh
+if grep -q 'install -m 755 "\$RUNTIME_HELPER_SRC" "\$LABOPS_RUNTIME_HELPER"' install.sh \
+   && grep -q 'write_runtime_conf "\$AGENT_OS_USER" "\$DEST_ROOT"' install.sh \
+   && grep -q 'bash "\$RUNTIME_ARCH/skills/create-agent/new-agent.sh"' install.sh \
+   && grep -q '/opt/labops/ai-assistant/agent-architecture' skills/create-agent/new-agent.sh; then
+  ok "install.sh ставит хелпер копии и создаёт агента из копии роя"
+else
+  bad "install.sh/new-agent.sh не используют копию роя в /opt"
+fi
+# Источник копии задаёт только root: у хелпера нет аргумента пути.
+if ! grep -qE 'LABOPS_RUNTIME_(CONF|DIR).*\$\{?1' orchestration/labops-runtime-deploy.sh \
+   && grep -q 'if \[ "\$(id -u)" -ne 0 \]; then' orchestration/labops-runtime-deploy.sh; then
+  ok "labops-runtime-deploy: от root источник не подменяется окружением"
+else
+  bad "labops-runtime-deploy: источник копии может задать вызывающий"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✓ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

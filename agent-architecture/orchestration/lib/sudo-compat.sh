@@ -13,15 +13,25 @@
 
 LABOPS_UNIT_HELPER="/usr/local/sbin/labops-agent-unit"
 LABOPS_UNIT_TEMPLATE_ROOT="/usr/local/lib/labops/claude-agent.service.template"
+# Копия роя вне домашних каталогов: оркестрация, шаблон агента, скиллы и
+# плагин канала с зависимостями. Её же ставит install-client-runtime.sh из
+# labops-web-app для агентов клиентов — структура и источник совпадают.
+LABOPS_RUNTIME_DIR="/opt/labops/ai-assistant"
+LABOPS_RUNTIME_HELPER="/usr/local/sbin/labops-runtime-deploy"
+LABOPS_RUNTIME_CONF="/etc/labops/runtime.conf"
 
-# sudoers_agent_rules <пользователь> [helper] — правила sudoers для агент-
-# пользователя. Команда указана без аргументов: так sudo разрешает любые
-# аргументы, а проверяет их сам helper. Звёздочек нет — sudo-rs принимает.
+# sudoers_agent_rules <пользователь> [unit-helper] [runtime-helper] — правила
+# sudoers для агент-пользователя. Команды указаны без аргументов: так sudo
+# разрешает любые аргументы, а проверяют их сами хелперы. Звёздочек нет —
+# sudo-rs принимает.
 sudoers_agent_rules() {
   local user="$1" helper="${2:-$LABOPS_UNIT_HELPER}"
+  local runtime="${3:-$LABOPS_RUNTIME_HELPER}"
   printf '# Автосоздано labops-agent-architecture/install.sh. Разрешает %s\n' "$user"
-  printf '# без пароля ставить и включать только юниты claude-agent-<id>.service.\n'
+  printf '# без пароля ставить и включать только юниты claude-agent-<id>.service\n'
+  printf '# и обновлять копию роя в %s из checkout, записанного root.\n' "$LABOPS_RUNTIME_DIR"
   printf '%s ALL=(root) NOPASSWD: %s\n' "$user" "$helper"
+  printf '%s ALL=(root) NOPASSWD: %s\n' "$user" "$runtime"
 }
 
 # Переменные, которые sudo выставляет целевому пользователю сам: переносить их

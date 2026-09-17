@@ -4,7 +4,8 @@ Essential commands for daily work with Claude Code. Organized by workflow.
 
 > **NOTE:** Skills are copied from `agent-architecture/skills` into
 > `~/.claude-lab/shared/skills`, which every workspace links to -- nothing extra to install.
-> After `git pull`: `bash orchestration/sync-skills.sh`.
+> After `git pull`: `sudo /usr/local/sbin/labops-runtime-deploy` (rebuilds the runtime copy in
+> `/opt/labops/ai-assistant` and the shared skills); without it — `bash orchestration/sync-skills.sh`.
 
 ## Core Workflow
 

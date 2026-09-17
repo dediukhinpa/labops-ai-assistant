@@ -105,19 +105,24 @@ grant_agent_autostart() {
   local AGENT_OS_USER="$1"
   local UNIT_HELPER_SRC="$REPO_DIR/orchestration/labops-agent-unit.sh"
   local UNIT_TMPL_SRC="$REPO_DIR/systemd/claude-agent.service.template"
+  local RUNTIME_HELPER_SRC="$REPO_DIR/orchestration/labops-runtime-deploy.sh"
   local SUDOERS_FILE SUDOERS_TMP
   if ! $SUDO sh -c 'command -v visudo' >/dev/null 2>&1; then
     warn "нет visudo — scoped sudo для автостарта не выдан, юнит придётся ставить вручную"
     return 1
   fi
-  if [ ! -f "$UNIT_HELPER_SRC" ] || [ ! -f "$UNIT_TMPL_SRC" ]; then
-    warn "нет $UNIT_HELPER_SRC или $UNIT_TMPL_SRC — scoped sudo для автостарта не выдан"
+  if [ ! -f "$UNIT_HELPER_SRC" ] || [ ! -f "$UNIT_TMPL_SRC" ] \
+     || [ ! -f "$RUNTIME_HELPER_SRC" ]; then
+    warn "нет $UNIT_HELPER_SRC, $UNIT_TMPL_SRC или $RUNTIME_HELPER_SRC"
+    warn "scoped sudo для автостарта не выдан"
     return 1
   fi
   $SUDO install -d -m 755 "$(dirname "$LABOPS_UNIT_HELPER")" "$(dirname "$LABOPS_UNIT_TEMPLATE_ROOT")" || return 1
   $SUDO install -m 755 "$UNIT_HELPER_SRC" "$LABOPS_UNIT_HELPER" || return 1
   $SUDO install -m 644 "$UNIT_TMPL_SRC" "$LABOPS_UNIT_TEMPLATE_ROOT" || return 1
+  $SUDO install -m 755 "$RUNTIME_HELPER_SRC" "$LABOPS_RUNTIME_HELPER" || return 1
   echo "  хелпер автостарта: $LABOPS_UNIT_HELPER"
+  echo "  хелпер копии роя: $LABOPS_RUNTIME_HELPER"
   SUDOERS_FILE="/etc/sudoers.d/labops-agent-systemd-$AGENT_OS_USER"
   SUDOERS_TMP="$(mktemp)"
   sudoers_agent_rules "$AGENT_OS_USER" > "$SUDOERS_TMP"
@@ -126,13 +131,39 @@ grant_agent_autostart() {
     # wildcard-правилами, которые давали подложить в /etc/systemd любой юнит.
     $SUDO install -m 440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_FILE" || { rm -f "$SUDOERS_TMP"; return 1; }
     rm -f "$SUDOERS_TMP"
-    ok "scoped sudo для $AGENT_OS_USER: только $LABOPS_UNIT_HELPER"
+    ok "scoped sudo для $AGENT_OS_USER: только $LABOPS_UNIT_HELPER и $LABOPS_RUNTIME_HELPER"
     return 0
   fi
   warn "sudoers-файл для $AGENT_OS_USER не прошёл проверку синтаксиса — автостарт юнита придётся включать вручную"
   $SUDO visudo -cf "$SUDOERS_TMP" 2>&1 | sed 's/^/    /' || true
   rm -f "$SUDOERS_TMP"
   return 1
+}
+
+# write_runtime_conf <владелец> <checkout монорепо> <лаборатория> — записать от
+# root, из какого checkout хелпер labops-runtime-deploy собирает копию роя в
+# $LABOPS_RUNTIME_DIR. Источник решает root, а не тот, кто зовёт хелпер через sudo.
+write_runtime_conf() {
+  local owner="$1" source="$2" lab="$3" tmp
+  tmp="$(mktemp)"
+  printf '# Автосоздано labops-agent-architecture/install.sh.\n' > "$tmp"
+  printf '# Источник копии роя для %s.\n' "$LABOPS_RUNTIME_HELPER" >> "$tmp"
+  printf 'SOURCE=%s\nOWNER=%s\nLAB=%s\n' "$source" "$owner" "$lab" >> "$tmp"
+  if $SUDO install -d -m 755 "$(dirname "$LABOPS_RUNTIME_CONF")" \
+     && $SUDO install -m 644 -o root -g root "$tmp" "$LABOPS_RUNTIME_CONF"; then
+    rm -f "$tmp"
+    ok "копия роя будет собираться из $source ($LABOPS_RUNTIME_CONF)"
+    return 0
+  fi
+  rm -f "$tmp"
+  warn "не записан $LABOPS_RUNTIME_CONF — агенты будут работать из checkout"
+  return 1
+}
+
+# runtime_conf_source — SOURCE из записанных настроек копии (пусто, если нет).
+runtime_conf_source() {
+  { grep -E '^SOURCE=' "$LABOPS_RUNTIME_CONF" 2>/dev/null || true; } \
+    | tail -n 1 | sed 's/^SOURCE=//'
 }
 
 # ── 0. Доступность внешних хостов ─────────────────────────────────
@@ -328,6 +359,11 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
     if [ "$SRC_ROOT" = "$MONO_ROOT" ] && [ -n "${TG_PLUGIN_DIR:-}" ]; then
       export TG_PLUGIN_DIR="$DEST_ROOT/tg-plugin"
     fi
+    # Копию роя в /opt собирает хелпер из этого checkout — уже в доме пользователя.
+    if [ "$SRC_ROOT" = "$MONO_ROOT" ]; then
+      write_runtime_conf "$AGENT_OS_USER" "$DEST_ROOT" \
+        "${CLAUDE_LAB:-$NEW_HOME/.claude-lab}" || true
+    fi
     ok "продолжаю установку от имени $AGENT_OS_USER"
     # Флаги установщика (REUSE_EXISTING=1, SKIP_TG_PLUGIN, PREFLIGHT_DONE,
     # TG_PLUGIN_DIR, INSTALL_TG_LOCAL, ...) должны дойти до install.sh под
@@ -356,20 +392,29 @@ if [ "$(id -u)" -ne 0 ] && [ "$MODE" = "full" ] && [ "${AUTOSTART:-1}" = "1" ] \
    && [ "${LABOPS_AUTOSTART_GRANTED:-0}" != "1" ] && command -v systemctl >/dev/null 2>&1; then
   # -k: не засчитывать пароль, введённый минуту назад для apt, — нужно именно
   # постоянное правило, иначе new-agent.sh упрётся в истёкший кэш sudo.
-  if [ -x "$LABOPS_UNIT_HELPER" ] && sudo -k -n -l "$LABOPS_UNIT_HELPER" >/dev/null 2>&1; then
-    : # права уже выданы прежней установкой
+  if [ -x "$LABOPS_UNIT_HELPER" ] && sudo -k -n -l "$LABOPS_UNIT_HELPER" >/dev/null 2>&1 \
+     && [ -x "$LABOPS_RUNTIME_HELPER" ] && sudo -k -n -l "$LABOPS_RUNTIME_HELPER" >/dev/null 2>&1 \
+     && { [ ! -d "$REPO_DIR/../tg-plugin" ] \
+          || [ "$(runtime_conf_source)" = "$(cd "$REPO_DIR/.." && pwd)" ]; }; then
+    : # права и источник копии уже записаны прежней установкой
   elif [ -z "$SUDO" ]; then
     warn "нет sudo — автозапуск агента не настроить: юнит systemd ставит только root. Агент будет запущен, но не переживёт перезагрузку"
   else
     say "2b. Автозапуск агента"
     echo "  Чтобы агент поднимался сам после перезагрузки и сбоев, ему нужен юнит"
     echo "  systemd. Ставит его только root, поэтому выдаём пользователю $(id -un)"
-    echo "  право без пароля ровно на один скрипт: $LABOPS_UNIT_HELPER."
+    echo "  право без пароля ровно на два скрипта: $LABOPS_UNIT_HELPER"
+    echo "  и $LABOPS_RUNTIME_HELPER — он обновляет копию роя в $LABOPS_RUNTIME_DIR,"
+    echo "  из которой работают агенты (так удалённый checkout их не остановит)."
     GRANT_AUTOSTART="${GRANT_AUTOSTART:-}"
     ask_yn GRANT_AUTOSTART "Настроить автозапуск (sudo спросит пароль один раз)?" y
     if [ "$GRANT_AUTOSTART" = "y" ]; then
       grant_agent_autostart "$(id -un)" \
         || warn "права на автозапуск не выданы — агент будет запущен, но не переживёт перезагрузку"
+      if [ -d "$REPO_DIR/../tg-plugin" ]; then
+        write_runtime_conf "$(id -un)" "$(cd "$REPO_DIR/.." && pwd)" \
+          "${CLAUDE_LAB:-$HOME/.claude-lab}" || true
+      fi
     else
       note "автозапуск не настроен — агент будет запущен, но не переживёт перезагрузку"
     fi
@@ -705,12 +750,44 @@ export AGENT_ROLE_DESCRIPTION="${AGENT_ROLE_DESCRIPTION:-Автономный р
 [ -n "$SB" ] && export SECOND_BRAIN_DIR="$SB"
 [ -n "$TG" ] && export TG_PLUGIN_DIR="$TG"
 
+# ── Копия роя в /opt ────────────────────────────────────────────
+# Агенты работают из копии $LABOPS_RUNTIME_DIR, а не из этого checkout: его
+# можно удалить, перенести или переключить на другую ветку, не уронив агентов.
+# Копию собирает root-хелпер из checkout, записанного в $LABOPS_RUNTIME_CONF.
+# Без хелпера (нет sudo, standalone-клон) — как раньше, из checkout.
+RUNTIME_ARCH="$REPO_DIR"
+MONO_ROOT_NOW="$(cd "$REPO_DIR/.." && pwd)"
+RUNTIME_FALLBACK_HINT="агенты работают из $MONO_ROOT_NOW; не удаляйте и не переносите его"
+if [ "$MODE" = "full" ] && [ -n "$TG" ] && [ "$TG" = "$MONO_ROOT_NOW/tg-plugin" ]; then
+  say "Копия роя в $LABOPS_RUNTIME_DIR"
+  # Копия только читается, поэтому зависимости плагина ставим в checkout до неё.
+  if [ ! -d "$TG/plugin/node_modules" ] && command -v bun >/dev/null 2>&1; then
+    ( cd "$TG/plugin" && bun install --silent ) || true
+  fi
+  if [ ! -x "$LABOPS_RUNTIME_HELPER" ]; then
+    warn "нет $LABOPS_RUNTIME_HELPER — $RUNTIME_FALLBACK_HINT"
+  elif [ "$(runtime_conf_source)" != "$MONO_ROOT_NOW" ]; then
+    warn "копия роя собирается из $(runtime_conf_source), а не отсюда"
+    warn "перезапустите install.sh с sudo, чтобы сменить источник"
+    warn "$RUNTIME_FALLBACK_HINT"
+  elif { [ "$(id -u)" -eq 0 ] && "$LABOPS_RUNTIME_HELPER"; } \
+       || { [ "$(id -u)" -ne 0 ] && sudo -n "$LABOPS_RUNTIME_HELPER"; }; then
+    RUNTIME_ARCH="$LABOPS_RUNTIME_DIR/agent-architecture"
+    TG="$LABOPS_RUNTIME_DIR/tg-plugin"
+    export TG_PLUGIN_DIR="$TG"
+    export AGENT_ARCH_DIR="$RUNTIME_ARCH"
+    ok "агенты работают из $LABOPS_RUNTIME_DIR"
+  else
+    warn "копия роя не собрана — $RUNTIME_FALLBACK_HINT"
+  fi
+fi
+
 # new-agent.sh пишет в этот файл итог: ok или degraded. По нему решаем, что
 # сказать в конце, — иначе «Developer создан, напишите ему» печаталось и тогда,
 # когда агент так и не запустился.
 NEW_AGENT_STATUS_FILE="$(mktemp)"
 export NEW_AGENT_STATUS_FILE
-bash "$REPO_DIR/skills/create-agent/new-agent.sh"
+bash "$RUNTIME_ARCH/skills/create-agent/new-agent.sh"
 NEW_AGENT_STATUS="$(cat "$NEW_AGENT_STATUS_FILE" 2>/dev/null || true)"
 rm -f "$NEW_AGENT_STATUS_FILE"
 
@@ -718,7 +795,8 @@ rm -f "$NEW_AGENT_STATUS_FILE"
 # agent-template/install.sh кладёт в $LAB_DIR/shared/skills.
 DEV_WS="$LAB_DIR/$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')/.claude"
 if [ -d "$DEV_WS" ] && [ ! -f "$DEV_WS/skills/create-agent/SKILL.md" ]; then
-  warn "у Developer нет скилла create-agent — выполните: bash $REPO_DIR/orchestration/sync-skills.sh"
+  warn "у Developer нет скилла create-agent — выполните:"
+  warn "  bash $RUNTIME_ARCH/orchestration/sync-skills.sh"
 fi
 
 say "Готово."
@@ -729,7 +807,12 @@ else
   echo "  Пока эти пункты не закрыты, агент может не отвечать в Telegram."
 fi
 echo "  Перезапустить сессию агента вручную:"
-printf "    ${UI_BOLD}bash %s/orchestration/start-agent.sh %s${UI_RESET}\n" "$REPO_DIR" "$(basename "$(dirname "$DEV_WS")")"
+printf "    ${UI_BOLD}bash %s/orchestration/start-agent.sh %s${UI_RESET}\n" \
+  "$RUNTIME_ARCH" "$(basename "$(dirname "$DEV_WS")")"
 echo "  Чтобы добавить следующего агента — попросите Developer «Создай нового агента»"
 echo "  (он применит скилл create-agent) или запустите:"
-printf "    ${UI_BOLD}bash skills/create-agent/new-agent.sh${UI_RESET}\n"
+printf "    ${UI_BOLD}bash %s/shared/skills/create-agent/new-agent.sh${UI_RESET}\n" "$LAB_DIR"
+if [ "$RUNTIME_ARCH" != "$REPO_DIR" ]; then
+  echo "  Обновить агентов после git pull в $MONO_ROOT_NOW:"
+  printf "    ${UI_BOLD}sudo %s${UI_RESET}\n" "$LABOPS_RUNTIME_HELPER"
+fi
