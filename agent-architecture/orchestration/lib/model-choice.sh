@@ -17,10 +17,11 @@
 # проверки установки прошли зелёными, а бот молчал, пока модель не сменили на
 # sonnet.
 #
-# Выбор модели остаётся за оператором: haiku не запрещаем, а спрашиваем
-# подтверждение, объяснив последствия. Без живого ввода (NONINTERACTIVE или
-# закрытый stdin) переспросить некого — оставляем выбор как есть, но
-# предупреждение печатаем всё равно, чтобы оно осталось в логе установки.
+# Сначала haiku разрешался после подтверждения, но агент на нём всё равно
+# молчит, поэтому владелец убрал его из выбора (17.09.2026): haiku отвергается
+# и модель спрашивается заново. Без живого ввода (NONINTERACTIVE или закрытый
+# stdin) переспросить некого — установка останавливается, а не ставит
+# заведомо немого агента.
 
 # shellcheck shell=bash
 
@@ -60,11 +61,9 @@ ask_model_again() {
   PRIMARY_MODEL="${answer:-$MODEL_CHOICE_DEFAULT}"
 }
 
-# confirm_primary_model — проверяет PRIMARY_MODEL: недопустимое имя спрашивает
-# заново (без живого ввода — die), при Haiku предупреждает и спрашивает, оставить
-# ли. Отказ — вопрос о модели заново (Enter = sonnet).
+# confirm_primary_model — проверяет PRIMARY_MODEL: недопустимое имя и Haiku
+# спрашивают модель заново (Enter = sonnet), без живого ввода — die.
 confirm_primary_model() {
-  local keep=""
   while :; do
     PRIMARY_MODEL="${PRIMARY_MODEL#"${PRIMARY_MODEL%%[![:space:]]*}"}"
     PRIMARY_MODEL="${PRIMARY_MODEL%"${PRIMARY_MODEL##*[![:space:]]}"}"
@@ -80,20 +79,12 @@ confirm_primary_model() {
       continue
     fi
     is_haiku_model "$PRIMARY_MODEL" || return 0
-    warn "Модель ${PRIMARY_MODEL}: с Telegram-каналом агент на Haiku может не отвечать —"
-    echo "  сообщения доходят, но ответ остаётся в терминале. Для главного агента"
-    echo "  выбирайте sonnet или opus."
+    err "Модель ${PRIMARY_MODEL} не поддерживается: агент на Haiku не отвечает в Telegram —"
+    echo "  сообщения доходят, но ответ остаётся в терминале. Выберите fable, opus или sonnet."
     if [ "${NONINTERACTIVE:-0}" = "1" ]; then
-      return 0
+      die "задайте PRIMARY_MODEL=sonnet (или fable / opus) и запустите установку снова"
     fi
-    keep=""
-    ask_yn keep "Оставить ${PRIMARY_MODEL}?" n
-    # Закрытый stdin: переспросить некого — выбор оператора не меняем.
-    if [ "$keep" = "y" ] || [ "$UI_ASK_EOF" = "1" ]; then
-      return 0
-    fi
-    # Закрытый stdin на повторном вопросе — прежнее поведение: значение по умолчанию.
-    ask_model_again || PRIMARY_MODEL="$MODEL_CHOICE_DEFAULT"
+    ask_model_again || die "ввода нет — задайте PRIMARY_MODEL=sonnet (или fable / opus) и запустите установку снова"
   done
   return 0
 }

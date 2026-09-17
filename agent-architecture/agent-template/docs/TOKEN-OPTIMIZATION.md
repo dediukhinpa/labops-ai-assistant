@@ -44,7 +44,7 @@ in `settings.json` pins a version on purpose.
 |---|---|---|
 | **fable** / **opus** | Primary for heavy work | Code writing, review, planning, coordination |
 | **sonnet** | Default primary; subagents | Everyday agents, research, search, exploration |
-| **haiku** | Light tasks | Quick lookups, simple transforms |
+| **haiku** | Subagents only, never primary (installers reject it: a Haiku agent stays silent in Telegram) | Quick lookups, simple transforms |
 | Model from another vendor | Optional | Second opinion in a double review |
 | Perplexity Sonar | Optional (`RESEARCH_MODEL`) | Web research, fact-checking |
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Unit tests for lib/model-choice.sh — предупреждение при выборе Haiku.
-# Главное: haiku не проходит молча, отказ ведёт к новому выбору, а без живого
-# ввода установка не зацикливается и не падает.
+# Unit tests for lib/model-choice.sh — Haiku в выборе модели не принимается.
+# Главное: haiku ведёт к новому вопросу, а без живого ввода установка
+# останавливается, не зацикливаясь.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
@@ -30,39 +30,33 @@ done
 out="$(run opus '')"
 [ "$out" = "RESULT=opus" ] || fail "opus: лишний вывод или смена модели: $out"
 
-# 3. Haiku + согласие — модель остаётся, предупреждение показано.
-out="$(run haiku 'y\n')"
-echo "$out" | grep -q 'может не отвечать' || fail "haiku: нет предупреждения"
-echo "$out" | grep -q 'RESULT=haiku$' || fail "haiku + y: модель не сохранилась: $out"
-out="$(run haiku 'да\n')"
-echo "$out" | grep -q 'RESULT=haiku$' || fail "haiku + да: модель не сохранилась"
+# 3. Haiku отвергается: ошибка и вопрос заново, итог — новая модель.
+out="$(run haiku 'opus\n' 2>&1)"
+echo "$out" | grep -q 'не поддерживается' || fail "haiku: нет ошибки: $out"
+echo "$out" | grep -q 'RESULT=opus$' || fail "haiku: не переспросил: $out"
+echo "$out" | grep -q "\[y/n\]" && fail "haiku: предложено оставить"
 
-# 4. Haiku + Enter (по умолчанию «нет») + новый выбор.
-out="$(run haiku '\nsonnet\n')"
-echo "$out" | grep -q 'RESULT=sonnet$' || fail "отказ не привёл к новому выбору: $out"
+# 4. Haiku + Enter на новом вопросе — значение по умолчанию.
+out="$(run claude-haiku-4-5-20251001 '\n' 2>&1)"
+echo "$out" | grep -q 'RESULT=sonnet$' || fail "Enter после haiku не дал sonnet: $out"
 
-# 5. Отказ + Enter на новом вопросе — значение по умолчанию.
-out="$(run haiku 'n\n\n')"
-echo "$out" | grep -q 'RESULT=sonnet$' || fail "Enter на новом вопросе не дал sonnet: $out"
+# 5. Повторно ввели haiku — снова отказ, пока не выберут другую модель.
+out="$(run haiku 'Haiku\nsonnet\n' 2>&1)"
+[ "$(echo "$out" | grep -c 'не поддерживается')" -eq 2 ] || fail "повторный haiku прошёл: $out"
+echo "$out" | grep -q 'RESULT=sonnet$' || fail "повтор: итог не sonnet: $out"
 
-# 6. Повторно ввели haiku — спрашиваем снова, а не пропускаем.
-out="$(run haiku 'n\nhaiku\ny\n')"
-[ "$(echo "$out" | grep -c 'может не отвечать')" -eq 2 ] || fail "повторный haiku прошёл без вопроса"
-echo "$out" | grep -q 'RESULT=haiku$' || fail "повтор + согласие: модель не сохранилась"
-
-# 7. Закрытый stdin — не зацикливается, выбор оставлен, предупреждение есть.
-out="$(printf '' | NONINTERACTIVE=0 PRIMARY_MODEL=haiku timeout 5 bash -c '
+# 6. Haiku без живого ввода — установка останавливается, модель не записана.
+rc=0; out="$(printf '' | NONINTERACTIVE=0 PRIMARY_MODEL=haiku timeout 5 bash -c '
     source "'"$HERE"'/model-choice.sh"
     confirm_primary_model
-    echo "RESULT=$PRIMARY_MODEL"')" || fail "закрытый stdin: зависание или падение"
-echo "$out" | grep -q 'может не отвечать' || fail "закрытый stdin: нет предупреждения"
-echo "$out" | grep -q 'RESULT=haiku$' || fail "закрытый stdin: модель изменилась"
+    echo "RESULT=$PRIMARY_MODEL"' 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] || fail "закрытый stdin + haiku: не остановился (rc=$rc): $out"
+echo "$out" | grep -q 'RESULT=' && fail "закрытый stdin + haiku: модель записана"
 
-# 8. NONINTERACTIVE — без вопроса, но с предупреждением.
-out="$(run haiku 'n\nsonnet\n' 1)"
-echo "$out" | grep -q "\[y/n\]" && fail "NONINTERACTIVE: задан вопрос"
-echo "$out" | grep -q 'может не отвечать' || fail "NONINTERACTIVE: нет предупреждения"
-echo "$out" | grep -q 'RESULT=haiku$' || fail "NONINTERACTIVE: модель изменилась"
+# 7. NONINTERACTIVE + haiku — остановка без вопроса.
+rc=0; out="$(run haiku 'sonnet\n' 1 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "NONINTERACTIVE + haiku: не остановился: $out"
+echo "$out" | grep -q 'RESULT=' && fail "NONINTERACTIVE + haiku: модель записана"
 
 # 9. Имя модели: допустимые проходят, мусор от русской раскладки — нет.
 for m in opus sonnet fable haiku claude-opus-5 'claude-opus-5[1m]' claude-haiku-4-5-20251001 'opus[1m]'; do
@@ -91,9 +85,9 @@ echo "$out" | grep -q 'RESULT=' && fail "закрытый stdin + мусор: м
 rc=0; out="$(run 'ыsonnet' 'sonnet\n' 1 2>&1)" || rc=$?
 [ "$rc" -ne 0 ] || fail "NONINTERACTIVE + мусор: не остановился: $out"
 
-# 13. Мусор, исправленный на haiku, всё равно проходит через предупреждение.
-out="$(run 'ыhaiku' 'haiku\ny\n' 2>&1)"
-echo "$out" | grep -q 'может не отвечать' || fail "мусор → haiku: нет предупреждения"
-echo "$out" | grep -q 'RESULT=haiku$' || fail "мусор → haiku + y: $out"
+# 13. Мусор, исправленный на haiku, всё равно отвергается.
+out="$(run 'ыhaiku' 'haiku\nopus\n' 2>&1)"
+echo "$out" | grep -q 'не поддерживается' || fail "мусор → haiku: нет отказа"
+echo "$out" | grep -q 'RESULT=opus$' || fail "мусор → haiku → opus: $out"
 
 echo "model-choice: ok"

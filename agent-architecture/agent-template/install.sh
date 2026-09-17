@@ -104,7 +104,7 @@ prompt AGENT_ROLE_DESCRIPTION "One-sentence role description" "Autonomous coding
 prompt CHARACTER_TRAITS       "Character traits (e.g. Pragmatic, calm, precise)" "Efficient, precise, proactive. Reports results, not process."
 
 # Алиасы, а не версии: см. комментарий в skills/create-agent/new-agent.sh.
-[ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "  Aliases resolve to the latest model of their tier: fable / opus (code+review) / sonnet (subagents+research) / haiku. A full model name pins a version."; }
+[ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "  Aliases resolve to the latest model of their tier: fable / opus (code+review) / sonnet (subagents+research). A full model name pins a version."; }
 prompt PRIMARY_MODEL          "Primary model [sonnet]" "sonnet"
 # Имя модели уходит в settings.json как есть: с посторонними байтами агент молчит
 # при зелёной установке (см. orchestration/lib/model-choice.sh). Этот установщик
@@ -113,6 +113,14 @@ if [ -z "$PRIMARY_MODEL" ] || [ -n "$(printf '%s' "$PRIMARY_MODEL" | LC_ALL=C tr
     err "Invalid model name: $(printf '%q' "$PRIMARY_MODEL") -- use Latin letters, digits and . _ - [ ] (e.g. opus, sonnet)"
     exit 1
 fi
+# Haiku не вызывает reply канала — агент молчит в Telegram; в выборе его нет
+# (см. orchestration/lib/model-choice.sh).
+case "${PRIMARY_MODEL,,}" in
+    *haiku*)
+        err "Model ${PRIMARY_MODEL} is not supported: a Haiku agent does not answer in Telegram -- use fable, opus or sonnet"
+        exit 1
+        ;;
+esac
 prompt RESEARCH_MODEL         "Research model [Perplexity Sonar]" "Perplexity Sonar (web search only, no code)"
 prompt MAX_SUBAGENTS          "Max simultaneous subagents [5]" "5"
 

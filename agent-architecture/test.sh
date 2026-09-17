@@ -704,8 +704,8 @@ else
 fi
 
 # 16d. Haiku не отвечает через reply канала — агент молчит в Telegram, хотя
-# установка зелёная. Выбор haiku должен сопровождаться предупреждением.
-unit "выбор haiku: предупреждение и подтверждение — юнит-тест зелёный" \
+# установка зелёная. Haiku в выборе модели не принимается.
+unit "выбор haiku отвергается — юнит-тест зелёный" \
      "model-choice: юнит-тест провален (orchestration/lib/model-choice.test.sh)" \
      bash orchestration/lib/model-choice.test.sh
 if grep -qE '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh \
@@ -713,6 +713,11 @@ if grep -qE '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh \
   ok "new-agent.sh проверяет выбранную модель сразу после вопроса"
 else
   bad "new-agent.sh не зовёт confirm_primary_model — haiku пройдёт молча"
+fi
+if grep -q 'is not supported: a Haiku agent' agent-template/install.sh; then
+  ok "agent-template/install.sh отвергает haiku"
+else
+  bad "agent-template/install.sh пропускает haiku"
 fi
 
 # 16e. Скилл запускает new-agent.sh без stdin: забытый allowlist давал бота,
