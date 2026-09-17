@@ -54,8 +54,11 @@ description: Use when the operator wants to create/add a NEW agent (a new Telegr
 Запусти end-to-end сценарий — он сделает всю рутину и в конце прогонит smoke-тест:
 
 ```bash
-bash skills/create-agent/new-agent.sh
+bash ~/.claude-lab/shared/skills/create-agent/new-agent.sh
 ```
+Это копия скилла (общая папка скиллов агентов); репозиторий `agent-architecture` скрипт
+находит сам — по метке `~/.claude-lab/shared/skills/.labops-repo`, которую оставляет
+`orchestration/sync-skills.sh`. Если `CLAUDE_LAB` задан иначе, путь начинается с него.
 
 Скрипт по шагам: соберёт параметры → выдаст агенту токен во втором мозге → скаффолдит
 воркспейс (`agent-template`, неинтерактивно) → заведёт Telegram-канал из `labops-ai-assistant/tg-plugin`
@@ -74,7 +77,7 @@ Telegram `getMe`, активность юнита, авторизацию сес
 AGENT_NAME=Commerce AGENT_ROLE="Коммерсант" AGENT_ROLE_DESCRIPTION="..." \
 PRIMARY_MODEL=sonnet LANGUAGE=Russian OPERATOR_ADDRESS="..." \
 TELEGRAM_BOT_TOKEN=... TELEGRAM_ALLOWED_USER_IDS=... \
-bash skills/create-agent/new-agent.sh
+bash ~/.claude-lab/shared/skills/create-agent/new-agent.sh
 ```
 Без `AGENT_NAME`, а при заданном `TELEGRAM_BOT_TOKEN` — без корректного
 `TELEGRAM_ALLOWED_USER_IDS`, скрипт остановится до создания чего-либо и назовёт, чего не хватает.

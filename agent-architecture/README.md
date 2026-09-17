@@ -290,7 +290,7 @@ The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SEC
 │                       #   brain-flush, mcp-call helper, task-board poller
 ├── hooks/               # session-start, stop, precompact, heartbeat
 ├── logs/
-└── skills/              # symlink to the shared skill bundle
+└── skills/              # symlink to ~/.claude-lab/shared/skills (a copy of the bundle)
 ```
 
 | Template directory | Contents |
@@ -413,8 +413,12 @@ Delivery uses no headless `claude -p`: the poller types into the live subscripti
 
 ## Bundled skills
 
-`install.sh` symlinks the whole [`skills/`](skills/) directory into every agent workspace
-(`.claude/skills`), so an update to a skill reaches all agents at once.
+`install.sh` copies every skill from [`skills/`](skills/) into `~/.claude-lab/shared/skills`,
+and each agent workspace links `.claude/skills` to that copy. The agents do not depend on
+this checkout for their skills: moving or deleting the clone does not take the skills away,
+and an uncommitted edit here does not go live by itself. After `git pull`, publish the
+update to every agent with `bash orchestration/sync-skills.sh`; skills you put into the
+shared directory yourself are left alone.
 
 | Skill | What it does | Needs |
 |---|---|---|

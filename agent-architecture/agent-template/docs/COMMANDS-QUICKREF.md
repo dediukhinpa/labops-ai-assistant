@@ -2,8 +2,9 @@
 
 Essential commands for daily work with Claude Code. Organized by workflow.
 
-> **NOTE:** Skills live in `agent-architecture/skills` and are symlinked into every
-> workspace -- nothing extra to install.
+> **NOTE:** Skills are copied from `agent-architecture/skills` into
+> `~/.claude-lab/shared/skills`, which every workspace links to -- nothing extra to install.
+> After `git pull`: `bash orchestration/sync-skills.sh`.
 
 ## Core Workflow
 

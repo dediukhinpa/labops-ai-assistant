@@ -714,12 +714,11 @@ bash "$REPO_DIR/skills/create-agent/new-agent.sh"
 NEW_AGENT_STATUS="$(cat "$NEW_AGENT_STATUS_FILE" 2>/dev/null || true)"
 rm -f "$NEW_AGENT_STATUS_FILE"
 
-# убедимся, что у Developer есть скилл create-agent (чтобы ставить следующих)
+# Скилл create-agent у Developer берётся из общей копии скиллов, которую
+# agent-template/install.sh кладёт в $LAB_DIR/shared/skills.
 DEV_WS="$LAB_DIR/$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')/.claude"
-if [ -d "$DEV_WS" ] && [ ! -e "$DEV_WS/skills/create-agent" ]; then
-  mkdir -p "$DEV_WS/skills"
-  ln -s "$REPO_DIR/skills/create-agent" "$DEV_WS/skills/create-agent" 2>/dev/null \
-    && ok "скилл create-agent подключён в воркспейс Developer"
+if [ -d "$DEV_WS" ] && [ ! -f "$DEV_WS/skills/create-agent/SKILL.md" ]; then
+  warn "у Developer нет скилла create-agent — выполните: bash $REPO_DIR/orchestration/sync-skills.sh"
 fi
 
 say "Готово."

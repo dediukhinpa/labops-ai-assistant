@@ -1155,6 +1155,20 @@ else
   bad "пропал tg-plugin/plugin/tests/status/typing-visibility.test.ts"
 fi
 
+echo "── 26. Скиллы агентов — копия, а не ссылка в репозиторий ──"
+# 17.09.2026: skills/ агентов был симлинком на agent-architecture/skills —
+# удалённый или перенесённый клон уносил скиллы у всех агентов разом.
+unit "skills.sh: копия в shared/skills, перевод ссылок — юнит-тест зелёный" \
+     "skills.sh: юнит-тест провален (orchestration/lib/skills.test.sh)" \
+     bash orchestration/lib/skills.test.sh
+if grep -q 'sync_shared_skills "\$SHARED_SKILLS_SRC" "\$LAB_DIR"' agent-template/install.sh \
+   && ! grep -qE 'ln -s +"\$SHARED_SKILLS_SRC"' agent-template/install.sh \
+   && ! grep -qE 'ln -s +"\$REPO_DIR/skills' install.sh; then
+  ok "установщики ссылаются на общую копию скиллов, а не на репозиторий"
+else
+  bad "установщик снова ссылается на skills/ в репозитории"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   printf "${G}✓ self-test пройден (%d проверок).${N}\n" "$pass"; exit 0

@@ -60,7 +60,7 @@
     │       ├── hooks/                 heartbeat, session-start, stop, precompact
     │       ├── scripts/               active-writer, reflect-nudge, decay-sweep, archive-roll,
     │       │                          brain-flush, mcp-call, task-poller.sh, task_poller.py
-    │       ├── skills → ~/labops-ai-assistant/agent-architecture/skills (symlink)
+    │       ├── skills → ~/.claude-lab/shared/skills (symlink; copy of agent-architecture/skills)
     │       ├── agents/                subagent .md definitions
     │       ├── labops-tg-plugin/plugin/  private copy of the Telegram channel
     │       ├── state/                 heartbeat, last-housekeeping, brain-flush.sha

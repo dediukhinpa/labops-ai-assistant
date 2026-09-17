@@ -23,7 +23,7 @@ bash install.sh
 The installer asks for agent identity, operator profile, and **second_brain
 connection** (`MCP_HOST` host/IP, `AGENT_BEARER`, `AGENT_SCOPES`). It renders
 templates, copies scripts and hooks, writes `.mcp.json`, and optionally
-symlinks the shared skills directory `agent-architecture/skills`.
+copies the bundled skills into `~/.claude-lab/shared/skills` and links the workspace to them.
 
 Then:
 
@@ -73,7 +73,7 @@ and never block the harness on failure.
 |                              #   decay-sweep, archive-roll, brain-flush, mcp-call, task-poller.sh, task_poller.py
 |-- hooks/                     # session-start, stop, precompact, heartbeat
 |-- logs/
-`-- skills/                    # symlink to agent-architecture/skills (shared by every agent)
+`-- skills/                    # symlink to ~/.claude-lab/shared/skills (shared by every agent)
 ```
 
 ## Directory layout (this template)

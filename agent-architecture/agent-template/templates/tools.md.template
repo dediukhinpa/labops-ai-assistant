@@ -4,7 +4,7 @@
 
 - **CLAUDE.md**: `~/.claude-lab/{{AGENT_ID}}/.claude/CLAUDE.md` (identity)
 - **Core**: `~/.claude-lab/{{AGENT_ID}}/.claude/core/` (AGENTS, USER, rules, passive, active, archived)
-- **Skills**: `~/.claude-lab/{{AGENT_ID}}/.claude/skills/` (symlink to `agent-architecture/skills`, shared by every agent)
+- **Skills**: `~/.claude-lab/{{AGENT_ID}}/.claude/skills/` (symlink to `~/.claude-lab/shared/skills`, a copy of `agent-architecture/skills` shared by every agent)
 
 ## Memory Layers and Access Zones
 
