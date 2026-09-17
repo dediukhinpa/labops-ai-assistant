@@ -11,13 +11,15 @@ source "$HERE/sudo-compat.sh"
 
 fail() { echo "FAIL: $1"; exit 1; }
 
-# 1. Правила: одна команда без аргументов, ни одной звёздочки (sudo-rs отвергает
-#    wildcard в аргументах), пользователь и хелпер подставлены.
+# 1. Правила: две команды без аргументов (юнит и копия роя), ни одной звёздочки
+#    (sudo-rs отвергает wildcard в аргументах), пользователь и хелперы подставлены.
 rules="$(sudoers_agent_rules agentuser)"
 echo "$rules" | grep -v '^#' | grep -q '\*' && fail "в правилах есть звёздочка: $rules"
-[ "$(echo "$rules" | grep -vc '^#')" -eq 1 ] || fail "ожидалось одно правило: $rules"
+[ "$(echo "$rules" | grep -vc '^#')" -eq 2 ] || fail "ожидалось два правила: $rules"
 echo "$rules" | grep -qx "agentuser ALL=(root) NOPASSWD: $LABOPS_UNIT_HELPER" \
-  || fail "правило не на хелпер: $rules"
+  || fail "правило не на хелпер юнита: $rules"
+echo "$rules" | grep -qx "agentuser ALL=(root) NOPASSWD: $LABOPS_RUNTIME_HELPER" \
+  || fail "правило не на хелпер копии роя: $rules"
 
 # 2. Если на хосте есть visudo — файл проходит проверку синтаксиса.
 #    VISUDO можно указать явно (например, visudo из sudo-rs).
