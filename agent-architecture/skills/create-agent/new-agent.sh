@@ -235,7 +235,9 @@ MCP_HOST="${MCP_HOST%/}"
 # personal/projects/daily -- create_personal_note, create_project_note и
 # append_daily_log входят в набор core, агент их видит, но без этих скоупов
 # каждый вызов кончался отказом в доступе (решение оператора, 17.09.2026).
-: "${AGENT_SCOPES:=decisions,external,knowledge,inbox,error-patterns,task-board,personal,projects,daily}"
+# external снят в second-brain миграцией 011: в наборе core туда не писал ни
+# один инструмент.
+: "${AGENT_SCOPES:=decisions,knowledge,inbox,error-patterns,task-board,personal,projects,daily}"
 
 # ── 2. Токен второго мозга ──────────────────────────────────────
 say "2. Токен во втором мозге"

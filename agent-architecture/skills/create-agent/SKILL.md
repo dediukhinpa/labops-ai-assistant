@@ -84,10 +84,11 @@ bash skills/create-agent/new-agent.sh
 ## Доска задач — как агент получает работу от других агентов
 
 Межагентные задачи идут через доску (`task_mcp`, порт 5003), а не через заметки.
-Скрипт выдаёт новому агенту scope **`task-board`** и **`error-patterns`** в дополнение
-к `decisions,external,knowledge,inbox` — без первого агент видит задачу, но не может
-её взять, без второго не может выполнить прямое указание своего же `CLAUDE.md`
-писать разбор ошибок в общую память.
+Скрипт выдаёт новому агенту scope `decisions,knowledge,inbox,error-patterns,task-board,personal,projects,daily`.
+Без **`task-board`** агент видит задачу, но не может её взять; без **`error-patterns`**
+не может выполнить прямое указание своего же `CLAUDE.md` писать разбор ошибок в общую
+память; без `personal`, `projects`, `daily` отказывают `create_personal_note`,
+`create_project_note` и `append_daily_log`.
 
 Порядок работы с задачей: `task_claim` → работа → `task_review` → `task_done`.
 **Напрямую из `progress` в `done` нельзя** — переход запрещён на стороне доски.

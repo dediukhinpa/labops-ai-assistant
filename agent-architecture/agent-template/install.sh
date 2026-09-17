@@ -132,7 +132,7 @@ prompt GITHUB_USERNAME        "GitHub username (or skip)" "your-username"
 prompt MCP_HOST               "second_brain host (IP/domain, no protocol or port -- e.g. 127.0.0.1 for a colocated install)" "127.0.0.1"
 MCP_HOST="${MCP_HOST%/}"  # strip trailing slash
 prompt AGENT_BEARER          "Agent bearer token (issued by scripts/issue-agent-token.py)" "CHANGE_ME"
-prompt AGENT_SCOPES          "Agent scopes [decisions,external,knowledge,inbox]" "decisions,external,knowledge,inbox"
+prompt AGENT_SCOPES          "Agent scopes [decisions,knowledge,inbox]" "decisions,knowledge,inbox"
 
 # Direct per-service host:port URLs (no reverse-proxy needed for the
 # default colocated setup). Override SECOND_BRAIN_*_URL directly for a
