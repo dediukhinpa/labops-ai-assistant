@@ -166,7 +166,7 @@ logs in `logs/` (`hooks.log`, `verbose-YYYY-MM-DD.jsonl`, per-script logs).
 
 | Path | Role | Loads |
 |------|------|-------|
-| **skills** | Symlink to `agent-architecture/skills`, shared by every agent: agent-browser, create-agent, groq-voice, memory-consolidate, second_brain-doctor. An edit in the repo reaches all agents at once | on-demand (Skill tool) |
+| **skills** | Symlink to `~/.claude-lab/shared/skills` (a copy of `agent-architecture/skills`, refreshed by `orchestration/sync-skills.sh`), shared by every agent: agent-browser, create-agent, groq-voice, memory-consolidate, second_brain-doctor. An edit in the repo reaches all agents at once | on-demand (Skill tool) |
 | **agents/** | Subagent definitions (`<name>.md`); empty at install | on-demand (Agent tool) |
 | **labops-tg-plugin/plugin/** | Private copy of the Telegram channel plugin; `node_modules` links to the shared checkout. Refreshed only when the agent is created | never (runs as the channel MCP server) |
 

@@ -100,7 +100,7 @@ started by the Stop hook -- automated and predictable, no cron.
 |---------|----------|----------------------|-----------------|
 | Skill definition | `skills/*/config.json` + `handler.js` | `skills/*/SKILL.md` | `skills/*/SKILL.md` |
 | Skill trigger | JSON config | YAML frontmatter in SKILL.md | YAML frontmatter in SKILL.md |
-| Shared skills | `~/.openclaw/skills/` (global) | `~/.claude/skills/` (global) | `agent-architecture/skills` (symlinked into every workspace) |
+| Shared skills | `~/.openclaw/skills/` (global) | `~/.claude/skills/` (global) | `~/.claude-lab/shared/skills` (copy of `agent-architecture/skills`, symlinked into every workspace) |
 | Skill arguments | `{{input}}` | `$ARGUMENTS`, `$0`, `$1` | `$ARGUMENTS` |
 | Skill isolation | process fork | `context: fork` frontmatter | `context: fork` frontmatter |
 | Skill model override | _(none)_ | `model:` frontmatter | `model:` frontmatter |

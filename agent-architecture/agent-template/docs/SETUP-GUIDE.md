@@ -92,7 +92,7 @@ Copy the printed token into the installer prompt.
 |                              # brain-flush, mcp-call, task-poller.sh, task_poller.py
 |-- hooks/                     # session-start, stop, precompact, heartbeat
 |-- logs/                      # hooks.log, verbose-YYYY-MM-DD.jsonl
-`-- skills/                    # symlink to agent-architecture/skills (shared by every agent)
+`-- skills/                    # symlink to ~/.claude-lab/shared/skills (shared by every agent)
 ```
 
 `~/.claude/CLAUDE.md` and `~/.claude/rules/{bash,python,typescript}.md` are

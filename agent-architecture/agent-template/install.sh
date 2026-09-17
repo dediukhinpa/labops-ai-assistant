@@ -33,6 +33,8 @@ SHARED_SKILLS_SRC="${DISTRO_ROOT}/skills"
 # прогон, поэтому идёт через note, а не warn.
 # shellcheck source=../orchestration/lib/ui.sh
 . "${DISTRO_ROOT}/orchestration/lib/ui.sh"
+# shellcheck source=../orchestration/lib/skills.sh
+. "${DISTRO_ROOT}/orchestration/lib/skills.sh"
 log()   { ok "$1"; }
 ask()   { printf "${UI_INFO}[?]${UI_RESET} %s: " "$1"; }
 
@@ -377,16 +379,18 @@ if [ -d "$SHARED_SKILLS_SRC" ]; then
     echo "Available in ${SHARED_SKILLS_SRC}:"
     ls -1 "$SHARED_SKILLS_SRC" | sed 's/^/  - /'
     # ENABLE_ALL=y|n из окружения отвечает без вопроса, как и раньше.
-    ask_yn ENABLE_ALL "Symlink all shared skills into the workspace?" y
+    ask_yn ENABLE_ALL "Copy the shared skills into ${LAB_DIR}/shared/skills and link the workspace to them?" y
     if [ "$ENABLE_ALL" != "n" ]; then
-        if [ ! -L "${WORKSPACE}/skills" ] && [ ! -d "${WORKSPACE}/skills" ]; then
-            ln -s "$SHARED_SKILLS_SRC" "${WORKSPACE}/skills"
-            log "Symlinked: skills/ -> ${SHARED_SKILLS_SRC}"
+        # Копия, а не ссылка в репозиторий: удалённый или перенесённый клон
+        # не должен уносить скиллы у всех агентов (см. orchestration/lib/skills.sh).
+        sync_shared_skills "$SHARED_SKILLS_SRC" "$LAB_DIR"
+        if link_workspace_skills "$WORKSPACE" "$LAB_DIR"; then
+            log "skills/ -> $(shared_skills_dir "$LAB_DIR")"
         else
-            note "Skipping: skills/ already present"
+            note "Skipping: skills/ is the agent's own directory"
         fi
     else
-        warn "Skills not linked. Symlink later: ln -s ${SHARED_SKILLS_SRC} ${WORKSPACE}/skills"
+        warn "Skills not linked. Later: bash ${DISTRO_ROOT}/orchestration/sync-skills.sh"
     fi
 else
     warn "Shared skills dir not found at ${SHARED_SKILLS_SRC}; skipping."
@@ -479,7 +483,7 @@ echo ""
 # без initialize сервер отвечает 400 «Missing session ID» при любом токене, и
 # проверка выглядела как поломка. Доктор делает рукопожатие и проверяет всё сразу.
 echo "    2. Verify second_brain connectivity (handshake, token, recall, hooks):"
-echo "       python3 ${SHARED_SKILLS_SRC}/second_brain-doctor/scripts/second_brain_doctor.py --agent ${AGENT_ID}"
+echo "       python3 ${WORKSPACE}/skills/second_brain-doctor/scripts/second_brain_doctor.py --agent ${AGENT_ID}"
 echo ""
 echo "    3. Launch agent (settings.json wires Stop/SessionStart/PreCompact hooks):"
 echo "       source ${AGENT_RC} && claude --project ${WORKSPACE}"

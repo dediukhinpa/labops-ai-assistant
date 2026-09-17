@@ -51,13 +51,16 @@ unset AGENT_ID AGENT_WORKSPACE AGENT_BEARER \
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SKILL_DIR/../.." && pwd)"
 LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"
-# The skill is COPIED into agent workspaces (~/.claude-lab/<id>/.claude/skills/),
-# where ../../ is the workspace, not the repo. And even when run from a checkout,
-# the standalone labops-agent-architecture clone may lag a whole generation
+# The skill is COPIED into ~/.claude-lab/shared/skills (orchestration/lib/skills.sh),
+# where ../../ is the lab, not the repo; the copy records the repo it came from
+# in ../.labops-repo, so a clone outside ~/labops-ai-assistant is still found.
+# And even when run from a checkout, the standalone labops-agent-architecture clone may lag a whole generation
 # behind the labops-ai-assistant monorepo (the source of truth) — an agent
 # scaffolded from it would silently miss current hooks/scripts. Resolution
-# order: explicit AGENT_ARCH_DIR → monorepo → script-relative → standalone.
+# order: explicit AGENT_ARCH_DIR → repo the copy came from → monorepo →
+# script-relative → standalone.
 for cand in "${AGENT_ARCH_DIR:-}" \
+            "$(cat "$SKILL_DIR/../.labops-repo" 2>/dev/null || true)" \
             "$HOME/labops-ai-assistant/agent-architecture" \
             "$REPO_DIR" \
             "$HOME/labops-agent-architecture"; do
@@ -171,7 +174,8 @@ else
 fi
 
 TG_PLUGIN_DIR="${TG_PLUGIN_DIR:-}"
-for cand in "$TG_PLUGIN_DIR" "$HOME/labops-ai-assistant/tg-plugin" "$HOME/labops-tg-plugin" "$LAB_DIR/shared/plugins/labops-tg-plugin" "$LAB_DIR/shared/plugins/labops-channel"; do
+# $REPO_DIR/../tg-plugin — соседний подпроект того же клона, где бы он ни лежал.
+for cand in "$TG_PLUGIN_DIR" "$REPO_DIR/../tg-plugin" "$HOME/labops-ai-assistant/tg-plugin" "$HOME/labops-tg-plugin" "$LAB_DIR/shared/plugins/labops-tg-plugin" "$LAB_DIR/shared/plugins/labops-channel"; do
   [ -n "$cand" ] && [ -d "$cand/plugin" ] && TG_PLUGIN_DIR="$cand" && break
 done
 [ -n "$TG_PLUGIN_DIR" ] && ok "labops-tg-plugin: $TG_PLUGIN_DIR" || warn "labops-tg-plugin не найден — Telegram пропущу (задайте TG_PLUGIN_DIR)"
