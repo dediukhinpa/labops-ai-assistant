@@ -155,6 +155,7 @@ Dual-write mapping (a write needs the scope in the token; default scopes are
 | errors.md | `create_error_pattern_note` | `error-patterns` | yes |
 | preferences.md | `create_personal_note` | `personal` | yes |
 | insights.md (project/business) | `create_project_note` | `projects` | yes |
+| insights.md (other reference knowledge) | `create_knowledge_note` | `knowledge` | yes |
 
 Adding scopes to a token is the operator's call.
 

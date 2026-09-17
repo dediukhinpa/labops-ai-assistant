@@ -73,6 +73,7 @@ reusable *knowledge*. Do it yourself in-session — there is no background model
    | errors.md | `create_error_pattern_note` | `error-patterns` | yes |
    | preferences.md | `create_personal_note` | `personal` | yes |
    | insights.md, about the project/business | `create_project_note` | `projects` | yes |
+   | insights.md, anything else durable (how-tos, tool facts, external digests) | `create_knowledge_note` (`source_url` for a source) | `knowledge` | yes |
 
    Scope or tool missing → keep the insight local and say so in your reply; never
    retry under another tool just to get it written. Idempotent by sha256 — safe to re-run.
