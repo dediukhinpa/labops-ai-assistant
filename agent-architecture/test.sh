@@ -1066,6 +1066,27 @@ else
   bad "new-agent.sh: нет вызова хелпера или пропал запасной путь для хостов со старым sudoers"
 fi
 
+# 23d. Установка от обычного пользователя (как в README) тоже выдаёт право на
+# автостарт: раньше оно выдавалось только при запуске от root, и у клиента
+# 16.09.2026 юнит не встал, а агент молчал.
+if grep -q 'grant_agent_autostart "$(id -un)"' install.sh \
+   && grep -q 'grant_agent_autostart "$AGENT_OS_USER"' install.sh \
+   && grep -q 'export LABOPS_AUTOSTART_GRANTED=1' install.sh; then
+  ok "install.sh: право на автостарт выдаётся и при установке без root"
+else
+  bad "install.sh: право на автостарт выдаётся только при запуске от root"
+fi
+
+# 23e. Без юнита агент всё равно запускается, а установка не зовёт писать ему,
+# если что-то не включилось.
+if grep -q 'bash "$ORCH_DIR/start-agent.sh" "$AGENT_ID"' skills/create-agent/new-agent.sh \
+   && grep -q 'NEW_AGENT_STATUS_FILE' skills/create-agent/new-agent.sh \
+   && grep -q '\[ "$NEW_AGENT_STATUS" = "ok" \]' install.sh; then
+  ok "без юнита сессия запускается, итог установки зависит от статуса агента"
+else
+  bad "без юнита сессия не запускается или install.sh обещает рабочего агента вслепую"
+fi
+
 echo "── 24. Единый вид вывода установки ──"
 # 13.09.2026, отзыв с чистого сервера: на плановой доустановке пакетов установка
 # сыпала жёлтыми ⚠ («unzip не найден — устанавливаю»), значки и цвета у

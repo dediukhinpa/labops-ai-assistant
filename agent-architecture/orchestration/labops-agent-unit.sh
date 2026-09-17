@@ -47,7 +47,9 @@ for p in "$ORCH" "$LAB"; do
 done
 [ -n "$RUN_USER" ] || die "не задан SUDO_USER — запускайте через sudo от агент-пользователя"
 [ "$RUN_USER" != "root" ] || die "агент не запускается от root"
-[[ "$RUN_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "недопустимое имя пользователя: $RUN_USER"
+# Заглавные допустимы: systemd принимает их в User=, а в sed-подстановке они
+# безопасны. Строчный набор отказывал реальному логину Tania (клиент, 17.09.2026).
+[[ "$RUN_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || die "недопустимое имя пользователя: $RUN_USER"
 [ -f "$UNIT_TEMPLATE" ] || die "нет шаблона юнита $UNIT_TEMPLATE — перезапустите install.sh от root"
 [ -x "$ORCH/watchdog.sh" ] || die "не найден $ORCH/watchdog.sh"
 
