@@ -547,9 +547,26 @@ if [ "$AUTOSTART" = "1" ] && [ -f "$UNIT_TMPL" ]; then
     ok "юнит claude-agent-$AGENT_ID активен"
   else
     [ -n "$UNIT_ERR" ] && printf '%s\n' "$UNIT_ERR" | sed 's/^/    /'
-    warn "нет scoped sudo для systemd claude-agent-* (или нет systemctl) — юнит сгенерирован в $UNIT. Установите вручную:"
-    echo "    sudo cp $UNIT /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now claude-agent-$AGENT_ID"
-    DEGRADED+=("автостарт не включён — агент не поднимется сам после перезагрузки; юнит в $UNIT")
+    if [ -x "$LABOPS_UNIT_HELPER" ]; then
+      UNIT_FIX="sudo $LABOPS_UNIT_HELPER $AGENT_ID $ORCH_DIR $LAB_DIR"
+    else
+      UNIT_FIX="sudo cp $UNIT /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now claude-agent-$AGENT_ID"
+    fi
+    warn "нет scoped sudo для systemd claude-agent-* (или нет systemctl) — юнит не установлен. Установите вручную:"
+    echo "    $UNIT_FIX"
+    # Без юнита сессию не запускал никто: установка заканчивалась, а бот молчал,
+    # потому что getUpdates никто не опрашивал (клиент, 16.09.2026). Поднимаем
+    # сессию сразу — агент отвечает до перезагрузки, пока оператор ставит юнит.
+    if tmux has-session -t "=labops-$AGENT_ID" 2>/dev/null; then
+      note "сессия labops-$AGENT_ID уже запущена"
+    elif CLAUDE_LAB="$LAB_DIR" bash "$ORCH_DIR/start-agent.sh" "$AGENT_ID" \
+           >> "$LAB_DIR/$AGENT_ID/logs/start-agent.log" 2>&1; then
+      ok "сессия labops-$AGENT_ID запущена без systemd"
+    else
+      warn "сессия не запустилась — лог: $LAB_DIR/$AGENT_ID/logs/start-agent.log"
+      DEGRADED+=("сессия агента не запущена — агент не отвечает; запустите: bash $ORCH_DIR/start-agent.sh $AGENT_ID (лог: $LAB_DIR/$AGENT_ID/logs/start-agent.log)")
+    fi
+    DEGRADED+=("автостарт не включён — агент работает до перезагрузки или первого сбоя, потом замолчит; включите: $UNIT_FIX")
   fi
 elif ! [ -f "$UNIT_TMPL" ]; then
   warn "шаблон юнита не найден ($UNIT_TMPL) — автостарт пропущен"
@@ -765,4 +782,12 @@ if [ "${#DEGRADED[@]}" -gt 0 ]; then
   for d in "${DEGRADED[@]}"; do printf "     • %s\n" "$d"; done
 fi
 printf "   Воркспейс: ${UI_BOLD}%s${UI_RESET}\n" "$WORKSPACE"
-printf "   Запуск вручную:\n     ${UI_BOLD}source %s/agent.env && claude --project %s${UI_RESET}\n" "$WORKSPACE" "$WORKSPACE"
+printf "   Перезапуск сессии вручную:\n     ${UI_BOLD}bash %s/start-agent.sh %s${UI_RESET}\n" "$ORCH_DIR" "$AGENT_ID"
+# Итог для install.sh: по нему он решает, звать ли оператора писать агенту.
+if [ -n "${NEW_AGENT_STATUS_FILE:-}" ]; then
+  if [ "$FAIL" = "0" ] && [ "${#DEGRADED[@]}" -eq 0 ]; then
+    echo ok > "$NEW_AGENT_STATUS_FILE"
+  else
+    echo degraded > "$NEW_AGENT_STATUS_FILE"
+  fi
+fi

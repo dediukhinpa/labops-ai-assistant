@@ -49,6 +49,11 @@ grep -qF "append:$TMP/lab/dev/logs/watchdog.log" "$U" || fail "лог не в к
 grep -qx 'daemon-reload' "$TMP/systemctl.log" || fail "нет daemon-reload"
 grep -qx 'enable --now claude-agent-dev.service' "$TMP/systemctl.log" || fail "нет enable --now"
 
+# 1b. Логин с заглавной буквы принимается как есть.
+run Tania dev "$TMP/orch" "$TMP/lab"
+[ "$RC" -eq 0 ] || fail "логин с заглавной отвергнут: $(cat "$TMP/out")"
+grep -qx 'User=Tania' "$TMP/units/claude-agent-dev.service" || fail "User с заглавной искажён"
+
 # 2. Отказы — и при каждом ни юнит не пишется, ни systemctl не зовётся.
 expect_refused() {   # <описание> <user> <args...>
   local what="$1"; shift
@@ -71,6 +76,8 @@ expect_refused "перевод строки в пути" agentuser dev "$TMP/orc
 expect_refused "нет watchdog.sh" agentuser dev "$TMP/lab" "$TMP/lab"
 expect_refused "пользователь root" root dev "$TMP/orch" "$TMP/lab"
 expect_refused "пустой пользователь" "" dev "$TMP/orch" "$TMP/lab"
+expect_refused "перевод строки в пользователе" "a${NL}b" dev "$TMP/orch" "$TMP/lab"
+expect_refused "пробел в пользователе" "a b" dev "$TMP/orch" "$TMP/lab"
 expect_refused "лишний аргумент" agentuser dev "$TMP/orch" "$TMP/lab" extra
 expect_refused "мало аргументов" agentuser dev "$TMP/orch"
 

@@ -84,6 +84,57 @@ install_via_pkgmgr() {
   fi
 }
 
+# grant_agent_autostart <пользователь> — узкий NOPASSWD sudo ТОЛЬКО на root-хелпер
+# labops-agent-unit, который собирает и включает юнит claude-agent-<id>.service.
+# Больше никаких sudo-прав пользователь не получает: сам агент внутри Claude Code
+# работает без sudo (deny-правило в settings), это нужно только new-agent.sh для
+# автостарта юнита без ручного вмешательства оператора.
+#
+# Правило — одна команда без аргументов: прежние три строки со звёздочкой
+# в аргументах sudo-rs (Ubuntu 26.04) отвергает целиком, и автостарт молча
+# не включался. Хелпер и шаблон юнита ставим root-копиями вне дома
+# пользователя: иначе он правил бы то, что потом исполняется от root.
+#
+# Команды идут через $SUDO: от root он пуст, от обычного пользователя — sudo
+# (один раз спросит пароль, как и установка пакетов). Раньше права выдавались
+# только при запуске от root с отдельным пользователем, а README предлагает
+# `bash install.sh` от обычного: там юнит не ставился никогда, агент не
+# запускался, а установка всё равно писала «Developer создан» (17.09.2026, клиент).
+# Возвращает 0, если права выданы.
+grant_agent_autostart() {
+  local AGENT_OS_USER="$1"
+  local UNIT_HELPER_SRC="$REPO_DIR/orchestration/labops-agent-unit.sh"
+  local UNIT_TMPL_SRC="$REPO_DIR/systemd/claude-agent.service.template"
+  local SUDOERS_FILE SUDOERS_TMP
+  if ! $SUDO sh -c 'command -v visudo' >/dev/null 2>&1; then
+    warn "нет visudo — scoped sudo для автостарта не выдан, юнит придётся ставить вручную"
+    return 1
+  fi
+  if [ ! -f "$UNIT_HELPER_SRC" ] || [ ! -f "$UNIT_TMPL_SRC" ]; then
+    warn "нет $UNIT_HELPER_SRC или $UNIT_TMPL_SRC — scoped sudo для автостарта не выдан"
+    return 1
+  fi
+  $SUDO install -d -m 755 "$(dirname "$LABOPS_UNIT_HELPER")" "$(dirname "$LABOPS_UNIT_TEMPLATE_ROOT")" || return 1
+  $SUDO install -m 755 "$UNIT_HELPER_SRC" "$LABOPS_UNIT_HELPER" || return 1
+  $SUDO install -m 644 "$UNIT_TMPL_SRC" "$LABOPS_UNIT_TEMPLATE_ROOT" || return 1
+  echo "  хелпер автостарта: $LABOPS_UNIT_HELPER"
+  SUDOERS_FILE="/etc/sudoers.d/labops-agent-systemd-$AGENT_OS_USER"
+  SUDOERS_TMP="$(mktemp)"
+  sudoers_agent_rules "$AGENT_OS_USER" > "$SUDOERS_TMP"
+  if $SUDO visudo -cf "$SUDOERS_TMP" >/dev/null 2>&1; then
+    # Перезаписывает и файл от прежних версий установщика — со старыми
+    # wildcard-правилами, которые давали подложить в /etc/systemd любой юнит.
+    $SUDO install -m 440 -o root -g root "$SUDOERS_TMP" "$SUDOERS_FILE" || { rm -f "$SUDOERS_TMP"; return 1; }
+    rm -f "$SUDOERS_TMP"
+    ok "scoped sudo для $AGENT_OS_USER: только $LABOPS_UNIT_HELPER"
+    return 0
+  fi
+  warn "sudoers-файл для $AGENT_OS_USER не прошёл проверку синтаксиса — автостарт юнита придётся включать вручную"
+  $SUDO visudo -cf "$SUDOERS_TMP" 2>&1 | sed 's/^/    /' || true
+  rm -f "$SUDOERS_TMP"
+  return 1
+}
+
 # ── 0. Доступность внешних хостов ─────────────────────────────────
 # Проверяем связь ПЕРВЫМ делом, до любых изменений на машине. Установка тянет
 # из сети бинарь Claude Code и клонирует репозитории; если хост режется с этой
@@ -221,41 +272,10 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
       passwd "$AGENT_OS_USER" || warn "пароль не задан — задайте позже: passwd $AGENT_OS_USER"
     fi
 
-    # Узко-scoped NOPASSWD sudo — ТОЛЬКО на root-хелпер labops-agent-unit,
-    # который собирает и включает юнит claude-agent-<id>.service. Больше никаких
-    # sudo-прав пользователь не получает: сам агент внутри Claude Code всё равно
-    # работает без sudo (deny-правило в settings), это нужно только new-agent.sh
-    # для автостарта юнита без ручного вмешательства оператора.
-    #
-    # Правило — одна команда без аргументов: прежние три строки со звёздочкой
-    # в аргументах sudo-rs (Ubuntu 26.04) отвергает целиком, и автостарт молча
-    # не включался. Хелпер и шаблон юнита ставим root-копиями вне дома
-    # пользователя: иначе он правил бы то, что потом исполняется от root.
-    UNIT_HELPER_SRC="$REPO_DIR/orchestration/labops-agent-unit.sh"
-    UNIT_TMPL_SRC="$REPO_DIR/systemd/claude-agent.service.template"
-    if ! command -v visudo >/dev/null 2>&1; then
-      warn "нет visudo — scoped sudo для автостарта не выдан, юнит придётся ставить вручную"
-    elif [ ! -f "$UNIT_HELPER_SRC" ] || [ ! -f "$UNIT_TMPL_SRC" ]; then
-      warn "нет $UNIT_HELPER_SRC или $UNIT_TMPL_SRC — scoped sudo для автостарта не выдан"
-    else
-      install -d -m 755 "$(dirname "$LABOPS_UNIT_HELPER")" "$(dirname "$LABOPS_UNIT_TEMPLATE_ROOT")"
-      install -m 755 "$UNIT_HELPER_SRC" "$LABOPS_UNIT_HELPER"
-      install -m 644 "$UNIT_TMPL_SRC" "$LABOPS_UNIT_TEMPLATE_ROOT"
-      echo "  хелпер автостарта: $LABOPS_UNIT_HELPER"
-      SUDOERS_FILE="/etc/sudoers.d/labops-agent-systemd-$AGENT_OS_USER"
-      SUDOERS_TMP="$(mktemp)"
-      sudoers_agent_rules "$AGENT_OS_USER" > "$SUDOERS_TMP"
-      if visudo -cf "$SUDOERS_TMP" >/dev/null 2>&1; then
-        # Перезаписывает и файл от прежних версий установщика — со старыми
-        # wildcard-правилами, которые давали подложить в /etc/systemd любой юнит.
-        install -m 440 "$SUDOERS_TMP" "$SUDOERS_FILE"
-        ok "scoped sudo для $AGENT_OS_USER: только $LABOPS_UNIT_HELPER"
-      else
-        warn "sudoers-файл для $AGENT_OS_USER не прошёл проверку синтаксиса — автостарт юнита придётся включать вручную"
-        visudo -cf "$SUDOERS_TMP" 2>&1 | sed 's/^/    /' || true
-      fi
-      rm -f "$SUDOERS_TMP"
-    fi
+    grant_agent_autostart "$AGENT_OS_USER"
+    # Под пользователем install.sh перезапустится и снова дойдёт до выдачи прав:
+    # второй раз спрашивать не нужно, а sudo у нового пользователя нет вовсе.
+    export LABOPS_AUTOSTART_GRANTED=1
 
     NEW_HOME="$(getent passwd "$AGENT_OS_USER" | cut -d: -f6)"
 
@@ -324,6 +344,35 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
       "$ENV_HANDOFF" "$DEST_REPO/install.sh" "$@"
   else
     warn "продолжаю от root — НЕ рекомендуется для постоянной эксплуатации агентов"
+  fi
+fi
+
+# ── 2b. Автозапуск агента для обычного пользователя ──────────────
+# Установка идёт не от root (как в README: `bash install.sh`). Юнит systemd
+# ставит только root, поэтому права на хелпер автостарта выдаём сейчас, пока
+# оператор рядом и может ввести пароль sudo. Без них агент не переживёт
+# перезагрузку и не поднимется сам после сбоя.
+if [ "$(id -u)" -ne 0 ] && [ "$MODE" = "full" ] && [ "${AUTOSTART:-1}" = "1" ] \
+   && [ "${LABOPS_AUTOSTART_GRANTED:-0}" != "1" ] && command -v systemctl >/dev/null 2>&1; then
+  # -k: не засчитывать пароль, введённый минуту назад для apt, — нужно именно
+  # постоянное правило, иначе new-agent.sh упрётся в истёкший кэш sudo.
+  if [ -x "$LABOPS_UNIT_HELPER" ] && sudo -k -n -l "$LABOPS_UNIT_HELPER" >/dev/null 2>&1; then
+    : # права уже выданы прежней установкой
+  elif [ -z "$SUDO" ]; then
+    warn "нет sudo — автозапуск агента не настроить: юнит systemd ставит только root. Агент будет запущен, но не переживёт перезагрузку"
+  else
+    say "2b. Автозапуск агента"
+    echo "  Чтобы агент поднимался сам после перезагрузки и сбоев, ему нужен юнит"
+    echo "  systemd. Ставит его только root, поэтому выдаём пользователю $(id -un)"
+    echo "  право без пароля ровно на один скрипт: $LABOPS_UNIT_HELPER."
+    GRANT_AUTOSTART="${GRANT_AUTOSTART:-}"
+    ask_yn GRANT_AUTOSTART "Настроить автозапуск (sudo спросит пароль один раз)?" y
+    if [ "$GRANT_AUTOSTART" = "y" ]; then
+      grant_agent_autostart "$(id -un)" \
+        || warn "права на автозапуск не выданы — агент будет запущен, но не переживёт перезагрузку"
+    else
+      note "автозапуск не настроен — агент будет запущен, но не переживёт перезагрузку"
+    fi
   fi
 fi
 
@@ -656,7 +705,14 @@ export AGENT_ROLE_DESCRIPTION="${AGENT_ROLE_DESCRIPTION:-Автономный р
 [ -n "$SB" ] && export SECOND_BRAIN_DIR="$SB"
 [ -n "$TG" ] && export TG_PLUGIN_DIR="$TG"
 
+# new-agent.sh пишет в этот файл итог: ok или degraded. По нему решаем, что
+# сказать в конце, — иначе «Developer создан, напишите ему» печаталось и тогда,
+# когда агент так и не запустился.
+NEW_AGENT_STATUS_FILE="$(mktemp)"
+export NEW_AGENT_STATUS_FILE
 bash "$REPO_DIR/skills/create-agent/new-agent.sh"
+NEW_AGENT_STATUS="$(cat "$NEW_AGENT_STATUS_FILE" 2>/dev/null || true)"
+rm -f "$NEW_AGENT_STATUS_FILE"
 
 # убедимся, что у Developer есть скилл create-agent (чтобы ставить следующих)
 DEV_WS="$LAB_DIR/$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')/.claude"
@@ -667,8 +723,14 @@ if [ -d "$DEV_WS" ] && [ ! -e "$DEV_WS/skills/create-agent" ]; then
 fi
 
 say "Готово."
-printf "  ${UI_OK}Developer создан.${UI_RESET} Напишите ему в Telegram, либо запустите вручную:\n"
-printf "    ${UI_BOLD}source %s/agent.env && claude --project %s${UI_RESET}\n" "$DEV_WS" "$DEV_WS"
+if [ "$NEW_AGENT_STATUS" = "ok" ]; then
+  printf "  ${UI_OK}Developer создан и запущен.${UI_RESET} Напишите ему в Telegram.\n"
+else
+  printf "  ${UI_WARN}Developer создан, но не всё включено — см. список «Что НЕ работает» выше.${UI_RESET}\n"
+  echo "  Пока эти пункты не закрыты, агент может не отвечать в Telegram."
+fi
+echo "  Перезапустить сессию агента вручную:"
+printf "    ${UI_BOLD}bash %s/orchestration/start-agent.sh %s${UI_RESET}\n" "$REPO_DIR" "$(basename "$(dirname "$DEV_WS")")"
 echo "  Чтобы добавить следующего агента — попросите Developer «Создай нового агента»"
 echo "  (он применит скилл create-agent) или запустите:"
 printf "    ${UI_BOLD}bash skills/create-agent/new-agent.sh${UI_RESET}\n"
