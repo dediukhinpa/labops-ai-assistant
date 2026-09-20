@@ -53,8 +53,16 @@ export const AppConfigSchema = z.object({
   status: z.object({
     enabled: z.boolean().default(true),
     interval_ms: z.number().int().positive().default(700),
-    ttl_ms: z.number().int().positive().default(300_000),
+    // Сколько ждать ответа агента, прежде чем считать плашку брошенной.
+    // Было 5 минут — ход агента с инструментами столько идёт штатно, и клиент
+    // видел «Остановлено» посреди нормальной работы.
+    ttl_ms: z.number().int().positive().default(1_200_000),
     delete_on_complete: z.boolean().default(true),
+    // Плашку, брошенную по таймеру, вытесненную новым сообщением или
+    // оборванную остановкой плагина, удалять, а не оставлять в чате
+    // технической надписью «Остановлено: ttl». Клиенту эти слова ничего не
+    // говорят. false возвращает прежнее поведение.
+    delete_on_expire: z.boolean().default(true),
     // Operator request 2026-05-27: the bare «Печатает...» bubble is visual
     // noise on top of the TmuxMirror status card. When true, StatusManager
     // skips the initial sendMessage while state is `typing` — the bubble is

@@ -55,6 +55,7 @@ function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
       interval_ms: 700,
       ttl_ms: 300_000,
       delete_on_complete: true,
+      delete_on_expire: true,
       // Default: bubble suppressed off so concurrency tests can see
       // the initial send happen. Lazy-bubble race tests opt in.
       suppress_typing_bubble: false,
@@ -275,13 +276,12 @@ describe('StatusManager — concurrent start() (HIGH #3)', () => {
     // Pre-fix saw three because both starts raced into the first slot.
     const sends = api.calls.filter((c) => c.kind === 'send')
     expect(sends.length).toBe(2)
-    // First start's bubble is superseded — there is exactly one edit
-    // pointing at h1's messageId carrying the "superseded" reason.
-    const supersededEdits = api.calls.filter(
-      (c) => c.kind === 'edit' && c.messageId === h1.messageId,
+    // First start's bubble is superseded — it is deleted, not relabelled
+    // (delete_on_expire), so exactly one delete points at h1's messageId.
+    const supersededDeletes = api.calls.filter(
+      (c) => c.kind === 'delete' && c.messageId === h1.messageId,
     )
-    expect(supersededEdits.length).toBe(1)
-    expect(supersededEdits[0]!.text).toContain('superseded')
+    expect(supersededDeletes.length).toBe(1)
     // Second start's entry is the live one.
     expect(mgr.isActive(CHAT)).toBe(true)
   })

@@ -24,6 +24,7 @@ function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
       interval_ms: 700,
       ttl_ms: 300_000,
       delete_on_complete: true,
+      delete_on_expire: true,
       // Keep legacy behaviour (eager «Печатает...» bubble) so the existing
       // suite covers the non-suppressed path. Dedicated tests below opt in
       // by passing { suppress_typing_bubble: true } via overrides.
@@ -207,22 +208,37 @@ describe('StatusManager.start', () => {
 
   test('start finalises previous active status before opening a new one', async () => {
     // M3 fix: only one active status per chat. Calling start() twice in a
-    // row must edit the prior message to a terminal label ("Остановлено:
-    // superseded") before sending the new typing message, otherwise the
-    // album path leaks stale pulsing status messages.
+    // row must terminate the prior message before sending the new typing
+    // message, otherwise the album path leaks stale pulsing status messages.
+    // Since delete_on_expire the prior bubble is DELETED rather than
+    // labelled — "superseded" is plugin jargon the reader never asked for.
     const { mgr, api } = makeManager()
     const firstHandle = await mgr.start('100000001', undefined)
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(1)
     await mgr.start('100000001', undefined)
-    const edits = api.calls.filter((c) => c.kind === 'edit')
-    expect(edits.length).toBeGreaterThanOrEqual(1)
-    // The cancel-edit targets the FIRST message id and ends with "superseded".
-    const cancelEdit = edits.find((e) => e.messageId === firstHandle.messageId)
-    expect(cancelEdit).toBeDefined()
-    expect(cancelEdit!.text).toContain('Остановлено')
-    expect(cancelEdit!.text).toContain('superseded')
+    const deletes = api.calls.filter((c) => c.kind === 'delete')
+    expect(deletes.length).toBe(1)
+    expect(deletes[0]!.messageId).toBe(firstHandle.messageId)
+    // No leftover label on the superseded bubble.
+    const labels = api.calls.filter(
+      (c) => c.kind === 'edit' && c.text?.includes('Остановлено'),
+    )
+    expect(labels.length).toBe(0)
     // Two distinct send calls — one per start().
     expect(api.calls.filter((c) => c.kind === 'send').length).toBe(2)
+  })
+
+  test('superseded bubble keeps its label when delete_on_expire=false', async () => {
+    const config = makeConfig({ delete_on_expire: false })
+    const { mgr, api } = makeManager({ config })
+    const firstHandle = await mgr.start('100000001', undefined)
+    await mgr.start('100000001', undefined)
+    const cancelEdit = api.calls.find(
+      (c) => c.kind === 'edit' && c.messageId === firstHandle.messageId,
+    )
+    expect(cancelEdit).toBeDefined()
+    expect(cancelEdit!.text).toContain('superseded')
+    expect(api.calls.filter((c) => c.kind === 'delete').length).toBe(0)
   })
 
   test('start cancel-edit on the previous status survives a "message not modified" error', async () => {
@@ -401,21 +417,49 @@ describe('StatusManager interval ticker', () => {
 })
 
 describe('StatusManager TTL guard', () => {
-  test('auto-cancels after ttl_ms with reason="ttl"', async () => {
+  test('auto-cancels after ttl_ms by deleting the abandoned bubble', async () => {
+    // The agent that has not answered yet is not something the reader can
+    // act on, so the expired bubble leaves no trace (client bug 2026-09-20:
+    // "Остановлено: ttl" showed up mid-conversation as if the agent said it).
     const config = makeConfig({ ttl_ms: 5000 })
     const { mgr, api, clock } = makeManager({ config })
-    await mgr.start('100000001', undefined)
+    const handle = await mgr.start('100000001', undefined)
     expect(mgr.isActive('100000001')).toBe(true)
     clock.advance(5000)
     // The TTL fires cancel(), which is async. Drain microtasks.
     await Promise.resolve()
     await Promise.resolve()
     expect(mgr.isActive('100000001')).toBe(false)
+    const deletes = api.calls.filter((c) => c.kind === 'delete')
+    expect(deletes.length).toBe(1)
+    expect(deletes[0]!.messageId).toBe(handle.messageId)
+    const labels = api.calls.filter(
+      (c) => c.kind === 'edit' && c.text?.includes('Остановлено'),
+    )
+    expect(labels.length).toBe(0)
+  })
+
+  test('ttl keeps the old label when delete_on_expire=false', async () => {
+    const config = makeConfig({ ttl_ms: 5000, delete_on_expire: false })
+    const { mgr, api, clock } = makeManager({ config })
+    await mgr.start('100000001', undefined)
+    clock.advance(5000)
+    // One drain more than the delete path needs: the fallback first awaits
+    // finalizeExpired() before falling back to the label edit.
+    for (let i = 0; i < 4; i += 1) await Promise.resolve()
     const edits = api.calls.filter((c) => c.kind === 'edit')
-    // Last edit must be the "Остановлено: ttl" finalization. (Interval
-    // ticks may also have fired before TTL — we only check the final one.)
-    expect(edits[edits.length - 1]!.text).toContain('Остановлено')
     expect(edits[edits.length - 1]!.text).toContain('ttl')
+    expect(api.calls.filter((c) => c.kind === 'delete').length).toBe(0)
+  })
+
+  test('an operator stop stays visible — it is an answer to a human action', async () => {
+    const { mgr, api } = makeManager()
+    await mgr.start('100000001', undefined)
+    await mgr.cancel('100000001', 'user stop')
+    const edits = api.calls.filter((c) => c.kind === 'edit')
+    expect(edits[edits.length - 1]!.text).toContain('Остановлено')
+    expect(edits[edits.length - 1]!.text).toContain('user stop')
+    expect(api.calls.filter((c) => c.kind === 'delete').length).toBe(0)
   })
 
   test('complete before TTL prevents auto-cancel firing', async () => {

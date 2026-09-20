@@ -254,6 +254,13 @@ interface InternalEntry {
   pausedUntil: number
 }
 
+// Причины, по которым плашку гасит сам плагин, а не человек. Клиент их не
+// вызывал и прочитать не может: «ttl» — агент не ответил за отведённое время,
+// «superseded» — пришло следующее сообщение, «shutdown» — плагин остановлен.
+// Такую плашку удаляем целиком (см. finalizeExpired). Явную остановку
+// оператором («user stop») по-прежнему подписываем: он ждёт подтверждения.
+const SILENT_CANCEL_REASONS = new Set(['ttl', 'superseded', 'shutdown'])
+
 function renderState(state: StatusState, tick: number, nowMs: number): string {
   // Ellipsis animation for typing/thinking: 1→2→3 dots.
   const dotCount = (tick % 3) + 1
@@ -501,27 +508,30 @@ export class StatusManager {
       this.stopTimers(prev)
       this.entries.delete(chatId)
       if (!prev.bubbleSuppressed && !prev.disabled) {
-        const supersededText = renderState(
-          { kind: 'stopped', reason: 'superseded' },
-          0,
-          this.now(),
-        )
-        try {
-          await this.telegramApi.editMessageText(
-            chatId,
-            prev.handle.messageId,
-            supersededText,
-            { parse_mode: 'HTML' },
+        const dropped = await this.finalizeExpired(chatId, prev.handle.messageId)
+        if (!dropped) {
+          const supersededText = renderState(
+            { kind: 'stopped', reason: 'superseded' },
+            0,
+            this.now(),
           )
-        } catch (err) {
-          const cls = classifyEditError(err)
-          if (cls.kind !== 'benign' && cls.kind !== 'message_gone') {
-            this.log.warn('status superseded edit failed', {
-              chat_id: chatId,
-              message_id: prev.handle.messageId,
-              kind: cls.kind,
-              error: err instanceof Error ? err.message : String(err),
-            })
+          try {
+            await this.telegramApi.editMessageText(
+              chatId,
+              prev.handle.messageId,
+              supersededText,
+              { parse_mode: 'HTML' },
+            )
+          } catch (err) {
+            const cls = classifyEditError(err)
+            if (cls.kind !== 'benign' && cls.kind !== 'message_gone') {
+              this.log.warn('status superseded edit failed', {
+                chat_id: chatId,
+                message_id: prev.handle.messageId,
+                kind: cls.kind,
+                error: err instanceof Error ? err.message : String(err),
+              })
+            }
           }
         }
       }
@@ -1092,7 +1102,9 @@ export class StatusManager {
     if (entry.disabled) return
     const messageId = entry.handle.messageId
     const text = renderState({ kind: 'stopped', reason }, 0, this.now())
+    const silent = SILENT_CANCEL_REASONS.has(reason)
     return this.runLifecycle(chatId, async () => {
+      if (silent && (await this.finalizeExpired(chatId, messageId))) return
       try {
         await this.telegramApi.editMessageText(
           chatId,
@@ -1124,6 +1136,26 @@ export class StatusManager {
   }
 
   // ───── internals ─────
+
+  // Удалить брошенную плашку. Возвращает false, когда удалить нечем или
+  // выключено настройкой, — вызывающий тогда подписывает её по-старому.
+  private async finalizeExpired(chatId: string, messageId: number): Promise<boolean> {
+    if (!this.config.status.delete_on_expire) return false
+    const deleteMessage = this.telegramApi.deleteMessage
+    if (!deleteMessage) return false
+    try {
+      await deleteMessage(chatId, messageId)
+    } catch (err) {
+      // Плашку могли удалить руками или она вышла из окна редактирования —
+      // это не ошибка: запись о ней у нас уже снята.
+      this.log.debug('status expiry delete failed (ignored)', {
+        chat_id: chatId,
+        message_id: messageId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return true
+  }
 
   private async editSafely(entry: InternalEntry, text: string): Promise<void> {
     // Bubble suppressed — no Telegram message to edit. Caller is expected to

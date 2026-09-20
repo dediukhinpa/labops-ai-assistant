@@ -75,6 +75,7 @@ function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       interval_ms: 700,
       ttl_ms: 300_000,
       delete_on_complete: true,
+      delete_on_expire: true,
       suppress_typing_bubble: false,
     },
     album: { flush_ms: 50 },
