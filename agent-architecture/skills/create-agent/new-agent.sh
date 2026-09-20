@@ -268,8 +268,24 @@ AGENT_BEARER="${NEW_AGENT_BEARER:-${AGENT_BEARER:-}}"
 # «Developer раскатывает остальных» упирался в это на втором шаге. Порядок
 # теперь как в labops-second-brain/docs/setup.md: сперва sudo -u second_brain,
 # и лишь потом прямой вызов (он сработает, если установку ведёт root/владелец).
+# 20.09.2026: на сервере клиента ни один из этих путей не работал — правило
+# sudo на issue-agent-token.py заводилось только руками, и новый агент
+# поднимался с CHANGE_ME вместо токена, то есть без общей памяти. Теперь
+# первым идёт root-хелпер, который ставит установщик мозга: он сам проверяет
+# имя агента и скоупы, поэтому право на него узкое.
+LABOPS_TOKEN_HELPER="${LABOPS_TOKEN_HELPER:-/usr/local/sbin/labops-issue-agent-token}"
+
 issue_token() {
   local err_file="$1"
+  if [ -x "$LABOPS_TOKEN_HELPER" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      "$LABOPS_TOKEN_HELPER" "$AGENT_ID" "$AGENT_SCOPES" 2>>"$err_file" | tail -1 && return 0
+    elif sudo -n "$LABOPS_TOKEN_HELPER" "$AGENT_ID" "$AGENT_SCOPES" 2>>"$err_file" | tail -1; then
+      return 0
+    fi
+  fi
+  # Дальше — только если мозг лежит рядом и его каталог читается.
+  [ -n "$SECOND_BRAIN_DIR" ] || return 1
   if sudo -n -u second_brain "$SECOND_BRAIN_DIR/.venv/bin/python" \
        "$SECOND_BRAIN_DIR/scripts/issue-agent-token.py" \
        --agent "$AGENT_ID" --scopes "$AGENT_SCOPES" 2>>"$err_file" | tail -1; then
@@ -279,8 +295,12 @@ issue_token() {
     --agent "$AGENT_ID" --scopes "$AGENT_SCOPES" 2>>"$err_file" | tail -1
 }
 
-if [ -z "${AGENT_BEARER:-}" ] && [ -n "$SECOND_BRAIN_DIR" ]; then
-  ok "Выдаю токен через $SECOND_BRAIN_DIR/scripts/issue-agent-token.py"
+if [ -z "${AGENT_BEARER:-}" ] && { [ -n "$SECOND_BRAIN_DIR" ] || [ -x "$LABOPS_TOKEN_HELPER" ]; }; then
+  if [ -x "$LABOPS_TOKEN_HELPER" ]; then
+    ok "Выдаю токен через $LABOPS_TOKEN_HELPER"
+  else
+    ok "Выдаю токен через $SECOND_BRAIN_DIR/scripts/issue-agent-token.py"
+  fi
   _tok_err="$(mktemp)"
   AGENT_BEARER="$(issue_token "$_tok_err" || true)"
   if [ -z "${AGENT_BEARER:-}" ]; then
@@ -288,8 +308,13 @@ if [ -z "${AGENT_BEARER:-}" ] && [ -n "$SECOND_BRAIN_DIR" ]; then
     # «не удалось» без единой подсказки, куда смотреть.
     warn "не удалось выдать токен автоматически. Причина:"
     sed -e 's/^/      /' "$_tok_err" | tail -5
-    warn "выдайте вручную: sudo -u second_brain $SECOND_BRAIN_DIR/.venv/bin/python \\"
-    echo "        $SECOND_BRAIN_DIR/scripts/issue-agent-token.py --agent $AGENT_ID --scopes '$AGENT_SCOPES'"
+    if [ -x "$LABOPS_TOKEN_HELPER" ]; then
+      warn "выдайте вручную: sudo $LABOPS_TOKEN_HELPER $AGENT_ID '$AGENT_SCOPES'"
+    else
+      warn "на хосте мозга поставьте хелпер (sudo bash scripts/install.sh) или выдайте вручную:"
+      echo "        sudo -u second_brain $SECOND_BRAIN_DIR/.venv/bin/python \\"
+      echo "        $SECOND_BRAIN_DIR/scripts/issue-agent-token.py --agent $AGENT_ID --scopes '$AGENT_SCOPES'"
+    fi
     echo "      и передайте его сюда через NEW_AGENT_BEARER=<токен>"
   fi
   rm -f "$_tok_err"
@@ -306,10 +331,15 @@ if [ -z "${AGENT_BEARER:-}" ]; then
     AGENT_BEARER="CHANGE_ME"
   fi
 fi
-if [ "$AGENT_BEARER" = "CHANGE_ME" ] && [ -n "$SECOND_BRAIN_DIR" ]; then
+if [ "$AGENT_BEARER" = "CHANGE_ME" ] && { [ -n "$SECOND_BRAIN_DIR" ] || [ -x "$LABOPS_TOKEN_HELPER" ]; }; then
   # А вот это уже нештатно: second_brain НАЙДЕН локально, но токен всё равно
   # не выдался (ни авто, ни вручную на вопрос) — стоит явно подсветить.
-  DEGRADED+=("нет реального Bearer-токена (second_brain найден в $SECOND_BRAIN_DIR, но токен не выдался) — выполните: python $SECOND_BRAIN_DIR/scripts/issue-agent-token.py --agent $AGENT_ID --scopes '$AGENT_SCOPES', впишите токен в $LAB_DIR/$AGENT_ID/.claude/agent.env (AGENT_BEARER=...) и перезапустите сервис агента")
+  if [ -x "$LABOPS_TOKEN_HELPER" ]; then
+    _tok_cmd="sudo $LABOPS_TOKEN_HELPER $AGENT_ID '$AGENT_SCOPES'"
+  else
+    _tok_cmd="sudo -u second_brain $SECOND_BRAIN_DIR/.venv/bin/python $SECOND_BRAIN_DIR/scripts/issue-agent-token.py --agent $AGENT_ID --scopes '$AGENT_SCOPES'"
+  fi
+  DEGRADED+=("нет реального Bearer-токена — агент поднимется без общей памяти. Выполните: $_tok_cmd, впишите токен в $LAB_DIR/$AGENT_ID/.claude/agent.env (AGENT_BEARER=...) и перезапустите сервис агента")
 fi
 
 # ── 3. Скаффолд воркспейса (agent-template, неинтерактивно) ──────

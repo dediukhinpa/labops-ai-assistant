@@ -551,6 +551,15 @@ else
   bad "new-agent.sh зовёт issue-agent-token напрямую — PermissionError на .env"
 fi
 
+# 14d2. И сначала — root-хелпер мозга: у клиента (20.09.2026) права на
+# issue-agent-token.py не было вовсе, агент вставал с CHANGE_ME без памяти.
+if grep -q 'sudo -n "\$LABOPS_TOKEN_HELPER"' "$NA" \
+   && grep -q 'LABOPS_TOKEN_HELPER:-/usr/local/sbin/labops-issue-agent-token' "$NA"; then
+  ok "токен сперва запрашивается у хелпера мозга (labops-issue-agent-token)"
+else
+  bad "new-agent.sh не зовёт labops-issue-agent-token — на чужом хосте токен не выдастся"
+fi
+
 # 14e. Причина отказа выдачи должна доходить до оператора.
 if grep -q 'issue-agent-token.py' "$NA" && ! grep -qE 'issue-agent-token\.py.*2>/dev/null' "$NA"; then
   ok "ошибка выдачи токена не глушится"
