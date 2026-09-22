@@ -773,6 +773,19 @@ else
   bad "session-exec.sh не подключает deep-sleep-continue — --continue никогда не добавится"
 fi
 
+# 17f. Инструменты общей памяти должны быть В САМОЙ сессии. .mcp.json, который
+# claude находит сам, лежит в CWD панели (каталог плагина) и содержит только
+# канал; файл воркспейса с second_brain-* не находился никогда — у клиента
+# 22.09.2026 агенты двое суток работали без recall и доски задач, а фоновые
+# хуки ходили в мозг мимо сессии через curl и маскировали это.
+if grep -q 'MCP_ARGS=(--mcp-config "\$AGENT_WORKSPACE/.mcp.json")' orchestration/session-exec.sh \
+   && grep -qF '${MCP_ARGS[@]+"${MCP_ARGS[@]}"}' orchestration/session-exec.sh \
+   && ! grep -qE '^[[:space:]]*--strict-mcp-config' orchestration/session-exec.sh; then
+  ok "панель подключает .mcp.json воркспейса, не вытесняя канал"
+else
+  bad "session-exec.sh не передаёт --mcp-config — в сессии не будет second_brain"
+fi
+
 echo "── 18. Предполётная проверка доступности хостов ──"
 
 # 18a. Классификация ответа хоста (403 ≠ нет связи) — на подставном curl.

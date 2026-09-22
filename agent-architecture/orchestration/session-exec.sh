@@ -43,12 +43,36 @@ RESUME_ARGS=()
 # НИ ОДИН хук workspace (heartbeat, SessionStart recall, Stop) не срабатывает.
 # Явная загрузка settings.json это чинит.
 #
+# --mcp-config — по той же причине, что и --settings, только про инструменты.
+# .mcp.json, который claude находит сам, лежит в CWD панели (каталог плагина) и
+# регистрирует ровно один сервер — labops-channel. Файл воркспейса
+# $AGENT_WORKSPACE/.mcp.json с second_brain-memory, -memory_router,
+# -agent_router и -tasks не находился никогда: поиск идёт вверх от
+# канонизированного пути плагина, мимо дерева воркспейса. Без --mcp-config в
+# сессии просто нет инструментов общей памяти, и агент физически не может
+# выполнить SECONDBRAIN_WRITE_RULES.md («recall ПЕРЕД записью») и работать с
+# доской задач. Флаг ДОПОЛНЯЕТ найденное (заменял бы --strict-mcp-config),
+# поэтому канал остаётся на месте.
+#
+# Обнаружено у клиента 22.09.2026: у всех трёх агентов ни одного вызова
+# mcp__second_brain-* за двое суток. Маскировалось тем, что фоновые хуки
+# (heartbeat, recall на старте, flush при остановке) ходят в мозг напрямую
+# через curl (lib/mcp-call.sh), в обход сессии, и работали штатно.
+#
+# Файла может не быть (агент без мозга — штатный порядок первой установки):
+# тогда флаг не добавляем, иначе claude не стартует вовсе и агент молчит.
+MCP_ARGS=()
+if [ -f "$AGENT_WORKSPACE/.mcp.json" ]; then
+  MCP_ARGS=(--mcp-config "$AGENT_WORKSPACE/.mcp.json")
+fi
+
 # exec, а не запуск дочерним: панель должна БЫТЬ процессом claude. Иначе
 # pane_pid указывал бы на эту обёртку, и всё, что смотрит на процесс панели —
 # детектор дрейфа версии (lib/cli-version.sh) и снятие агента (stop-agent.sh) —
 # видело бы bash вместо claude.
 exec "$CLAUDE_BIN" \
   --settings "$AGENT_WORKSPACE/settings.json" \
+  ${MCP_ARGS[@]+"${MCP_ARGS[@]}"} \
   --dangerously-skip-permissions \
   --dangerously-load-development-channels server:labops-channel \
   "${RESUME_ARGS[@]}"

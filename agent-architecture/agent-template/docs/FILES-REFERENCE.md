@@ -133,7 +133,7 @@ error-patterns, task-board`.
 | File | Role | Loads | Writer |
 |------|------|-------|--------|
 | **settings.json** | Claude Code settings: `model`, auto-compact window, allow/deny lists, hooks | read by Claude Code | operator |
-| **.mcp.json** | The four second_brain servers with URL and Bearer token (chmod 600) | read by Claude Code | installer; `connect-agents.sh` in second_brain |
+| **.mcp.json** | The four second_brain servers with URL and Bearer token (chmod 600) | passed to Claude Code by `orchestration/session-exec.sh` via `--mcp-config` — the session's own cwd is the plugin directory, so this file is never auto-discovered | installer; `connect-agents.sh` in second_brain |
 | **agent.env** | `AGENT_ID`, workspace, service URLs, `AGENT_BEARER`, `AGENT_SCOPES`, `SUMMARY_LANGUAGE` (chmod 600) | never (sourced by the launcher) | installer; `connect-agents.sh` |
 
 ---

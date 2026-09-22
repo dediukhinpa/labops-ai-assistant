@@ -120,4 +120,29 @@ done
 printf '%s' "$OUT" | grep '^PARENT:' | grep -q "session-exec.sh" \
   && fail "session-exec.sh не сделал exec — обёртка осталась отдельным процессом"
 
-echo "OK: agent-env.sh + session-exec.sh — 7 проверок пройдено"
+# 8. Без .mcp.json воркспейса флаг не добавляется: несуществующий файл claude
+#    не стартует вовсе, а агент без мозга — штатный порядок первой установки.
+case "$CMDLINE" in
+  *--mcp-config*) fail "флаг --mcp-config добавлен без файла: $CMDLINE" ;;
+esac
+
+# 9. Есть файл — он передан явно. Сам claude его не находит: CWD панели это
+#    каталог плагина, поиск конфига идёт вверх оттуда и мимо воркспейса, так
+#    что без флага в сессии нет инструментов общей памяти (клиент, 22.09.2026).
+cat > "$WS/.mcp.json" <<'MCP'
+{"mcpServers": {"second_brain-memory_router": {"type": "http", "url": "http://127.0.0.1:5002/mcp"}}}
+MCP
+OUT="$(bash "$ORCH/session-exec.sh" "$AGENT" 2>/dev/null)"
+CMDLINE="$(printf '%s' "$OUT" | grep '^CMDLINE:')"
+case "$CMDLINE" in
+  *"--mcp-config $WS/.mcp.json"*) ;;
+  *) fail "инструменты общей памяти не подключены к сессии: $CMDLINE" ;;
+esac
+# И канал при этом не потерян: --mcp-config дополняет найденное, а не заменяет,
+# поэтому флаг развития канала обязан остаться в той же строке.
+case "$CMDLINE" in
+  *"--dangerously-load-development-channels server:labops-channel"*) ;;
+  *) fail "канал пропал из командной строки панели: $CMDLINE" ;;
+esac
+
+echo "OK: agent-env.sh + session-exec.sh — 9 проверок пройдено"
