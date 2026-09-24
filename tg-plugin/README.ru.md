@@ -223,6 +223,7 @@ sequenceDiagram
 | `TELEGRAM_BOT_TOKEN` | токен от [@BotFather](https://t.me/BotFather) |
 | `TELEGRAM_EXPECTED_BOT_ID` | числовая часть токена до `:` (anti-spoof) |
 | `TELEGRAM_ALLOWED_USER_IDS` | CSV разрешённых user_id |
+| `SUPPORT_FOLLOWUP_URL` / `SUPPORT_FOLLOWUP_TOKEN` | необязательный релей клиентов поддержки: приватные сообщения посторонних user_id уходят POST-ом (Bearer-токен) на этот эндпоинт вместо молчаливого дропа; агентская сессия на этом пути не запускается. Нужны обе переменные, иначе ветка выключена (`src/telegram/client-relay.ts`) |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | CSV разрешённых chat_id (группы — с `-100…`) |
 | `TELEGRAM_WORKSPACE_ROOT` | корень workspace агента (где `CLAUDE.md`, `core/`, `.mcp.json`) |
 | `AGENT_ID` | идентификатор агента (маршрутизация в multi-agent + логи) |

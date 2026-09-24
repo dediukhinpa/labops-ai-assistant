@@ -33,6 +33,7 @@ import type {
 } from '../../src/channel/permissions.js'
 import type { TelegramApi } from '../../src/channel/tools.js'
 import type { BotIdentity } from '../../src/prompt/build.js'
+import type { ClientRelay, ClientRelayInput } from '../../src/telegram/client-relay.js'
 
 const silentLog = createLogger('test', {
   stream: { write: () => true } as unknown as NodeJS.WritableStream,
@@ -916,6 +917,61 @@ describe('handleInboundText — F3 permission-priority gate', () => {
     expect(otherCalls[0]!.replyToMessageId).toBe(77)
     // Consumed → channel forward must NOT fire.
     expect(serverSpy.calls.length).toBe(0)
+    rmSync(statePaths.root, { recursive: true, force: true })
+  })
+})
+
+describe('handleInboundText — релей клиентов поддержки', () => {
+  function relaySpy(): { relay: ClientRelay; calls: ClientRelayInput[] } {
+    const calls: ClientRelayInput[] = []
+    return { relay: { handle: async (input) => { calls.push(input) } }, calls }
+  }
+
+  test('посторонний в личке уходит в релей и не доходит до агента', async () => {
+    const { relay, calls } = relaySpy()
+    const serverSpy = makeServerSpy()
+    const { deps, statePaths } = makeDeps({ server: serverSpy.server })
+    deps.clientRelay = relay
+    await handleInboundText(makeCtx({ text: 'вопрос', chatId: 555, chatType: 'private', fromId: 555 }), deps)
+    expect(calls).toEqual([{ telegramUserId: 555, chatId: 555, text: 'вопрос' }])
+    expect(serverSpy.calls.length).toBe(0)
+    rmSync(statePaths.root, { recursive: true, force: true })
+  })
+
+  test('без релея (ветка выключена) посторонний молча дропается, как раньше', async () => {
+    const serverSpy = makeServerSpy()
+    const { deps, statePaths } = makeDeps({ server: serverSpy.server })
+    await handleInboundText(makeCtx({ text: 'вопрос', chatId: 555, chatType: 'private', fromId: 555 }), deps)
+    expect(serverSpy.calls.length).toBe(0)
+    rmSync(statePaths.root, { recursive: true, force: true })
+  })
+
+  test('владелец не перехватывается релеем', async () => {
+    const { relay, calls } = relaySpy()
+    const { deps, statePaths } = makeDeps()
+    deps.clientRelay = relay
+    await handleInboundText(makeCtx({ text: 'привет', chatId: 100000001, chatType: 'private', fromId: 100000001 }), deps)
+    expect(calls).toEqual([])
+    rmSync(statePaths.root, { recursive: true, force: true })
+  })
+
+  test('группа и супергруппа не перехватываются, даже от постороннего', async () => {
+    const { relay, calls } = relaySpy()
+    const { deps, statePaths } = makeDeps()
+    deps.clientRelay = relay
+    await handleInboundText(makeCtx({ text: 'x', chatId: -1001, chatType: 'group', fromId: 555 }), deps)
+    await handleInboundText(makeCtx({ text: 'x', chatId: -1002, chatType: 'supergroup', fromId: 555 }), deps)
+    expect(calls).toEqual([])
+    rmSync(statePaths.root, { recursive: true, force: true })
+  })
+
+  test('пользователь из policy.allowlist.users в личке не перехватывается', async () => {
+    const { relay, calls } = relaySpy()
+    const { deps, statePaths } = makeDeps()
+    deps.clientRelay = relay
+    deps.policy = { allowlist: { chats: [], users: ['777'] }, mention_allowlist: [], chats: {} } as unknown as NonNullable<HandlerDeps['policy']>
+    await handleInboundText(makeCtx({ text: 'x', chatId: 777, chatType: 'private', fromId: 777 }), deps)
+    expect(calls).toEqual([])
     rmSync(statePaths.root, { recursive: true, force: true })
   })
 })

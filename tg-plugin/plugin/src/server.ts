@@ -80,6 +80,7 @@ import {
   type AlbumEntry,
   type HandlerDeps,
 } from './telegram/handlers.js'
+import { createClientRelayFromEnv } from './telegram/client-relay.js'
 import { AlbumBuffer } from './telegram/album-buffer.js'
 import {
   ensureAlbumsDir,
@@ -870,6 +871,10 @@ if (
   }
 }
 
+// Релей клиентов поддержки: включается парой SUPPORT_FOLLOWUP_URL/_TOKEN из channel.env.
+const clientRelay = createClientRelayFromEnv(process.env, { telegramApi, log })
+if (clientRelay !== undefined) log.info('client relay enabled')
+
 const handlerDeps: HandlerDeps = {
   server: mcp,
   config,
@@ -895,6 +900,7 @@ const handlerDeps: HandlerDeps = {
   // the permission-reply short-circuit. Always wired — feature gate lives
   // inside the relay itself (callbacks no-op when no pending request).
   askUserQuestionUi,
+  ...(clientRelay !== undefined ? { clientRelay } : {}),
 }
 
 bot.on('message:text', ctx => handleInboundText(ctx, handlerDeps))
