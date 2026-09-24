@@ -224,6 +224,7 @@ Full example — [`examples/channel.env.example`](examples/channel.env.example).
 | `TELEGRAM_EXPECTED_BOT_ID` | numeric part of the token before `:` (anti-spoof) |
 | `TELEGRAM_ALLOWED_USER_IDS` | CSV of allowed user_ids |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | CSV of allowed chat_ids (groups — with `-100…`) |
+| `SUPPORT_FOLLOWUP_URL` / `SUPPORT_FOLLOWUP_TOKEN` | optional client-support relay: private messages from users outside the allowlist are POSTed (Bearer token) to this endpoint instead of being dropped; no agent session is started on this path. Both must be set, otherwise the branch is off (`src/telegram/client-relay.ts`) |
 | `TELEGRAM_WORKSPACE_ROOT` | the agent's workspace root (where `CLAUDE.md`, `core/`, `.mcp.json` live) |
 | `AGENT_ID` | agent identifier (routing in multi-agent + logs) |
 | `TELEGRAM_STATE_DIR` | agent state: `bot.pid`, `config.json`, inbox, logs (isolate per agent) |
