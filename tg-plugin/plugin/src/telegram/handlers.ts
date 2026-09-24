@@ -27,6 +27,7 @@ import type { InboundMessage } from '../router/inbox-bridge.js'
 import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import { ensureSubmitted, resolveAgentSession } from '../channel/ensure-submit.js'
 import { recordInboundDelivery } from '../channel/inbound-marker.js'
+import type { ClientRelay } from './client-relay.js'
 import { gateTelegramMessage, type GateInput } from './gate.js'
 import { isAddressedToBot } from './addressing.js'
 import {
@@ -186,6 +187,21 @@ export interface HandlerDeps {
   // wiring / tests that predate TASK-2), the consumption is skipped
   // and inbound text flows through the existing paths unchanged.
   askUserQuestionUi?: AskUserQuestionUi
+  // Релей клиентов поддержки (client-relay.ts): приватные сообщения ПОСТОРОННИХ
+  // user_id уходят на эндпоинт продукта, а не в агентскую логику. Не задан --
+  // ветка выключена и посторонние молча дропаются гейтом, как раньше.
+  clientRelay?: ClientRelay
+}
+
+// Личка постороннего человека: не владелец из config и не пользователь из policy.
+function isOutsiderDm(ctx: Context, deps: HandlerDeps): boolean {
+  if (ctx.chat?.type !== 'private') return false
+  const from = ctx.from
+  if (from === undefined || from.is_bot) return false
+  const id = String(from.id)
+  if (deps.config.allowed_user_ids.some(v => String(v) === id)) return false
+  if (deps.policy?.allowlist.users.includes(id) === true) return false
+  return true
 }
 
 // Coerce grammY's reply_to_message Message shape into the narrower
@@ -1069,6 +1085,17 @@ export async function sendAlbumNotification(
 
 export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promise<void> {
   const text = ctx.message?.text ?? ''
+
+  // Клиент поддержки в личке: до гейта, OOB и любой агентской логики.
+  if (deps.clientRelay !== undefined && ctx.chat !== undefined && ctx.from !== undefined
+    && isOutsiderDm(ctx, deps)) {
+    await deps.clientRelay.handle({
+      telegramUserId: ctx.from.id,
+      chatId: ctx.chat.id,
+      text,
+    })
+    return
+  }
 
   // Two-stage reaction (2026-06-25). The fast 👀 "получил" ack is set in
   // gateAndNotify (the shared chokepoint every message type funnels through),
