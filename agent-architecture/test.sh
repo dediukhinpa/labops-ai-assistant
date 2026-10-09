@@ -867,6 +867,44 @@ else
   bad "сбой установки tg-plugin снова немой — причину придётся искать вручную"
 fi
 
+# 18c-quater. Канал обязан ставиться и при ПРЯМОМ запуске этого установщика
+# (bash agent-architecture/install.sh), а не только через корневой install.sh
+# монорепо: INSTALL_TG_LOCAL тогда не выставлен, и прежний код лишь писал
+# «ещё не установлен» — агент поднимался немым, а оператор видел причину лишь
+# на сборке копии роя, как «нет node_modules» (09.10.2026, у клиента).
+if grep -q 'INSTALL_TG_LOCAL=1' install.sh \
+   && grep -qF '[ "$TG" = "$TG_SIBLING" ]' install.sh; then
+  ok "канал ставится и при прямом запуске install.sh архитектуры"
+else
+  bad "без INSTALL_TG_LOCAL канал снова пропускается молча"
+fi
+# Бит исполнения теряется в zip/tarball с GitHub, поэтому проверяем -f и зовём
+# через bash: прежние -x и ./install.sh уводили установку в warn на ровном месте.
+if grep -qF '[ -x "$TG/install.sh" ]' install.sh \
+   || grep -qF 'LABOPS_AGENT_FLOW=1 ./install.sh' install.sh; then
+  bad "установка канала снова зависит от бита исполнения tg-plugin/install.sh"
+else
+  ok "установщик канала зовётся через bash — бит исполнения не нужен"
+fi
+
+# 18c-quinquies. Зависимости плагина перед копией роя ставятся с ВИДИМЫМ выводом.
+# Раньше здесь было `bun install --silent … || true`: при сбое модулей не
+# появлялось, и хелпер копии отказывал сообщением «нет tg-plugin/plugin/
+# node_modules» — без причины, по которой их нет.
+if grep -qF 'bun install --silent ) || true' install.sh; then
+  bad "сбой bun install перед копией роя снова проглатывается"
+elif grep -q 'tail -n 15 "$BUN_LOG"' install.sh; then
+  ok "сбой установки зависимостей плагина показывает свой вывод"
+else
+  bad "не видно, что вывод bun install сохраняется и показывается"
+fi
+# Тот же разбор у new-agent.sh: он ставит зависимости для уже готового дерева.
+if grep -qF 'install --silent )' skills/create-agent/new-agent.sh; then
+  bad "new-agent.sh снова ставит зависимости плагина молча"
+else
+  ok "new-agent.sh показывает причину, если зависимости плагина не встали"
+fi
+
 # И тот же запрет конвейера, что для claude, — но у соседа: bun там ставился
 # через `curl … | bash`, а под set -e + pipefail это роняет скрипт молча.
 TG_INSTALL="../tg-plugin/install.sh"

@@ -105,8 +105,10 @@ as_owner() {
 for part in "${PARTS[@]}"; do
   [ -d "$SOURCE/$part" ] || die "нет $SOURCE/$part — это не монорепо роя"
 done
+# Имя пользователя в подсказке не случайно: модули ищет сессия агента в своём
+# $HOME, и bun install от root положил бы их не туда (а то и root'ом по праву).
 [ -d "$SOURCE/$PLUGIN_MODULES" ] \
-  || die "нет $SOURCE/$PLUGIN_MODULES: сначала bun install в tg-plugin/plugin"
+  || die "нет $SOURCE/$PLUGIN_MODULES — зависимости плагина не установлены (bun install). Поставьте их от $OWNER: runuser -u $OWNER -- bash $SOURCE/tg-plugin/install.sh"
 # Зависимости плагина копируются как есть, из них ничего не собирается. Если
 # после git pull в lock-файле появилась новая зависимость, а bun install не
 # запускали, в копию уедут старые модули и канал у перезапущенных агентов

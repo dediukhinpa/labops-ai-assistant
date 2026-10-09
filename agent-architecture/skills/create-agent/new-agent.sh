@@ -201,9 +201,16 @@ if [ -n "$TG_PLUGIN_DIR" ] && [ ! -d "$TG_PLUGIN_DIR/plugin/node_modules" ]; the
   BUN_BIN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
   if [ -x "$BUN_BIN" ]; then
     step "ставлю зависимости плагина (bun install в $TG_PLUGIN_DIR/plugin)"
-    ( cd "$TG_PLUGIN_DIR/plugin" && "$BUN_BIN" install --silent ) \
-      && ok "bun install: зависимости плагина установлены" \
-      || DEGRADED+=("bun install в $TG_PLUGIN_DIR/plugin провалился — канал не запустится")
+    # Вывод сохраняем: прежний --silent прятал причину (нет сети, нет прав на
+    # каталог), и оператор видел только «провалился».
+    BUN_LOG="$(mktemp)"
+    if ( cd "$TG_PLUGIN_DIR/plugin" && "$BUN_BIN" install ) >"$BUN_LOG" 2>&1; then
+      ok "bun install: зависимости плагина установлены"
+    else
+      warn "bun install в $TG_PLUGIN_DIR/plugin не прошёл. Последние строки:"
+      tail -n 15 "$BUN_LOG" | sed 's/^/      /'
+      DEGRADED+=("bun install в $TG_PLUGIN_DIR/plugin провалился — канал не запустится (вывод: $BUN_LOG)")
+    fi
   else
     DEGRADED+=("в $TG_PLUGIN_DIR/plugin нет node_modules, а bun недоступен — канал не запустится")
   fi
