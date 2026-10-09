@@ -57,11 +57,26 @@ LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"
 # And even when run from a checkout, the standalone labops-agent-architecture clone may lag a whole generation
 # behind the labops-ai-assistant monorepo (the source of truth) — an agent
 # scaffolded from it would silently miss current hooks/scripts. Resolution
-# order: explicit AGENT_ARCH_DIR → repo the copy came from → root-owned runtime
-# copy (labops-runtime-deploy) → monorepo → script-relative → standalone.
+# The runtime copy counts only when OUR installer registered it (the root-owned
+# runtime.conf). labops-web-app keeps its client runtime at the very same path
+# and may be a generation behind, so the bare directory is not proof.
+_RT_CONF="${LABOPS_RUNTIME_CONF:-/etc/labops/runtime.conf}"
+_RT_DIR="${LABOPS_RUNTIME_DIR:-/opt/labops/ai-assistant}"
+RUNTIME_ARCH_CAND=""
+[ -f "$_RT_CONF" ] && RUNTIME_ARCH_CAND="$_RT_DIR/agent-architecture"
+
+# order: explicit AGENT_ARCH_DIR → registered runtime copy
+# (labops-runtime-deploy) → repo the copy came from → monorepo →
+# script-relative → standalone.
+#
+# The registered copy outranks the .labops-repo marker on purpose (review
+# 2026-09-20): `sync-skills.sh`, run from a checkout after a git pull, rewrites
+# that marker to the checkout — and the next agent would then be scaffolded
+# from a clone that can be deleted or switched to another branch, with its unit
+# pointing there too. That is exactly what the copy exists to prevent.
 for cand in "${AGENT_ARCH_DIR:-}" \
+            "$RUNTIME_ARCH_CAND" \
             "$(cat "$SKILL_DIR/../.labops-repo" 2>/dev/null || true)" \
-            "/opt/labops/ai-assistant/agent-architecture" \
             "$HOME/labops-ai-assistant/agent-architecture" \
             "$REPO_DIR" \
             "$HOME/labops-agent-architecture"; do

@@ -16,7 +16,9 @@ LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"
 [ -d "$LAB_DIR" ] || { echo "нет лаборатории агентов: $LAB_DIR" >&2; exit 1; }
 
 echo "Синхронизация скиллов: $REPO_DIR/skills → $(shared_skills_dir "$LAB_DIR")"
-sync_shared_skills "$REPO_DIR/skills" "$LAB_DIR"
+# force=1: оператор запустил синхронизацию сам и указал источник явно, поэтому
+# защита от чужого источника (см. lib/skills.sh) здесь не нужна.
+sync_shared_skills "$REPO_DIR/skills" "$LAB_DIR" 1
 
 own=0
 for ws in "$LAB_DIR"/*/.claude; do
@@ -24,5 +26,5 @@ for ws in "$LAB_DIR"/*/.claude; do
   case "$ws" in "$LAB_DIR/shared/"*) continue ;; esac
   link_workspace_skills "$ws" "$LAB_DIR" || own=1
 done
-[ "$own" -eq 0 ] || echo "У части агентов skills/ — собственный каталог: он не менялся."
+[ "$own" -eq 0 ] || echo "У части агентов skills/ не менялся: свой каталог или метка .labops-keep-skills."
 echo "Готово. Новые скиллы агент увидит в следующей сессии."

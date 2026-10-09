@@ -39,10 +39,14 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 PARTS=("agent-architecture" "tg-plugin")
-PLUGIN_MODULES="tg-plugin/plugin/node_modules"
+PLUGIN_DIR="tg-plugin/plugin"
+PLUGIN_MODULES="$PLUGIN_DIR/node_modules"
 DIR_MODE=0755
 NAME_RE='^[A-Za-z_][A-Za-z0-9_-]*$'
 PATH_RE='^/[A-Za-z0-9._/-]+$'
+# Ветка, с которой собирается копия: рабочая по умолчанию, иначе ключ BRANCH.
+DEFAULT_BRANCH="main"
+BRANCH_RE='^[A-Za-z0-9._/-]+$'
 
 log() { printf '[runtime] %s\n' "$*"; }
 die() { printf '[runtime ОШИБКА] %s\n' "$*" >&2; exit 1; }
@@ -69,6 +73,9 @@ conf_val() {  # $1=ключ — значение без кавычек; файл
 SOURCE="$(conf_val SOURCE)"
 OWNER="$(conf_val OWNER)"
 LAB="$(conf_val LAB)"
+BRANCH_WANT="$(conf_val BRANCH)"
+BRANCH_WANT="${BRANCH_WANT:-$DEFAULT_BRANCH}"
+[[ "$BRANCH_WANT" =~ $BRANCH_RE ]] || die "недопустимый BRANCH в $CONF: $BRANCH_WANT"
 [[ "$SOURCE" =~ $PATH_RE ]] || die "недопустимый SOURCE в $CONF: $SOURCE"
 [[ "$OWNER" =~ $NAME_RE ]] || die "недопустимый OWNER в $CONF: $OWNER"
 [ "$OWNER" != "root" ] || die "OWNER в $CONF не может быть root"
@@ -100,9 +107,33 @@ for part in "${PARTS[@]}"; do
 done
 [ -d "$SOURCE/$PLUGIN_MODULES" ] \
   || die "нет $SOURCE/$PLUGIN_MODULES: сначала bun install в tg-plugin/plugin"
+# Зависимости плагина копируются как есть, из них ничего не собирается. Если
+# после git pull в lock-файле появилась новая зависимость, а bun install не
+# запускали, в копию уедут старые модули и канал у перезапущенных агентов
+# упадёт — молча, уже после деплоя (ревью 2026-09-20). Поэтому отказываем.
+# Сверяем только lock-файл: он меняется ровно тогда, когда поменялся состав
+# зависимостей, а package.json git перезаписывает и при правке версии или
+# скриптов — отказ на нём останавливал бы деплой без причины.
+for dep_file in "$PLUGIN_DIR/bun.lock" "$PLUGIN_DIR/bun.lockb"; do
+  [ -f "$SOURCE/$dep_file" ] || continue
+  if [ "$SOURCE/$dep_file" -nt "$SOURCE/$PLUGIN_MODULES" ]; then
+    die "$dep_file новее $PLUGIN_MODULES: сначала bun install в $SOURCE/$PLUGIN_DIR"
+  fi
+done
 COMMIT="$(as_owner git -C "$SOURCE" rev-parse --verify 'HEAD^{commit}')" \
   || die "не прочитать HEAD в $SOURCE"
-log "источник: $SOURCE @ $COMMIT → $TARGET"
+# Копия — то, из чего работает весь рой, поэтому собираем её только с рабочей
+# ветки. Иначе переключённый на фичу checkout уезжал во весь рой молча, по
+# первому же деплою: хоть от оператора, хоть от агента (у него есть sudo на
+# этот хелпер). Другую ветку разрешает только root — ключом BRANCH в CONF.
+BRANCH_NOW="$(as_owner git -C "$SOURCE" symbolic-ref --short -q HEAD || true)"
+if [ -z "$BRANCH_NOW" ]; then
+  die "$SOURCE не на ветке (detached HEAD) — переключитесь на $BRANCH_WANT"
+fi
+if [ "$BRANCH_NOW" != "$BRANCH_WANT" ]; then
+  die "$SOURCE на ветке $BRANCH_NOW, а копию роя собираем с $BRANCH_WANT — переключите checkout или смените BRANCH в $CONF (только root)"
+fi
+log "источник: $SOURCE @ $COMMIT ($BRANCH_NOW) → $TARGET"
 if [ -n "$(as_owner git -C "$SOURCE" status --porcelain -- "${PARTS[@]}")" ]; then
   log "ВНИМАНИЕ: в checkout есть незакоммиченные правки — в копию они не попадут"
 fi
@@ -143,13 +174,62 @@ chmod "$DIR_MODE" "$STAGE"
 [ -f "$STAGE/agent-architecture/systemd/claude-agent.service.template" ] \
   || die "в копии нет шаблона юнита — ревизия $COMMIT не та"
 
-if [ -e "$TARGET" ]; then
-  mv "$TARGET" "$OLD"
+# Подмена каталога. Двумя переименованиями (убрать старый → поставить новый)
+# между ними существует зазор, в который $TARGET не существует вовсе: старт
+# агента, попавший в него, падает, а убитый в этом месте процесс оставлял бы
+# рой вообще без копии. Поэтому сначала пробуем обмен каталогов одним
+# системным вызовом (renameat2 RENAME_EXCHANGE), и только если ядро, ФС или
+# архитектура его не поддерживают — откатываемся на два переименования с
+# восстановлением прежней копии.
+exchange_dirs() {  # <новый> <старый> — обмен местами одним вызовом
+  [ "${LABOPS_RUNTIME_NO_EXCHANGE:-0}" = "1" ] && return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$1" "$2" <<'PYEX' 2>/dev/null
+import ctypes, ctypes.util, os, platform, sys
+
+RENAME_EXCHANGE = 2
+AT_FDCWD = -100
+# Номера renameat2 по архитектурам: нужны только там, где glibc не отдаёт
+# саму функцию (она есть с 2.28). Неизвестная архитектура — отказ, и вызывающий
+# откатится на два переименования; наугад номер звать нельзя, это был бы
+# совершенно другой системный вызов.
+SYSCALLS = {"x86_64": 316, "aarch64": 276, "riscv64": 276, "i686": 353, "armv7l": 382}
+libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+new, old = os.fsencode(sys.argv[1]), os.fsencode(sys.argv[2])
+fn = getattr(libc, "renameat2", None)
+if fn is not None:
+    rc = fn(ctypes.c_int(AT_FDCWD), ctypes.c_char_p(new),
+            ctypes.c_int(AT_FDCWD), ctypes.c_char_p(old),
+            ctypes.c_uint(RENAME_EXCHANGE))
+else:
+    nr = SYSCALLS.get(platform.machine())
+    if nr is None:
+        sys.exit(1)
+    rc = libc.syscall(nr, ctypes.c_int(AT_FDCWD), ctypes.c_char_p(new),
+                      ctypes.c_int(AT_FDCWD), ctypes.c_char_p(old),
+                      ctypes.c_uint(RENAME_EXCHANGE))
+sys.exit(0 if rc == 0 else 1)
+PYEX
+}
+
+swapped=0
+if [ -e "$TARGET" ] && exchange_dirs "$STAGE" "$TARGET"; then
+  # После обмена прежняя копия лежит там, где был STAGE.
+  OLD="$STAGE"
+  swapped=1
 fi
-if ! mv "$STAGE" "$TARGET"; then
-  [ -e "$OLD" ] && mv "$OLD" "$TARGET"
-  die "копия не встала на место — прежняя возвращена"
+if [ "$swapped" = "0" ]; then
+  if [ -e "$TARGET" ]; then
+    mv "$TARGET" "$OLD"
+    # Если нас убьют между переименованиями, прежняя копия вернётся на место.
+    trap 'rm -rf "$STAGE"; [ -e "$TARGET" ] || [ ! -e "$OLD" ] || mv "$OLD" "$TARGET"' EXIT INT TERM
+  fi
+  if ! mv "$STAGE" "$TARGET"; then
+    [ -e "$OLD" ] && mv "$OLD" "$TARGET"
+    die "копия не встала на место — прежняя возвращена"
+  fi
 fi
+trap 'rm -rf "$STAGE"' EXIT
 rm -rf "$OLD"
 log "копия роя: $TARGET ($COMMIT)"
 

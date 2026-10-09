@@ -56,6 +56,28 @@ WS2="$LAB/own/.claude"; mkdir -p "$WS2/skills/mine"
 rc=0; link_workspace_skills "$WS2" "$LAB" 2>/dev/null || rc=$?
 [ "$rc" -eq 2 ] && [ -d "$WS2/skills/mine" ] && [ ! -L "$WS2/skills" ] || fail "свой каталог задет"
 
+# 5b. Ссылку, закреплённую меткой, не переводят: деплой копии роя зовёт
+#     sync-skills.sh каждый раз, и иначе метка оператора сбрасывалась бы.
+WS3="$LAB/keep/.claude"; mkdir -p "$WS3" "$TMP/my-skills"
+ln -sfn "$TMP/my-skills" "$WS3/skills"; : > "$WS3/.labops-keep-skills"
+rc=0; link_workspace_skills "$WS3" "$LAB" 2>/dev/null || rc=$?
+[ "$rc" -eq 3 ] && [ "$(readlink "$WS3/skills")" = "$TMP/my-skills" ] \
+  || fail "закреплённая меткой ссылка переведена (код $rc)"
+
+# 5c. Общая папка — одна на всех агентов, поэтому чужой источник её не
+#     перезаписывает: создание агента из устаревшего клона откатывало скиллы
+#     всему рою. Осознанное обновление идёт с force=1.
+OTHER="$TMP/other-repo/skills"; mkdir -p "$OTHER/alpha"
+echo stale > "$OTHER/alpha/SKILL.md"
+rc=0; sync_shared_skills "$OTHER" "$LAB" 2>/dev/null >/dev/null || rc=$?
+[ "$rc" -eq 3 ] || fail "чужой источник не остановлен (код $rc)"
+[ "$(cat "$SH/alpha/SKILL.md")" = a2 ] || fail "чужой источник затёр общие скиллы"
+sync_shared_skills "$OTHER" "$LAB" 1 >/dev/null || fail "force=1 не сработал"
+[ "$(cat "$SH/alpha/SKILL.md")" = stale ] || fail "force=1 не обновил скиллы"
+[ "$(cat "$SH/.labops-repo")" = "$TMP/other-repo" ] || fail "метка не обновлена при force"
+# Возвращаем исходный источник для остальных проверок.
+sync_shared_skills "$SRC" "$LAB" 1 >/dev/null
+
 # 6. Скилл-ссылка в общей папке от старого install.sh (create-agent → репо)
 #    заменяется копией.
 rm -rf "$SH/alpha"; ln -s "$SRC/alpha" "$SH/alpha"

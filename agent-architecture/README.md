@@ -417,8 +417,12 @@ Delivery uses no headless `claude -p`: the poller types into the live subscripti
 and each agent workspace links `.claude/skills` to that copy. The agents do not depend on
 this checkout for their skills: moving or deleting the clone does not take the skills away,
 and an uncommitted edit here does not go live by itself. After `git pull`, publish the
-update to every agent with `bash orchestration/sync-skills.sh`; skills you put into the
-shared directory yourself are left alone.
+update to every agent with `sudo /usr/local/sbin/labops-runtime-deploy` (it refreshes the
+runtime copy and the skills together). `bash orchestration/sync-skills.sh` does the same from
+a checkout, but it also records that checkout as the source the next agent is scaffolded from,
+so prefer the helper where it exists. Skills you put into the shared directory yourself are
+left alone, and so is an agent whose `skills/` you pinned with a `.labops-keep-skills` file in
+its workspace.
 
 ## Runtime copy in `/opt/labops/ai-assistant`
 
@@ -437,6 +441,13 @@ user may run it via `sudo -n` without a password; it takes no path arguments (on
 ```bash
 sudo /usr/local/sbin/labops-runtime-deploy   # also refreshes the shared skills
 ```
+
+The copy is built from the checkout's `main` only: a clone switched to a feature branch would
+otherwise move the whole swarm onto that branch on the next deploy, silently. Installing from
+another branch records it as `BRANCH=` in `runtime.conf` (root-owned) and says so. The helper
+also refuses when the plugin's `bun.lock` is newer than its `node_modules` — stale modules in
+the copy break the channel of every restarted agent — so run `bun install` in
+`tg-plugin/plugin` first; `install.sh` does that for you.
 
 The helper does not restart agents. Units that still start from a checkout (installed
 before this change) are listed with the two commands that move them to the copy
