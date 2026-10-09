@@ -331,6 +331,8 @@ if [ -z "${AGENT_BEARER:-}" ] && { [ -n "$SECOND_BRAIN_DIR" ] || [ -x "$LABOPS_T
       echo "        $SECOND_BRAIN_DIR/scripts/issue-agent-token.py --agent $AGENT_ID --scopes '$AGENT_SCOPES'"
     fi
     echo "      и передайте его сюда через NEW_AGENT_BEARER=<токен>"
+    echo "      либо после выдачи: sudo bash ${SECOND_BRAIN_DIR:-/opt/second_brain}/scripts/connect-agents.sh"
+    echo "      (он впишет токен и в agent.env, и в .mcp.json — одного agent.env не хватает)"
   fi
   rm -f "$_tok_err"
 fi
@@ -354,7 +356,17 @@ if [ "$AGENT_BEARER" = "CHANGE_ME" ] && { [ -n "$SECOND_BRAIN_DIR" ] || [ -x "$L
   else
     _tok_cmd="sudo -u second_brain $SECOND_BRAIN_DIR/.venv/bin/python $SECOND_BRAIN_DIR/scripts/issue-agent-token.py --agent $AGENT_ID --scopes '$AGENT_SCOPES'"
   fi
-  DEGRADED+=("нет реального Bearer-токена — агент поднимется без общей памяти. Выполните: $_tok_cmd, впишите токен в $LAB_DIR/$AGENT_ID/.claude/agent.env (AGENT_BEARER=...) и перезапустите сервис агента")
+  # Токен лежит В ДВУХ местах: agent.env (его читают хуки через окружение) и
+  # .mcp.json (его читает сама сессия). Правка только agent.env оставляет в
+  # .mcp.json «Bearer CHANGE_ME», и агент продолжает получать 401 — именно на
+  # это наступали после ручной выдачи токена. Поэтому советуем connect-agents.sh:
+  # он правит оба файла, дописывает недостающие серверы и доливает скоупы.
+  if [ -n "$SECOND_BRAIN_DIR" ] && [ -f "$SECOND_BRAIN_DIR/scripts/connect-agents.sh" ]; then
+    _fix_cmd="sudo bash $SECOND_BRAIN_DIR/scripts/connect-agents.sh"
+  else
+    _fix_cmd="выдайте токен ($_tok_cmd) и впишите его И в $LAB_DIR/$AGENT_ID/.claude/agent.env (AGENT_BEARER=...), И в $LAB_DIR/$AGENT_ID/.claude/.mcp.json (Bearer ...)"
+  fi
+  DEGRADED+=("нет реального Bearer-токена — агент поднимется без общей памяти. Починить: $_fix_cmd, затем перезапустить сервис агента")
 fi
 
 # ── 3. Скаффолд воркспейса (agent-template, неинтерактивно) ──────
