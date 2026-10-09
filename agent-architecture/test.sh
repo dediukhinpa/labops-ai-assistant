@@ -560,6 +560,16 @@ else
   bad "new-agent.sh не зовёт labops-issue-agent-token — на чужом хосте токен не выдастся"
 fi
 
+# 14d3. Токен лежит в ДВУХ файлах: agent.env (окружение хуков) и .mcp.json
+# (сама сессия). Подсказка, которая называет только agent.env, оставляет в
+# .mcp.json «Bearer CHANGE_ME» — агент молча получает 401 и остаётся без
+# памяти (жалоба клиента 2026-10-09).
+if grep -q 'connect-agents.sh' "$NA" && grep -q '\.mcp\.json' "$NA"; then
+  ok "подсказка по токену ведёт на connect-agents.sh (правит и agent.env, и .mcp.json)"
+else
+  bad "подсказка по токену называет только agent.env — в .mcp.json останется CHANGE_ME"
+fi
+
 # 14e. Причина отказа выдачи должна доходить до оператора.
 if grep -q 'issue-agent-token.py' "$NA" && ! grep -qE 'issue-agent-token\.py.*2>/dev/null' "$NA"; then
   ok "ошибка выдачи токена не глушится"
