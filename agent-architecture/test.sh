@@ -905,9 +905,33 @@ else
   ok "new-agent.sh показывает причину, если зависимости плагина не встали"
 fi
 
+TG_INSTALL_PRE="../tg-plugin/install.sh"
+# 18c-sexies. Битая ссылка node_modules (дерево скопировали с другой машины или
+# из воркспейса агента, где node_modules — симлинк в общий checkout) роняет
+# bun install с `ENOENT: could not open the "node_modules" directory`, и сам bun
+# её не убирает: повторные запуски установки бесполезны, пока ссылку не снять
+# руками (09.10.2026, у клиента ссылка вела в /home/labops чужой машины).
+if grep -q 'clear_foreign_modules' orchestration/lib/plugin.sh \
+   && grep -q 'clear_foreign_modules' install.sh \
+   && grep -q 'clear_foreign_modules' skills/create-agent/new-agent.sh; then
+  ok "битая ссылка node_modules снимается до установки зависимостей"
+else
+  bad "нет чистки битой ссылки node_modules — bun install снова встанет насмерть"
+fi
+if grep -qF '[ -L "$SOURCE/$PLUGIN_MODULES" ]' orchestration/labops-runtime-deploy.sh; then
+  ok "копия роя не собирается со ссылкой вместо node_modules"
+else
+  bad "ссылка node_modules уедет в /opt — рой станет зависеть от \$HOME пользователя"
+fi
+if [ -f "$TG_INSTALL_PRE" ] && grep -q 'битая ссылка' "$TG_INSTALL_PRE"; then
+  ok "tg-plugin сам снимает битую ссылку node_modules (ставится и отдельно)"
+elif [ -f "$TG_INSTALL_PRE" ]; then
+  bad "tg-plugin/install.sh не чинит битую ссылку node_modules"
+fi
+
 # И тот же запрет конвейера, что для claude, — но у соседа: bun там ставился
 # через `curl … | bash`, а под set -e + pipefail это роняет скрипт молча.
-TG_INSTALL="../tg-plugin/install.sh"
+TG_INSTALL="$TG_INSTALL_PRE"
 if [ -f "$TG_INSTALL" ]; then
   if grep -vE '^[[:space:]]*#' "$TG_INSTALL" | grep -qE 'curl [^|]*\| *bash'; then
     bad "tg-plugin ставит bun конвейером curl|bash — ошибка снова проглотится молча"

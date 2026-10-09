@@ -107,6 +107,10 @@ for part in "${PARTS[@]}"; do
 done
 # Имя пользователя в подсказке не случайно: модули ищет сессия агента в своём
 # $HOME, и bun install от root положил бы их не туда (а то и root'ом по праву).
+# Ссылку tar положил бы в копию ссылкой же, и рой в /opt зависел бы от $HOME
+# пользователя (а на другой машине — от несуществующего пути).
+[ -L "$SOURCE/$PLUGIN_MODULES" ] \
+  && die "$SOURCE/$PLUGIN_MODULES — ссылка, а не каталог. Уберите её и поставьте зависимости заново: rm $SOURCE/$PLUGIN_MODULES && runuser -u $OWNER -- bash $SOURCE/tg-plugin/install.sh"
 [ -d "$SOURCE/$PLUGIN_MODULES" ] \
   || die "нет $SOURCE/$PLUGIN_MODULES — зависимости плагина не установлены (bun install). Поставьте их от $OWNER: runuser -u $OWNER -- bash $SOURCE/tg-plugin/install.sh"
 # Зависимости плагина копируются как есть, из них ничего не собирается. Если

@@ -51,6 +51,8 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Значки и цвета вывода — общие для всей установки, см. orchestration/lib/ui.sh.
 # shellcheck source=orchestration/lib/ui.sh
 . "$REPO_DIR/orchestration/lib/ui.sh"
+# clear_foreign_modules: битая ссылка node_modules ломает bun install наглухо.
+. "$REPO_DIR/orchestration/lib/plugin.sh"
 
 MODE="full"
 [ "${1:-}" = "--test-only" ] && MODE="test"
@@ -725,6 +727,9 @@ fi
 # и прежний код лишь писал «ещё не установлен». Агент поднимался немым, а
 # оператор узнавал об этом много позже — по «нет node_modules» на сборке копии
 # роя, без единого намёка на причину (09.10.2026, установка у клиента).
+# Ссылка node_modules из чужого $HOME (дерево скопировали с другой машины)
+# роняет bun install с ENOENT и сама не исчезает — убираем до всех проверок.
+[ -n "$TG" ] && [ -d "$TG/plugin" ] && clear_foreign_modules "$TG/plugin"
 if [ "${INSTALL_TG_LOCAL:-0}" != "1" ] && [ -n "$TG" ] && [ "$TG" = "$TG_SIBLING" ] \
    && [ -f "$TG/install.sh" ]; then
   INSTALL_TG_LOCAL=1
@@ -788,6 +793,7 @@ if [ "$MODE" = "full" ] && [ -n "$TG" ] && [ "$TG" = "$MONO_ROOT_NOW/tg-plugin" 
   # Не только когда их нет совсем: после git pull с новой зависимостью lock
   # новее node_modules, и хелпер копии откажется деплоить устаревшие модули.
   TG_DEPS_STALE=0
+  clear_foreign_modules "$TG/plugin"
   [ -d "$TG/plugin/node_modules" ] || TG_DEPS_STALE=1
   for _lock in "$TG/plugin/bun.lock" "$TG/plugin/bun.lockb"; do
     [ -f "$_lock" ] && [ "$_lock" -nt "$TG/plugin/node_modules" ] && TG_DEPS_STALE=1

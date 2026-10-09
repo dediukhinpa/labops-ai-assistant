@@ -197,6 +197,9 @@ done
 [ -n "$TG_PLUGIN_DIR" ] && ok "labops-tg-plugin: $TG_PLUGIN_DIR" || warn "labops-tg-plugin не найден — Telegram пропущу (задайте TG_PLUGIN_DIR)"
 # Свежий клон плагина без node_modules — канал умирает молча при старте.
 # Ставим зависимости здесь, а не надеемся, что кто-то уже сделал bun install.
+# Битая ссылка node_modules из чужого $HOME даёт то же «нет каталога», но
+# bun install её не переживает — убираем до проверки.
+[ -n "$TG_PLUGIN_DIR" ] && clear_foreign_modules "$TG_PLUGIN_DIR/plugin"
 if [ -n "$TG_PLUGIN_DIR" ] && [ ! -d "$TG_PLUGIN_DIR/plugin/node_modules" ]; then
   BUN_BIN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
   if [ -x "$BUN_BIN" ]; then

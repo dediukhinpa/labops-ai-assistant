@@ -138,6 +138,15 @@ fi
 
 # ─── 2. Зависимости плагина ──────────────────────────────────────
 say "Установка зависимостей плагина (bun install)"
+# В воркспейсе агента node_modules — симлинк в общий checkout (абсолютный путь).
+# Если дерево скопировали на другую машину или в другой $HOME, ссылка висит в
+# никуда: bun install падает `ENOENT: could not open the "node_modules"
+# directory`, сам её не убирает, и повторные запуски установки бесполезны
+# (09.10.2026: у клиента ссылка вела в /home/labops чужой машины).
+if [ -L "$PLUGIN_DIR/node_modules" ] && [ ! -d "$PLUGIN_DIR/node_modules" ]; then
+  warn "node_modules — битая ссылка на $(readlink "$PLUGIN_DIR/node_modules") — убираю"
+  rm -f "$PLUGIN_DIR/node_modules"
+fi
 ( cd "$PLUGIN_DIR" && bun install )
 ok "зависимости установлены"
 
