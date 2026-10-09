@@ -108,6 +108,18 @@ touch "$SRC/tg-plugin/plugin/node_modules"
 run
 [ "$RC" -eq 0 ] || fail "после установки зависимостей деплой не прошёл: $(cat "$TMP/out")"
 
+# 5c-bis. node_modules ссылкой в чужой $HOME: tar утащил бы в /opt саму ссылку,
+#         и рой зависел бы от домашнего каталога пользователя.
+mv "$SRC/tg-plugin/plugin/node_modules" "$TMP/real-modules"
+ln -s "$TMP/real-modules" "$SRC/tg-plugin/plugin/node_modules"
+run
+[ "$RC" -ne 0 ] || fail "принят деплой со ссылкой вместо node_modules"
+grep -q 'ссылка' "$TMP/out" || fail "в отказе не сказано про ссылку: $(cat "$TMP/out")"
+rm -f "$SRC/tg-plugin/plugin/node_modules"
+mv "$TMP/real-modules" "$SRC/tg-plugin/plugin/node_modules"
+run
+[ "$RC" -eq 0 ] || fail "после замены ссылки каталогом деплой не прошёл: $(cat "$TMP/out")"
+
 # 5d. Подмена каталога: и обменом одним вызовом, и откатом на два
 #     переименования копия остаётся целой, а временных каталогов не остаётся.
 echo stray2 > "$TARGET/stray2"

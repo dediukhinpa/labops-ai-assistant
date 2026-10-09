@@ -51,6 +51,8 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Значки и цвета вывода — общие для всей установки, см. orchestration/lib/ui.sh.
 # shellcheck source=orchestration/lib/ui.sh
 . "$REPO_DIR/orchestration/lib/ui.sh"
+# clear_foreign_modules: битая ссылка node_modules ломает bun install наглухо.
+. "$REPO_DIR/orchestration/lib/plugin.sh"
 
 MODE="full"
 [ "${1:-}" = "--test-only" ] && MODE="test"
@@ -720,8 +722,23 @@ else
   fi
 fi
 
+# Канал ставим и тогда, когда install.sh архитектуры запустили напрямую, а не
+# через корневой install.sh монорепо: INSTALL_TG_LOCAL в этом случае не выставлен,
+# и прежний код лишь писал «ещё не установлен». Агент поднимался немым, а
+# оператор узнавал об этом много позже — по «нет node_modules» на сборке копии
+# роя, без единого намёка на причину (09.10.2026, установка у клиента).
+# Ссылка node_modules из чужого $HOME (дерево скопировали с другой машины)
+# роняет bun install с ENOENT и сама не исчезает — убираем до всех проверок.
+[ -n "$TG" ] && [ -d "$TG/plugin" ] && clear_foreign_modules "$TG/plugin"
+if [ "${INSTALL_TG_LOCAL:-0}" != "1" ] && [ -n "$TG" ] && [ "$TG" = "$TG_SIBLING" ] \
+   && [ -f "$TG/install.sh" ]; then
+  INSTALL_TG_LOCAL=1
+  note "tg-plugin — сосед по монорепо, ставлю его в этом же прогоне"
+fi
 if [ -n "$TG" ] && [ ! -d "$TG/plugin/node_modules" ]; then
-  if [ "${INSTALL_TG_LOCAL:-0}" = "1" ] && [ -x "$TG/install.sh" ]; then
+  # -f, а не -x: архив с GitHub (zip/tarball) теряет бит исполнения, и прежнее
+  # условие уводило установку в warn на ровном месте.
+  if [ "${INSTALL_TG_LOCAL:-0}" = "1" ] && [ -f "$TG/install.sh" ]; then
     # Монорепо (общий install.sh): ставим Telegram-канал автоматически,
     # в контексте того же (не-root) пользователя, до создания агента.
     say "Установка Telegram-канала (labops-tg-plugin)"
@@ -735,7 +752,7 @@ if [ -n "$TG" ] && [ ! -d "$TG/plugin/node_modules" ]; then
     # много позже — по «bun не найден» у созданного агента, без единого намёка,
     # что именно не получилось (12.09.2026, установка у клиента).
     TG_LOG="$(mktemp)"
-    if ( cd "$TG" && LABOPS_AGENT_FLOW=1 ./install.sh ) 2>&1 | tee "$TG_LOG"; then
+    if ( cd "$TG" && LABOPS_AGENT_FLOW=1 bash ./install.sh ) 2>&1 | tee "$TG_LOG"; then
       :
     else
       warn "установка labops-tg-plugin завершилась с ошибкой — Telegram-канал будет недоступен. Последние строки её вывода:"
@@ -743,7 +760,11 @@ if [ -n "$TG" ] && [ ! -d "$TG/plugin/node_modules" ]; then
       warn "полный вывод: $TG_LOG"
     fi
   else
-    warn "labops-tg-plugin ещё не установлен ($TG) — Telegram-канал будет недоступен, пока не выполните: cd $TG && ./install.sh"
+    if [ ! -f "$TG/install.sh" ]; then
+      warn "в $TG нет install.sh — дерево плагина неполное, перекачайте репозиторий"
+    else
+      warn "labops-tg-plugin ещё не установлен ($TG) — Telegram-канал будет недоступен, пока не выполните: bash $TG/install.sh"
+    fi
   fi
 fi
 # second-brain по канону ставится ОТДЕЛЬНЫМ вторым шагом ПОСЛЕ архитектуры,
@@ -772,12 +793,28 @@ if [ "$MODE" = "full" ] && [ -n "$TG" ] && [ "$TG" = "$MONO_ROOT_NOW/tg-plugin" 
   # Не только когда их нет совсем: после git pull с новой зависимостью lock
   # новее node_modules, и хелпер копии откажется деплоить устаревшие модули.
   TG_DEPS_STALE=0
+  clear_foreign_modules "$TG/plugin"
   [ -d "$TG/plugin/node_modules" ] || TG_DEPS_STALE=1
   for _lock in "$TG/plugin/bun.lock" "$TG/plugin/bun.lockb"; do
     [ -f "$_lock" ] && [ "$_lock" -nt "$TG/plugin/node_modules" ] && TG_DEPS_STALE=1
   done
-  if [ "$TG_DEPS_STALE" = "1" ] && command -v bun >/dev/null 2>&1; then
-    ( cd "$TG/plugin" && bun install --silent ) || true
+  # Сбой bun install раньше глотался (`--silent ... || true`), и дальше хелпер
+  # копии отказывался собирать рой сообщением «нет tg-plugin/plugin/node_modules»
+  # — без причины, по которой модулей нет. Вывод сохраняем и показываем.
+  if [ "$TG_DEPS_STALE" = "1" ]; then
+    if command -v bun >/dev/null 2>&1; then
+      step "ставлю зависимости плагина (bun install в $TG/plugin)"
+      BUN_LOG="$(mktemp)"
+      if ( cd "$TG/plugin" && bun install ) >"$BUN_LOG" 2>&1; then
+        ok "зависимости плагина установлены"
+      else
+        warn "bun install в $TG/plugin не прошёл — Telegram-канал не запустится, а копия роя не соберётся. Последние строки:"
+        tail -n 15 "$BUN_LOG" | sed 's/^/      /'
+        warn "полный вывод: $BUN_LOG"
+      fi
+    else
+      warn "в $TG/plugin нет node_modules, а bun недоступен — поставьте bun под пользователем агента и повторите: bash $TG/install.sh"
+    fi
   fi
   if [ ! -x "$LABOPS_RUNTIME_HELPER" ]; then
     warn "нет $LABOPS_RUNTIME_HELPER — $RUNTIME_FALLBACK_HINT"

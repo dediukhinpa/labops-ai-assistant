@@ -71,6 +71,33 @@ grep -q 'console.log(2)' "$WS_A/labops-tg-plugin/plugin/src/server.ts" \
 [ -f "$WS_A/labops-tg-plugin/plugin/src/state/store.js" ] \
   && ok "src/state still present after refresh" || bad "src/state lost on refresh"
 
+# ---- case 6: node_modules link from another machine is repaired ------------
+# Дерево скопировали на другой хост: ссылка абсолютная и указывает в никуда.
+# bun install на ней падает ENOENT и сам её не убирает, поэтому её обязаны
+# убрать мы — иначе установка у клиента встаёт насмерть (09.10.2026).
+WS_E="$TMP/lab/epsilon/.claude"; mkdir -p "$WS_E/labops-tg-plugin/plugin"
+ln -s "/home/other-machine/tg-plugin/plugin/node_modules" \
+      "$WS_E/labops-tg-plugin/plugin/node_modules"
+clear_foreign_modules "$WS_E/labops-tg-plugin/plugin" 2>/dev/null
+[ ! -e "$WS_E/labops-tg-plugin/plugin/node_modules" ] \
+  && [ ! -L "$WS_E/labops-tg-plugin/plugin/node_modules" ] \
+  && ok "dangling node_modules link removed" || bad "dangling link survived — bun install would fail"
+provision_plugin "$SRC" "$WS_E" >/dev/null 2>&1
+[ -f "$WS_E/labops-tg-plugin/plugin/node_modules/dep/index.js" ] \
+  && ok "provision relinked node_modules to the local checkout" || bad "node_modules still broken"
+# Ссылка на ЖИВОЙ каталог — рабочая, её трогать нельзя (экономит ~60 МБ).
+before="$(readlink "$WS_A/labops-tg-plugin/plugin/node_modules")"
+clear_foreign_modules "$WS_A/labops-tg-plugin/plugin" 2>/dev/null
+[ "$(readlink "$WS_A/labops-tg-plugin/plugin/node_modules")" = "$before" ] \
+  && ok "working node_modules link left alone" || bad "working link removed"
+# Ссылка в ДРУГОЙ живой checkout переставляется на текущий источник.
+SRC2="$TMP/tg-plugin-old"; mkdir -p "$SRC2/plugin/node_modules/dep"
+rm -f "$WS_B/labops-tg-plugin/plugin/node_modules"
+ln -s "$SRC2/plugin/node_modules" "$WS_B/labops-tg-plugin/plugin/node_modules"
+provision_plugin "$SRC" "$WS_B" >/dev/null 2>&1
+[ "$(readlink "$WS_B/labops-tg-plugin/plugin/node_modules")" = "$SRC/plugin/node_modules" ] \
+  && ok "link into a foreign checkout repointed to the current source" || bad "foreign checkout link kept"
+
 # ---- case 5: missing source → non-zero, no partial dir ----------------------
 WS_D="$TMP/lab/delta/.claude"; mkdir -p "$WS_D"
 provision_plugin "$TMP/nope" "$WS_D" >/dev/null 2>&1 \

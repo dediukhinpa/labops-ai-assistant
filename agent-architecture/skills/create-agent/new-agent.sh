@@ -197,13 +197,23 @@ done
 [ -n "$TG_PLUGIN_DIR" ] && ok "labops-tg-plugin: $TG_PLUGIN_DIR" || warn "labops-tg-plugin не найден — Telegram пропущу (задайте TG_PLUGIN_DIR)"
 # Свежий клон плагина без node_modules — канал умирает молча при старте.
 # Ставим зависимости здесь, а не надеемся, что кто-то уже сделал bun install.
+# Битая ссылка node_modules из чужого $HOME даёт то же «нет каталога», но
+# bun install её не переживает — убираем до проверки.
+[ -n "$TG_PLUGIN_DIR" ] && clear_foreign_modules "$TG_PLUGIN_DIR/plugin"
 if [ -n "$TG_PLUGIN_DIR" ] && [ ! -d "$TG_PLUGIN_DIR/plugin/node_modules" ]; then
   BUN_BIN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
   if [ -x "$BUN_BIN" ]; then
     step "ставлю зависимости плагина (bun install в $TG_PLUGIN_DIR/plugin)"
-    ( cd "$TG_PLUGIN_DIR/plugin" && "$BUN_BIN" install --silent ) \
-      && ok "bun install: зависимости плагина установлены" \
-      || DEGRADED+=("bun install в $TG_PLUGIN_DIR/plugin провалился — канал не запустится")
+    # Вывод сохраняем: прежний --silent прятал причину (нет сети, нет прав на
+    # каталог), и оператор видел только «провалился».
+    BUN_LOG="$(mktemp)"
+    if ( cd "$TG_PLUGIN_DIR/plugin" && "$BUN_BIN" install ) >"$BUN_LOG" 2>&1; then
+      ok "bun install: зависимости плагина установлены"
+    else
+      warn "bun install в $TG_PLUGIN_DIR/plugin не прошёл. Последние строки:"
+      tail -n 15 "$BUN_LOG" | sed 's/^/      /'
+      DEGRADED+=("bun install в $TG_PLUGIN_DIR/plugin провалился — канал не запустится (вывод: $BUN_LOG)")
+    fi
   else
     DEGRADED+=("в $TG_PLUGIN_DIR/plugin нет node_modules, а bun недоступен — канал не запустится")
   fi

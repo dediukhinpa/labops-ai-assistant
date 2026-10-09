@@ -60,6 +60,9 @@ cp "$HERE/install.sh" "$REPO/install.sh"
 cp "$HERE/orchestration/lib/preflight.sh" "$REPO/orchestration/lib/preflight.sh"
 cp "$HERE/orchestration/lib/sudo-compat.sh" "$REPO/orchestration/lib/sudo-compat.sh"
 cp "$HERE/orchestration/lib/ui.sh" "$REPO/orchestration/lib/ui.sh"
+# plugin.sh даёт clear_foreign_modules — без него install.sh упадёт на сорсе,
+# и тест решит, что шаг 0 сломан, хотя сломана как раз копия.
+cp "$HERE/orchestration/lib/plugin.sh" "$REPO/orchestration/lib/plugin.sh"
 
 # 1. Закрытый хост (403) — установка обязана остановиться.
 make_curl_stub 403
