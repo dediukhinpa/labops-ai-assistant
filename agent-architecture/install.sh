@@ -144,11 +144,19 @@ grant_agent_autostart() {
 # root, из какого checkout хелпер labops-runtime-deploy собирает копию роя в
 # $LABOPS_RUNTIME_DIR. Источник решает root, а не тот, кто зовёт хелпер через sudo.
 write_runtime_conf() {
-  local owner="$1" source="$2" lab="$3" tmp
+  local owner="$1" source="$2" lab="$3" tmp branch
   tmp="$(mktemp)"
   printf '# Автосоздано labops-agent-architecture/install.sh.\n' > "$tmp"
   printf '# Источник копии роя для %s.\n' "$LABOPS_RUNTIME_HELPER" >> "$tmp"
   printf 'SOURCE=%s\nOWNER=%s\nLAB=%s\n' "$source" "$owner" "$lab" >> "$tmp"
+  # Хелпер по умолчанию собирает копию только с main, иначе переключённый на
+  # фичу checkout молча уехал бы во весь рой. Если ставят с другой ветки —
+  # запоминаем её здесь (решение root, не вызывающего) и говорим об этом.
+  branch="$(git -C "$source" symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  if [ -n "$branch" ] && [ "$branch" != "main" ]; then
+    printf 'BRANCH=%s\n' "$branch" >> "$tmp"
+    warn "копия роя закреплена за веткой $branch — смените ветку и перезапустите install.sh, чтобы вернуться на main"
+  fi
   if $SUDO install -d -m 755 "$(dirname "$LABOPS_RUNTIME_CONF")" \
      && $SUDO install -m 644 -o root -g root "$tmp" "$LABOPS_RUNTIME_CONF"; then
     rm -f "$tmp"
@@ -761,7 +769,14 @@ RUNTIME_FALLBACK_HINT="агенты работают из $MONO_ROOT_NOW; не �
 if [ "$MODE" = "full" ] && [ -n "$TG" ] && [ "$TG" = "$MONO_ROOT_NOW/tg-plugin" ]; then
   say "Копия роя в $LABOPS_RUNTIME_DIR"
   # Копия только читается, поэтому зависимости плагина ставим в checkout до неё.
-  if [ ! -d "$TG/plugin/node_modules" ] && command -v bun >/dev/null 2>&1; then
+  # Не только когда их нет совсем: после git pull с новой зависимостью lock
+  # новее node_modules, и хелпер копии откажется деплоить устаревшие модули.
+  TG_DEPS_STALE=0
+  [ -d "$TG/plugin/node_modules" ] || TG_DEPS_STALE=1
+  for _lock in "$TG/plugin/bun.lock" "$TG/plugin/bun.lockb"; do
+    [ -f "$_lock" ] && [ "$_lock" -nt "$TG/plugin/node_modules" ] && TG_DEPS_STALE=1
+  done
+  if [ "$TG_DEPS_STALE" = "1" ] && command -v bun >/dev/null 2>&1; then
     ( cd "$TG/plugin" && bun install --silent ) || true
   fi
   if [ ! -x "$LABOPS_RUNTIME_HELPER" ]; then

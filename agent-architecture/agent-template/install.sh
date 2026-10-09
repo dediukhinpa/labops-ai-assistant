@@ -383,12 +383,24 @@ if [ -d "$SHARED_SKILLS_SRC" ]; then
     if [ "$ENABLE_ALL" != "n" ]; then
         # Копия, а не ссылка в репозиторий: удалённый или перенесённый клон
         # не должен уносить скиллы у всех агентов (см. orchestration/lib/skills.sh).
-        sync_shared_skills "$SHARED_SKILLS_SRC" "$LAB_DIR"
-        if link_workspace_skills "$WORKSPACE" "$LAB_DIR"; then
-            log "skills/ -> $(shared_skills_dir "$LAB_DIR")"
-        else
-            note "Skipping: skills/ is the agent's own directory"
+        # Без force: общая папка — одна на всех агентов, и источник здесь выбран
+        # не оператором, а поиском в new-agent.sh. Из устаревшего клона такая
+        # синхронизация откатывала скиллы всему рою (ревью 2026-09-20).
+        skills_rc=0
+        sync_shared_skills "$SHARED_SKILLS_SRC" "$LAB_DIR" || skills_rc=$?
+        if [ "$skills_rc" -eq 3 ]; then
+            note "Shared skills kept: they come from another checkout (see above)"
+        elif [ "$skills_rc" -ne 0 ]; then
+            warn "Shared skills not updated (code $skills_rc)"
         fi
+        link_rc=0
+        link_workspace_skills "$WORKSPACE" "$LAB_DIR" || link_rc=$?
+        case "$link_rc" in
+            0) log "skills/ -> $(shared_skills_dir "$LAB_DIR")" ;;
+            2) note "Skipping: skills/ is the agent's own directory" ;;
+            3) note "Skipping: skills/ is pinned by .labops-keep-skills" ;;
+            *) warn "skills/ not linked (code $link_rc)" ;;
+        esac
     else
         warn "Skills not linked. Later: bash ${DISTRO_ROOT}/orchestration/sync-skills.sh"
     fi

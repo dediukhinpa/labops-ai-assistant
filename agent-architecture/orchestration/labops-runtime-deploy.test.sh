@@ -21,7 +21,7 @@ tar -C "$ARCH/.." -cf - --exclude=node_modules --exclude=.git agent-architecture
 echo '{}' > "$SRC/tg-plugin/plugin/package.json"
 echo mod > "$SRC/tg-plugin/plugin/node_modules/dep/index.js"
 printf 'node_modules/\nsecret.env\n' > "$SRC/.gitignore"
-git -C "$SRC" init -q
+git -C "$SRC" init -q -b main
 git -C "$SRC" -c user.email=t@t -c user.name=t add -A
 git -C "$SRC" -c user.email=t@t -c user.name=t commit -qm init
 echo "TOKEN=1" > "$SRC/secret.env"
@@ -77,6 +77,44 @@ echo stray > "$TARGET/stray"
 run
 [ "$RC" -eq 0 ] || fail "повторный деплой упал: $(cat "$TMP/out")"
 [ ! -e "$TARGET/stray" ] || fail "прежняя копия не заменена"
+ls -A "$(dirname "$TARGET")" | grep -qE '\.(new|old)-' && fail "остались временные каталоги"
+
+# 5b. Копия собирается только с рабочей ветки: переключённый на фичу checkout
+#     иначе уезжал во весь рой молча по первому же деплою.
+git -C "$SRC" checkout -q -b feature/probe
+run
+[ "$RC" -ne 0 ] || fail "принята сборка с ветки feature/probe"
+grep -q 'feature/probe' "$TMP/out" || fail "в отказе не названа ветка: $(cat "$TMP/out")"
+[ -f "$TARGET/COMMIT" ] || fail "отказ по ветке задел прежнюю копию"
+# Другую ветку разрешает только root — ключом в настройках.
+printf 'SOURCE=%s\nOWNER=%s\nLAB=%s\nBRANCH=feature/probe\n' "$SRC" "$ME" "$TMP/lab" > "$CONF"
+run
+[ "$RC" -eq 0 ] || fail "BRANCH из настроек не сработал: $(cat "$TMP/out")"
+printf 'SOURCE=%s\nOWNER=%s\nLAB=%s\n' "$SRC" "$ME" "$TMP/lab" > "$CONF"
+git -C "$SRC" checkout -q main
+# Открепившийся HEAD — тоже отказ, а не сборка непонятно чего.
+git -C "$SRC" checkout -q --detach
+run
+[ "$RC" -ne 0 ] || fail "принята сборка с открепившегося HEAD"
+git -C "$SRC" checkout -q main
+
+# 5c. Устаревшие зависимости плагина не уезжают в копию: канал у перезапущенных
+#     агентов упал бы молча, уже после деплоя.
+touch "$SRC/tg-plugin/plugin/bun.lock"
+run
+[ "$RC" -ne 0 ] || fail "принят деплой с lock новее node_modules"
+grep -q 'bun install' "$TMP/out" || fail "не подсказано bun install: $(cat "$TMP/out")"
+touch "$SRC/tg-plugin/plugin/node_modules"
+run
+[ "$RC" -eq 0 ] || fail "после установки зависимостей деплой не прошёл: $(cat "$TMP/out")"
+
+# 5d. Подмена каталога: и обменом одним вызовом, и откатом на два
+#     переименования копия остаётся целой, а временных каталогов не остаётся.
+echo stray2 > "$TARGET/stray2"
+LABOPS_RUNTIME_NO_EXCHANGE=1 run
+[ "$RC" -eq 0 ] || fail "деплой без обмена каталогов упал: $(cat "$TMP/out")"
+[ ! -e "$TARGET/stray2" ] || fail "откат на переименования не заменил копию"
+[ -x "$TARGET/agent-architecture/orchestration/watchdog.sh" ] || fail "копия после откатного пути битая"
 ls -A "$(dirname "$TARGET")" | grep -qE '\.(new|old)-' && fail "остались временные каталоги"
 
 # 6. Аргументы и настройки проверяются.

@@ -1196,20 +1196,85 @@ else
   bad "установщик снова ссылается на skills/ в репозитории"
 fi
 
+# Находки 4 и 5 ревью 2026-09-20: общая папка одна на всех агентов, а
+# создание агента шло из источника, который выбрал поиск, — скиллы всего роя
+# откатывались из устаревшего клона. И ссылку skills/, направленную
+# оператором в свой каталог, сбрасывал каждый деплой копии роя.
+if grep -q 'sync_shared_skills "\$REPO_DIR/skills" "\$LAB_DIR" 1' orchestration/sync-skills.sh \
+   && grep -q 'SKILLS_KEEP_MARK=".labops-keep-skills"' orchestration/lib/skills.sh \
+   && grep -q 'return 3' orchestration/lib/skills.sh; then
+  ok "чужой источник не перезаписывает общие скиллы, метка оператора держится"
+else
+  bad "создание агента снова перезаписывает общие скиллы всему рою"
+fi
+
 echo "── 27. Агенты работают из копии роя в /opt, а не из checkout ──"
 # 17.09.2026: watchdog, шаблон агента и плагин брались из checkout оператора —
 # удалённый или переключённый на другую ветку клон ронял живых агентов.
-unit "labops-runtime-deploy: копия из git HEAD, замена целиком — юнит-тест зелёный" \
-     "labops-runtime-deploy: юнит-тест провален (orchestration/labops-runtime-deploy.test.sh)" \
-     bash orchestration/labops-runtime-deploy.test.sh
+# Под root этот тест запускать нельзя: хелпер намеренно игнорирует подмену
+# путей через окружение (иначе вызывающий подсунул бы свой источник кода), и от
+# root он пересобрал бы НАСТОЯЩУЮ копию в /opt из текущего HEAD, да ещё
+# перелинковал скиллы живым агентам. А на хосте без /etc/labops/runtime.conf
+# просто упал бы и остановил установку на self-test (ревью 2026-09-20).
+if [ "$(id -u)" -eq 0 ]; then
+  note "labops-runtime-deploy: юнит-тест пропущен под root (деплой задел бы живую копию)"
+else
+  unit "labops-runtime-deploy: копия из git HEAD, замена целиком — юнит-тест зелёный" \
+       "labops-runtime-deploy: юнит-тест провален (orchestration/labops-runtime-deploy.test.sh)" \
+       bash orchestration/labops-runtime-deploy.test.sh
+fi
 if grep -q 'install -m 755 "\$RUNTIME_HELPER_SRC" "\$LABOPS_RUNTIME_HELPER"' install.sh \
    && grep -q 'write_runtime_conf "\$AGENT_OS_USER" "\$DEST_ROOT"' install.sh \
    && grep -q 'bash "\$RUNTIME_ARCH/skills/create-agent/new-agent.sh"' install.sh \
-   && grep -q '/opt/labops/ai-assistant/agent-architecture' skills/create-agent/new-agent.sh; then
+   && grep -q 'RUNTIME_ARCH_CAND="\$_RT_DIR/agent-architecture"' skills/create-agent/new-agent.sh; then
   ok "install.sh ставит хелпер копии и создаёт агента из копии роя"
 else
   bad "install.sh/new-agent.sh не используют копию роя в /opt"
 fi
+# Находка 2: копия в /opt должна искаться РАНЬШЕ метки .labops-repo — иначе
+# sync-skills.sh из клона переводил следующего агента обратно на клон.
+if python3 - <<'PYCHK'
+import re, sys
+block = re.search(r"^for cand in(.*?)^done", open("skills/create-agent/new-agent.sh").read(),
+                  re.S | re.M).group(1)
+src = open("skills/create-agent/new-agent.sh").read()
+# И копия учитывается только зарегистрированной: по тому же пути лежит
+# клиентская копия labops-web-app, и она может быть старше.
+gated = 'RUNTIME_ARCH_CAND="$_RT_DIR/agent-architecture"' in src and '_RT_CONF' in src
+opt = block.index("$RUNTIME_ARCH_CAND")
+mark = block.index(".labops-repo")
+sys.exit(0 if opt < mark and gated else 1)
+PYCHK
+then
+  ok "new-agent ищет копию роя раньше метки репозитория"
+else
+  bad "new-agent снова предпочитает метку .labops-repo копии в /opt"
+fi
+
+# Находка 3: копия собирается только с рабочей ветки (ключ BRANCH — у root).
+if grep -q 'BRANCH_NOW" != "\$BRANCH_WANT' orchestration/labops-runtime-deploy.sh \
+   && grep -q 'DEFAULT_BRANCH="main"' orchestration/labops-runtime-deploy.sh; then
+  ok "деплой копии отказывает с чужой ветки"
+else
+  bad "деплой копии соберёт рой с любой ветки checkout"
+fi
+
+# Находка 6: устаревшие node_modules не уезжают в копию молча.
+if grep -q 'bun.lock" "\$PLUGIN_DIR/bun.lockb' orchestration/labops-runtime-deploy.sh \
+   && grep -q 'TG_DEPS_STALE' install.sh; then
+  ok "деплой сверяет зависимости плагина с lock-файлом"
+else
+  bad "деплой копии не замечает устаревшие node_modules плагина"
+fi
+
+# Мелочь из ревью: подмена каталога без зазора, когда ядро умеет обмен.
+if grep -q 'RENAME_EXCHANGE' orchestration/labops-runtime-deploy.sh \
+   && grep -qF 'trap '"'"'rm -rf "$STAGE"; [ -e "$TARGET" ]' orchestration/labops-runtime-deploy.sh; then
+  ok "копия подменяется обменом каталогов, с восстановлением на откате"
+else
+  bad "подмена копии оставляет зазор без каталога и без восстановления"
+fi
+
 # Источник копии задаёт только root: у хелпера нет аргумента пути.
 if ! grep -qE 'LABOPS_RUNTIME_(CONF|DIR).*\$\{?1' orchestration/labops-runtime-deploy.sh \
    && grep -q 'if \[ "\$(id -u)" -ne 0 \]; then' orchestration/labops-runtime-deploy.sh; then
