@@ -12,6 +12,8 @@ REPO_DIR="$(cd "$HERE/.." && pwd)"
 LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"
 # shellcheck source=lib/skills.sh
 . "$HERE/lib/skills.sh"
+# shellcheck source=lib/skills-external.sh
+. "$HERE/lib/skills-external.sh"
 
 [ -d "$LAB_DIR" ] || { echo "нет лаборатории агентов: $LAB_DIR" >&2; exit 1; }
 
@@ -19,6 +21,12 @@ echo "Синхронизация скиллов: $REPO_DIR/skills → $(shared_s
 # force=1: оператор запустил синхронизацию сам и указал источник явно, поэтому
 # защита от чужого источника (см. lib/skills.sh) здесь не нужна.
 sync_shared_skills "$REPO_DIR/skills" "$LAB_DIR" 1
+
+# Внешние скиллы ставятся по манифесту с закреплёнными коммитами. Недоступный
+# GitHub не должен обрывать синхронизацию: локальные скиллы уже обновлены.
+ext_rc=0
+sync_external_skills "$REPO_DIR/skills/external-skills.manifest" "$LAB_DIR" || ext_rc=$?
+[ "$ext_rc" -eq 0 ] || echo "ВНИМАНИЕ: внешние скиллы поставлены не полностью (код $ext_rc), повторите синхронизацию." >&2
 
 own=0
 for ws in "$LAB_DIR"/*/.claude; do
