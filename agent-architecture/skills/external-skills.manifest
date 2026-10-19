@@ -18,6 +18,9 @@ markdown-new          qwwiwi/public-gbrain-agentos  641cd6fb35bb40975a2174589f8f
 # qwwiwi/agentos-skills-public, MIT
 topic-monitor         qwwiwi/agentos-skills-public  3a8efdcaa8dce35ebaafd389e4b98ac79a0b0802  skills/topic-monitor
 
+# affaan-m/ecc, MIT. Нужны MCP-инструменты firecrawl и exa: без них скилл не работает.
+deep-research         affaan-m/ecc                  76aaa77df6adc5b889e689007bf99b9a4f74af34  skills/deep-research
+
 # --- content-video ---
 reels                 qwwiwi/agentos-skills-public  3a8efdcaa8dce35ebaafd389e4b98ac79a0b0802  skills/reels
 present               qwwiwi/agentos-skills-public  3a8efdcaa8dce35ebaafd389e4b98ac79a0b0802  skills/present
@@ -48,6 +51,5 @@ test-driven-development    obra/superpowers  bb92a77741419a4ab5f06e711a283343f1a
 # Только если нужен именно user-аккаунт Telegram (MTProto), не для ботов.
 telegram-chip         qwwiwi/public-gbrain-agentos  641cd6fb35bb40975a2174589f8fc3624adbea21  skills/telegram-chip
 
-# Не подключён: deep-research (источник не определён). customer-research,
-# competitor-profiling, social, web-design-guidelines, supergoal, skill-finder
-# лежат в skills/ файлами (см. THIRD_PARTY.md).
+# customer-research, competitor-profiling, social, web-design-guidelines, supergoal,
+# skill-finder лежат в skills/ файлами (см. THIRD_PARTY.md).
