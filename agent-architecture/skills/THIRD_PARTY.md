@@ -35,6 +35,12 @@ in CATALOG.md are NOT redistributed here — they remain under their own
 licenses at their original sources (Anthropic, public-gbrain-agentos,
 Superpowers, Codex plugin, skills.sh).
 
+## customer-research, competitor-profiling, social, web-design-guidelines, supergoal, skill-finder
+
+Copied as files from the client agent template of labops-web-app-v2
+(agent-template/skills/, English versions with operator data removed). The
+operator confirmed they are LabOps' own; no upstream attribution exists in the files.
+
 ## Skills installed from other repositories
 
 Not stored here. `external-skills.manifest` lists them with the exact commit

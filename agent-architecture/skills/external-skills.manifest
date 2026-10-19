@@ -48,6 +48,6 @@ test-driven-development    obra/superpowers  bb92a77741419a4ab5f06e711a283343f1a
 # Только если нужен именно user-аккаунт Telegram (MTProto), не для ботов.
 telegram-chip         qwwiwi/public-gbrain-agentos  641cd6fb35bb40975a2174589f8fc3624adbea21  skills/telegram-chip
 
-# Не подключены (источник в реестре skills.sh не определён): deep-research,
-# customer-research, competitor-profiling, social, web-design-guidelines,
-# supergoal, skill-finder.
+# Не подключён: deep-research (источник не определён). customer-research,
+# competitor-profiling, social, web-design-guidelines, supergoal, skill-finder
+# лежат в skills/ файлами (см. THIRD_PARTY.md).
