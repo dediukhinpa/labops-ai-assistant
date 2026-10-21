@@ -40,7 +40,6 @@ mcp-builder           anthropics/skills             dbd4588f9e1033efb41dad4bef2f
 skill-creator         anthropics/skills             dbd4588f9e1033efb41dad4bef2f7947c8993d44  skills/skill-creator
 frontend-design       anthropics/skills             dbd4588f9e1033efb41dad4bef2f7947c8993d44  skills/frontend-design
 mcp-api-build         qwwiwi/agentos-skills-public  3a8efdcaa8dce35ebaafd389e4b98ac79a0b0802  skills/mcp-api-build
-cross-review          qwwiwi/agentos-skills-public  3a8efdcaa8dce35ebaafd389e4b98ac79a0b0802  skills/cross-review
 # obra/superpowers, MIT
 brainstorming              obra/superpowers  bb92a77741419a4ab5f06e711a283343f1ada0c3  skills/brainstorming
 systematic-debugging       obra/superpowers  bb92a77741419a4ab5f06e711a283343f1ada0c3  skills/systematic-debugging
@@ -53,3 +52,4 @@ telegram-chip         qwwiwi/public-gbrain-agentos  641cd6fb35bb40975a2174589f8f
 
 # customer-research, competitor-profiling, social, web-design-guidelines, supergoal,
 # skill-finder лежат в skills/ файлами (см. THIRD_PARTY.md).
+# cross-review лежит в skills/ файлами: оригинал привязан к чужим серверам (см. THIRD_PARTY.md).
