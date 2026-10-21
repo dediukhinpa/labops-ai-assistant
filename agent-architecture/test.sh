@@ -1260,6 +1260,17 @@ echo "── 26. Скиллы агентов — копия, а не ссылк�
 unit "skills.sh: копия в shared/skills, перевод ссылок — юнит-тест зелёный" \
      "skills.sh: юнит-тест провален (orchestration/lib/skills.test.sh)" \
      bash orchestration/lib/skills.test.sh
+unit "skills-external.sh: внешние скиллы по манифесту с SHA — юнит-тест зелёный" \
+     "skills-external.sh: юнит-тест провален (orchestration/lib/skills-external.test.sh)" \
+     bash orchestration/lib/skills-external.test.sh
+# Внешний скилл исполняется агентом без подтверждений, поэтому «плавающие» ссылки
+# (ветка вместо коммита) в манифесте недопустимы.
+if grep -vE '^[[:space:]]*(#|$)' skills/external-skills.manifest \
+     | awk '{ if ($3 !~ /^[0-9a-f]{40}$/) bad=1 } END { exit bad }'; then
+  ok "external-skills.manifest: каждый скилл закреплён 40-значным SHA коммита"
+else
+  bad "external-skills.manifest: есть строка без SHA коммита"
+fi
 if grep -q 'sync_shared_skills "\$SHARED_SKILLS_SRC" "\$LAB_DIR"' agent-template/install.sh \
    && ! grep -qE 'ln -s +"\$SHARED_SKILLS_SRC"' agent-template/install.sh \
    && ! grep -qE 'ln -s +"\$REPO_DIR/skills' install.sh; then

@@ -424,6 +424,15 @@ so prefer the helper where it exists. Skills you put into the shared directory y
 left alone, and so is an agent whose `skills/` you pinned with a `.labops-keep-skills` file in
 its workspace.
 
+Besides the bundle, `install.sh` and `sync-skills.sh` install **external skills** (research,
+documents, development, Telegram user-account) from other authors' repositories.
+[`skills/external-skills.manifest`](skills/external-skills.manifest) lists them, each pinned to a
+full commit SHA; nothing from those repositories is stored here, because their licenses are
+theirs (Anthropic's `docx`/`pptx`/`pdf`/`xlsx` are proprietary). Bumping a version means editing
+the SHA after reading the skill's diff: agents run with `--dangerously-skip-permissions`, so a
+floating `main` is not acceptable. A GitHub outage does not fail the install; re-run
+`sync-skills.sh` later. Attribution and licenses: [`skills/THIRD_PARTY.md`](skills/THIRD_PARTY.md).
+
 ## Runtime copy in `/opt/labops/ai-assistant`
 
 Agents do not run from your checkout either. `install.sh` puts a root-owned copy of the

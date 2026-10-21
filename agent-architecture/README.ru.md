@@ -423,6 +423,15 @@ task_claim   →  task_review  →  task_done
 вы сами положили в общую папку, не трогаются, как и агент, у которого `skills/` закреплён
 файлом `.labops-keep-skills` в воркспейсе.
 
+Кроме комплекта, `install.sh` и `sync-skills.sh` ставят **внешние скиллы** (исследования,
+документы, разработка, Telegram от user-аккаунта) из репозиториев других авторов.
+Список — [`skills/external-skills.manifest`](skills/external-skills.manifest), у каждого скилла
+закреплён полный SHA коммита. Файлы чужих репозиториев здесь не хранятся: лицензии у авторов
+свои (`docx`/`pptx`/`pdf`/`xlsx` Anthropic — проприетарные). Обновить версию — значит поправить
+SHA после просмотра диффа скилла: агенты работают с `--dangerously-skip-permissions`, плавающий
+`main` недопустим. Недоступный GitHub установку не роняет — повторите `sync-skills.sh` позже.
+Авторство и лицензии: [`skills/THIRD_PARTY.md`](skills/THIRD_PARTY.md).
+
 ## Копия роя в `/opt/labops/ai-assistant`
 
 Агенты работают и не из вашего клона. `install.sh` кладёт в `/opt/labops/ai-assistant`

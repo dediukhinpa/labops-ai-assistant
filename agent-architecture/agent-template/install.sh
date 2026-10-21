@@ -35,6 +35,8 @@ SHARED_SKILLS_SRC="${DISTRO_ROOT}/skills"
 . "${DISTRO_ROOT}/orchestration/lib/ui.sh"
 # shellcheck source=../orchestration/lib/skills.sh
 . "${DISTRO_ROOT}/orchestration/lib/skills.sh"
+# shellcheck source=../orchestration/lib/skills-external.sh
+. "${DISTRO_ROOT}/orchestration/lib/skills-external.sh"
 log()   { ok "$1"; }
 ask()   { printf "${UI_INFO}[?]${UI_RESET} %s: " "$1"; }
 
@@ -392,6 +394,15 @@ if [ -d "$SHARED_SKILLS_SRC" ]; then
             note "Shared skills kept: they come from another checkout (see above)"
         elif [ "$skills_rc" -ne 0 ]; then
             warn "Shared skills not updated (code $skills_rc)"
+        fi
+        # Внешние скиллы (docx, pdf, research и др.) скачиваются по манифесту с
+        # закреплёнными коммитами. Только если свои скиллы встали: при коде 3 общая
+        # папка принадлежит другому клону, и дописывать в неё чужие скиллы нечего.
+        # Сбой сети установку не роняет: догнать можно через sync-skills.sh.
+        if [ "$skills_rc" -eq 0 ]; then
+            ext_rc=0
+            sync_external_skills "${SHARED_SKILLS_SRC}/external-skills.manifest" "$LAB_DIR" || ext_rc=$?
+            [ "$ext_rc" -eq 0 ] || warn "External skills incomplete (code $ext_rc). Later: bash ${DISTRO_ROOT}/orchestration/sync-skills.sh"
         fi
         link_rc=0
         link_workspace_skills "$WORKSPACE" "$LAB_DIR" || link_rc=$?
