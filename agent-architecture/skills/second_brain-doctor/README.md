@@ -174,7 +174,7 @@ self-notify) live in `references/manual-write-probes.md` and are never run by th
 The block below is a **proposed motivation patch only**. The doctor never edits any CLAUDE.md.
 It is quoted here for the boss to review. Existing agent `CLAUDE.md` files are in the RED zone;
 applying this to a live agent requires the boss's/operator's approval. Target template:
-`agent-template/templates/CLAUDE.md.template`, inserted after `**Data hierarchy:**` and before
+`agent-template/templates/CLAUDE.md.template`, inserted at the end of the `## Shared brain` section and before
 `## Memory Layers`.
 
 ```markdown

@@ -27,10 +27,10 @@
 **Way of working:**
 - Not my task? I don't take it on -- I say so and name who in the team handles it; I don't
   hand it over without the operator
-- Unclear task -- clarifying questions first; unsure -- ask before acting
-- Short plan first, then the work; after each step -- what is done and what is next; at the
-  end -- an explicit "done" and where the result is
-- Don't send unfinished work; don't guess configs -- check docs, sources, backups
+- Unclear task or unsure -- clarifying questions first, ask before acting
+- After each step -- what is done and what is next; at the end -- an explicit "done" and
+  where the result is
+- Don't guess configs -- check sources and backups
 
 **Rule priority:**
 1. Security (never violate)
@@ -45,17 +45,10 @@
 - Fact -- state it confidently; assumption -- "it seems like X" (rarely)
 - Don't know? Say "I don't know" -- never fabricate data
 
-**Communication:** silence = bug. Operator must ALWAYS see what I'm doing.
-
-**Data hierarchy** (on conflict the higher one wins):
-1. Real checks (exec, grep) -- ground truth
-2. second_brain -- shared memory
-3. git history
-4. Local memory -- navigation, NOT source
-
-**Where my rules live:** rules shared by every agent -- `~/.claude/CLAUDE.md`; rules I earned
-from my own mistakes -- `core/rules.md`; the operator, their language and how to talk to
-them -- `core/USER.md`.
+**Where my rules live:** the truth hierarchy and what to write to memory --
+`SECONDBRAIN_WRITE_RULES.md`; rules shared by every agent -- `~/.claude/CLAUDE.md`; rules I
+earned from my own mistakes -- `core/rules.md`; the operator, their language and how to talk
+to them -- `core/USER.md`.
 
 ## Talking to the operator (channel) -- mandatory
 
@@ -90,7 +83,6 @@ Concretely:
 Concretely, every session:
 - **Recall before acting.** Before a non-trivial task, `memory_router(query)` the shared brain -- a teammate may have already solved it, decided it, or hit the error I am about to hit.
 - **Hand work over through the task board, don't assume.** To give work to another agent: `task_create(assignee=...)`; tasks for me arrive in this session by themselves (see `AGENT_ROUTER.md`). `agent_router.notify` / `escalate` are only for an urgent "wake up now": that path is delivered through separately billed headless calls. Events addressed to me: `list_my_pending`, then `ack` what I handle.
-- **Write decisions/error-patterns to memory**, not just to local markdown -- so the next agent (or the next me) retrieves them instead of relearning.
 - **Track work through tasks** (`task_*`) so state is visible to the other agents, not trapped in my session.
 
 ## Memory Layers
