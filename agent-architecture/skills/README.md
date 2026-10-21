@@ -31,7 +31,7 @@ it when the description matches.
 | `groq-voice` | Transcribe voice messages (`.ogg`) via Groq Whisper. | `GROQ_API_KEY` |
 | `agent-browser` | Browser automation CLI (Chrome/Chromium via CDP). Navigate, click, fill forms, screenshot. | `agent-browser` binary + Chrome, not installed by `install.sh` |
 
-| `deep-research` | Cited, cross-checked research report with stated confidence and gaps. | web search; `perplexity-research` optional |
+| `deep-research` | Cited, cross-checked research report with stated confidence and gaps. | web search; perplexity-research skill optional |
 | `report-generator` | Formatted report from numbers, tables and metrics. | - |
 | `meeting-summarizer` | Minutes, tasks, owners and deadlines from a meeting transcript. | - |
 | `customer-research` | Interviews, surveys, reviews into personas and JTBD. | - |
@@ -40,7 +40,7 @@ it when the description matches.
 | `web-design-guidelines` | UI and accessibility review against web interface guidelines. | - |
 | `supergoal` | Build a task autonomously from plan to result. | - |
 | `skill-finder` | Vet a skill from a registry before adopting it. | - |
-| `cross-review` | Cross-review of PRs between agents, change levels. | `gh` |
+| `cross-review` | Cross-review of PRs between agents, change levels. | gh CLI |
 
 More skills (docx, pptx, pdf, xlsx, research, MCP, process skills) are not stored here: see
 `external-skills.manifest`, installed by `install.sh` and `sync-skills.sh` at pinned commits.
