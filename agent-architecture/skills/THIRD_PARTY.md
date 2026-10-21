@@ -74,5 +74,5 @@ SOFTWARE.
 Not stored here. `external-skills.manifest` lists them with the exact commit
 of each; `orchestration/lib/skills-external.sh` downloads them at install time.
 Licenses stay with their authors: Apache-2.0 (public-gbrain-agentos), MIT
-(agentos-skills-public, superpowers, affaan-m/ecc), Anthropic's own terms (docx, pptx, pdf,
+(agentos-skills-public, superpowers), Anthropic's own terms (docx, pptx, pdf,
 xlsx, mcp-builder, skill-creator, frontend-design).
