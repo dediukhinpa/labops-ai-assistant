@@ -965,13 +965,15 @@ describe('handleInboundText — релей клиентов поддержки',
     rmSync(statePaths.root, { recursive: true, force: true })
   })
 
-  test('пользователь из policy.allowlist.users в личке не перехватывается', async () => {
+  test('участник группы из policy.allowlist.users в личке уходит в релей, а не в тишину', async () => {
     const { relay, calls } = relaySpy()
-    const { deps, statePaths } = makeDeps()
+    const serverSpy = makeServerSpy()
+    const { deps, statePaths } = makeDeps({ server: serverSpy.server })
     deps.clientRelay = relay
     deps.policy = { allowlist: { chats: [], users: ['777'] }, mention_allowlist: [], chats: {} } as unknown as NonNullable<HandlerDeps['policy']>
     await handleInboundText(makeCtx({ text: 'x', chatId: 777, chatType: 'private', fromId: 777 }), deps)
-    expect(calls).toEqual([])
+    expect(calls).toEqual([{ telegramUserId: 777, chatId: 777, text: 'x' }])
+    expect(serverSpy.calls.length).toBe(0)
     rmSync(statePaths.root, { recursive: true, force: true })
   })
 })
