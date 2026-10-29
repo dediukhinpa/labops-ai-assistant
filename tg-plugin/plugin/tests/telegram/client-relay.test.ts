@@ -4,7 +4,6 @@ import { describe, expect, test } from 'bun:test'
 import {
   classifyClientText,
   CLIENT_RELAY_MAX_TEXT_CHARS,
-  CLIENT_START_HINT_TEXT,
   CLIENT_TOO_LONG_TEXT,
   CLIENT_UNAVAILABLE_TEXT,
   createClientRelay,
@@ -66,9 +65,11 @@ describe('classifyClientText', () => {
     expect('relay' in r && r.relay.kind).toBe('start')
   })
 
-  test('/start без payload и с чужим payload -> фиксированный ответ без форварда', () => {
+  test('/start без payload и с чужим payload -> open (кнопка «Техподдержка» основного бота)', () => {
     for (const text of ['/start', '/start ', '/start hello', '/start t_zz', '/start t_abcdef123']) {
-      expect(classifyClientText({ ...base, text })).toEqual({ fixedReply: CLIENT_START_HINT_TEXT })
+      expect(classifyClientText({ ...base, text })).toEqual({
+        relay: { kind: 'open', telegramUserId: base.telegramUserId, chatId: base.chatId },
+      })
     }
   })
 
@@ -113,11 +114,18 @@ describe('createClientRelay.handle', () => {
     expect(h.sent).toEqual([])
   })
 
-  test('/start без payload: эндпоинт не вызывается, клиент получает подсказку', async () => {
-    const h = makeHarness(jsonOk({ ok: true, reply: 'x' }))
+  test('/start без payload: уходит как open, клиент получает ответ продукта', async () => {
+    const h = makeHarness(jsonOk({ ok: true, reply: 'Здравствуйте!' }))
     await h.relay.handle({ telegramUserId: 7, chatId: 7, text: '/start' })
-    expect(h.requests).toHaveLength(0)
-    expect(h.sent).toEqual([{ chatId: '7', text: CLIENT_START_HINT_TEXT }])
+    expect(h.requests).toHaveLength(1)
+    expect(h.sent).toEqual([{ chatId: '7', text: 'Здравствуйте!' }])
+  })
+
+  test('/start без аккаунта в продукте: пустой reply -- бот молчит', async () => {
+    const h = makeHarness(jsonOk({ ok: true, reply: '' }))
+    await h.relay.handle({ telegramUserId: 7, chatId: 7, text: '/start' })
+    expect(h.requests).toHaveLength(1)
+    expect(h.sent).toEqual([])
   })
 
   test('ok:false, HTTP 500 и не-JSON -> фиксированный ответ «позже»', async () => {
