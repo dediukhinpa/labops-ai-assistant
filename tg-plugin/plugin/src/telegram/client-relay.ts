@@ -1,7 +1,8 @@
 // Релей сообщений посторонних клиентов в личке бота на HTTP-эндпоинт продукта.
 //
 // Зачем: этот же бот читает группу техподдержки, а клиенты приходят к нему по
-// ссылке t.me/<бот>?start=t_<shortId>. Пока личка открыта только владельцу
+// кнопке «Техподдержка» основного бота (`/start`) или по ссылке
+// t.me/<бот>?start=t_<shortId> из ответа оператора. Пока личка открыта только владельцу
 // (gate.ts), любое сообщение клиента молча дропается. Эта ветка перехватывает
 // приватные сообщения ПОСТОРОННИХ user_id ДО агентской логики: никакой
 // Claude-сессии, инструментов и памяти на этом пути нет, есть только один
@@ -33,6 +34,7 @@ const START_PAYLOAD_RE = /^\/start(?:@\w+)?\s+t_([0-9a-f]{8})\s*$/i
 const START_ANY_RE = /^\/start(?:@\w+)?(?:\s|$)/i
 
 export type RelayRequest =
+  | { kind: 'open'; telegramUserId: number; chatId: number }
   | { kind: 'start'; telegramUserId: number; chatId: number; shortId: string }
   | { kind: 'message'; telegramUserId: number; chatId: number; text: string }
 
@@ -58,7 +60,11 @@ export interface ClientRelayOptions {
   timeoutMs?: number
 }
 
-/** Разобрать текст клиента: `/start t_<8hex>` -> start, `/start` без валидного payload -> null. */
+/**
+ * Разобрать текст клиента: `/start t_<8hex>` -> start (привязка к обращению), любой другой `/start`
+ * -> open (клиент пришёл по кнопке «Техподдержка» основного бота; кого приветствовать, а кому молчать,
+ * решает продукт по telegram_id), прочий текст -> message.
+ */
 export function classifyClientText(
   input: ClientRelayInput,
 ): { relay: RelayRequest } | { fixedReply: string } {
@@ -74,7 +80,9 @@ export function classifyClientText(
       },
     }
   }
-  if (START_ANY_RE.test(text)) return { fixedReply: CLIENT_START_HINT_TEXT }
+  if (START_ANY_RE.test(text)) {
+    return { relay: { kind: 'open', telegramUserId: input.telegramUserId, chatId: input.chatId } }
+  }
   if (Array.from(text).length > CLIENT_RELAY_MAX_TEXT_CHARS) {
     return { fixedReply: CLIENT_TOO_LONG_TEXT }
   }
