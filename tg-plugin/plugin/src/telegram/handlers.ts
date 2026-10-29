@@ -199,8 +199,10 @@ function isOutsiderDm(ctx: Context, deps: HandlerDeps): boolean {
   const from = ctx.from
   if (from === undefined || from.is_bot) return false
   const id = String(from.id)
+  // Outsider = anyone gateDm would drop. policy.allowlist.users is not checked:
+  // it admits people to the group only, so a group member's DM used to skip the
+  // relay and then be dropped by the DM gate -- silence instead of an answer.
   if (deps.config.allowed_user_ids.some(v => String(v) === id)) return false
-  if (deps.policy?.allowlist.users.includes(id) === true) return false
   return true
 }
 

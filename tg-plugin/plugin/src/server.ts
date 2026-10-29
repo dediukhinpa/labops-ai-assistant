@@ -81,6 +81,7 @@ import {
   type HandlerDeps,
 } from './telegram/handlers.js'
 import { createClientRelayFromEnv } from './telegram/client-relay.js'
+import { syncCommandMenu } from './telegram/command-menu.js'
 import { AlbumBuffer } from './telegram/album-buffer.js'
 import {
   ensureAlbumsDir,
@@ -1085,20 +1086,9 @@ poller = new TelegramPoller({
 })
 
 // Register the OOB command list with Telegram so they appear in the
-// client autocomplete («/» prefix in chat). Best-effort: a failure here
-// (no internet, token revoked) must not block the poller from starting.
-void (async () => {
-  try {
-    await bot.api.setMyCommands(
-      BOT_COMMANDS.map((c) => ({ command: c.command, description: c.description })),
-    )
-    log.info('telegram commands registered', { count: BOT_COMMANDS.length })
-  } catch (err) {
-    log.warn('setMyCommands failed (ignored)', {
-      error: err instanceof Error ? err.message : String(err),
-    })
-  }
-})()
+// client autocomplete («/» prefix in chat), or clear it when
+// TELEGRAM_COMMAND_MENU=off. Best-effort: never blocks the poller.
+void syncCommandMenu(bot.api, BOT_COMMANDS, process.env, log)
 
 // FIX-G / M1 (Codex review 2026-05-27 #2): ordered async startup.
 // Previously `recoverPendingAlbums` ran via `void` and `poller.start()`
