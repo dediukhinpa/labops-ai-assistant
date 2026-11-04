@@ -206,6 +206,24 @@ One server routes several chats/threads through a session pool (`router/multicha
 
 ---
 
+### Direct messages: one session per person
+
+The operator's DM always lives in the main session. A DM from any other allowed user goes
+through the multichat router into a separate session keyed by that person's chat id (same
+inbox/outbox path as groups). Reason: a pseudonymization proxy keeps its replacement table per
+Claude session, so two people sharing one context could see each other's restored data.
+
+| Setting (config.json / env) | Meaning |
+|---|---|
+| `operator_user_ids` / `TELEGRAM_OPERATOR_USER_IDS` (CSV) | Operators. Unset: `permission_relay.allowed_user_ids`. Empty: routing stays as before. |
+| `dm_routing` / `TELEGRAM_DM_ROUTING` | `main` (everyone to the main session, old behaviour) or `per_person`. Unset: `per_person` only when the router is on. |
+
+Requirements for `per_person`: multichat enabled, and each person listed in `chats/policy.yaml`
+(`allowlist.users`, `allowlist.chats`, and a `chats.<their id>` entry, usually `mode: private`).
+A person missing from the policy is dropped with a warning, never delivered to the main session.
+OOB commands (`/reset`, `/doctor`) and permission verdicts work for operators only. Without the
+router and with several allowed users the plugin logs a one-time warning at start.
+
 ## Configuration
 
 <details>
