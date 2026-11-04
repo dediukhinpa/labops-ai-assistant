@@ -593,17 +593,11 @@ if [ "$ENABLE_VOICE" = "1" ]; then
   if [ -f "$VOICE_FILE" ] || [ -n "${VOICE_TRANSCRIBER_TOKEN:-}" ]; then
     ok "local-voice: токен найден — голосовые будут расшифровываться локально"
   else
-    ask VOICE_TRANSCRIBER_TOKEN "Токен сервиса voice-transcriber (см. voice-transcriber/README, пусто — пропустить)" ""
-    if [ -n "${VOICE_TRANSCRIBER_TOKEN:-}" ]; then
-      mkdir -p "$(dirname "$VOICE_FILE")"
-      umask 077
-      printf '%s' "$VOICE_TRANSCRIBER_TOKEN" > "$VOICE_FILE"
-      chmod 600 "$VOICE_FILE"
-      ok "local-voice: токен сохранён в $VOICE_FILE — голосовые будут расшифровываться локально"
-    else
-      warn "нет VOICE_TRANSCRIBER_TOKEN — голос подключится позже, текст работает сразу"
-      DEGRADED+=("голос выключен (нет VOICE_TRANSCRIBER_TOKEN) — голосовые не расшифровываются, текст работает; положите токен в $VOICE_FILE позже")
-    fi
+    # Токен не спрашиваем: его кладёт install.sh, когда ставит сервис голоса (шаг
+    # «Голос», lib/voice-install.sh). Нет токена — сервис не поставлен, и взять токен
+    # оператору неоткуда; вопрос только оставлял голос выключенным.
+    warn "нет токена сервиса голоса — голос подключится позже, текст работает сразу"
+    DEGRADED+=("голос выключен: сервис расшифровки не поставлен — перезапустите установку (шаг «Голос»), токен ляжет в $VOICE_FILE сам; текст работает")
   fi
 fi
 

@@ -820,6 +820,12 @@ unit "preflight: разбор кодов ответа — юнит-тест зе
 # останавливать установку на шаге 0, до пакетов и создания пользователя.
 unit "install.sh останавливается на закрытом хосте — юнит-тест зелёный" "preflight в install.sh: юнит-тест провален (install-preflight.test.sh)" bash install-preflight.test.sh
 
+# Голос ставит сам install.sh: сервис, веса, токен агентам; повтор не меняет токен
+# (lib/voice-install.sh). Раньше new-agent.sh спрашивал токен, которого у клиента не было.
+unit "install.sh ставит сервис голоса и раздаёт токен, повтор его не меняет — юнит-тест зелёный" \
+     "voice-install: юнит-тест провален (orchestration/lib/voice-install.test.sh)" \
+     bash orchestration/lib/voice-install.test.sh
+
 # Тест гоняет НАСТОЯЩИЙ install.sh, поэтому обязан быть глух к флагам в шелле
 # оператора: с PREFLIGHT_DONE=1 в окружении он винил установщик в том, чего тот
 # не делал.

@@ -33,6 +33,7 @@
 #   GITHUB_TOKEN=ghp_xxx      # нужен на чистом VPS для клонирования приватных labops-*
 #   SKIP_SECOND_BRAIN=1       # не клонировать labops-second-brain
 #   SKIP_TG_PLUGIN=1          # не клонировать labops-tg-plugin
+#   SKIP_VOICE=1              # не ставить локальную расшифровку голоса (voice-transcriber)
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
 #   PREFLIGHT_DONE=1          # пропустить проверку доступности внешних хостов
 #   SKIP_SELFTEST=1           # не останавливать установку на self-test (осознанный обход
@@ -53,6 +54,9 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$REPO_DIR/orchestration/lib/ui.sh"
 # clear_foreign_modules: битая ссылка node_modules ломает bun install наглухо.
 . "$REPO_DIR/orchestration/lib/plugin.sh"
+# voice_install: сервис расшифровки голоса ставится, пока у установки есть root.
+# shellcheck source=orchestration/lib/voice-install.sh
+. "$REPO_DIR/orchestration/lib/voice-install.sh"
 
 MODE="full"
 [ "${1:-}" = "--test-only" ] && MODE="test"
@@ -142,6 +146,23 @@ grant_agent_autostart() {
   return 1
 }
 
+# run_voice_step <пользователь агентов> <его дом> — шаг «Голос». Выполняется один раз
+# за установку: под root перед переходом на пользователя агентов (у того sudo нет),
+# либо через sudo у обычного пользователя. Сбой не останавливает установку — без
+# голоса работает текст, а повторный запуск install.sh шаг повторит.
+run_voice_step() {
+  export LABOPS_VOICE_DONE=1
+  if [ "${SKIP_VOICE:-0}" = "1" ]; then
+    note "голос пропущен (SKIP_VOICE=1) — голосовые расшифровываться не будут"
+    return 0
+  fi
+  say "2c. Голос: локальная расшифровка"
+  echo "  Голосовые расшифровывает сервис на этом сервере (faster-whisper): запись"
+  echo "  никуда не отправляется. Модель ~0,5 ГБ скачивается один раз."
+  voice_install "$1" "$2" \
+    || warn "голос не настроен — текст работает; повторите установку, чтобы включить голос (пропустить: SKIP_VOICE=1)"
+}
+
 # write_runtime_conf <владелец> <checkout монорепо> <лаборатория> — записать от
 # root, из какого checkout хелпер labops-runtime-deploy собирает копию роя в
 # $LABOPS_RUNTIME_DIR. Источник решает root, а не тот, кто зовёт хелпер через sudo.
@@ -223,6 +244,12 @@ if [ "$MODE" != "test" ] && [ "${PREFLIGHT_DONE:-0}" != "1" ]; then
              "https://api.anthropic.com/v1/messages" critical
   if [ "${SKIP_SECOND_BRAIN:-0}" != "1" ] || [ "${SKIP_TG_PLUGIN:-0}" != "1" ]; then
     probe_host "github.com — клонирование репозиториев" "https://github.com" critical
+  fi
+
+  # Веса модели голоса качаются с Hugging Face. Не критично: без них не работает
+  # только голос, текстовый канал и агент ставятся как обычно.
+  if [ "${SKIP_VOICE:-0}" != "1" ]; then
+    probe_host "huggingface.co — модель расшифровки голоса" "https://huggingface.co" optional
   fi
 
   if [ -n "$PF_BLOCKED" ]; then
@@ -374,6 +401,7 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
       write_runtime_conf "$AGENT_OS_USER" "$DEST_ROOT" \
         "${CLAUDE_LAB:-$NEW_HOME/.claude-lab}" || true
     fi
+    run_voice_step "$AGENT_OS_USER" "$NEW_HOME"
     ok "продолжаю установку от имени $AGENT_OS_USER"
     # Флаги установщика (REUSE_EXISTING=1, SKIP_TG_PLUGIN, PREFLIGHT_DONE,
     # TG_PLUGIN_DIR, INSTALL_TG_LOCAL, ...) должны дойти до install.sh под
@@ -428,6 +456,18 @@ if [ "$(id -u)" -ne 0 ] && [ "$MODE" = "full" ] && [ "${AUTOSTART:-1}" = "1" ] \
     else
       note "автозапуск не настроен — агент будет запущен, но не переживёт перезагрузку"
     fi
+  fi
+fi
+
+# ── 2c. Голос ─────────────────────────────────────────────────────
+# Под root с отдельным пользователем шаг уже выполнен выше (LABOPS_VOICE_DONE
+# пришёл с окружением). Здесь — установка от root без отдельного пользователя и
+# от обычного пользователя с sudo.
+if [ "$MODE" != "test" ] && [ "${LABOPS_VOICE_DONE:-0}" != "1" ]; then
+  if [ "$(id -u)" -eq 0 ] || [ -n "$SUDO" ]; then
+    run_voice_step "$(id -un)" "$HOME"
+  else
+    warn "нет sudo — сервис голоса не поставить (нужен root); текст работает"
   fi
 fi
 

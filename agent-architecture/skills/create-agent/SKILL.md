@@ -36,7 +36,9 @@ description: Use when the operator wants to create/add a NEW agent (a new Telegr
    `/newbot` → имя и username → скопировать **токен** вида `1234:AA...`. Объясни, что токен —
    секрет, мы положим его в `channel.env` с `chmod 600`, в git он не попадёт.
 4. **Его Telegram user_id** (для allowlist) — узнать у [@userinfobot](https://t.me/userinfobot).
-5. **Голос** — нужен ли (по умолчанию да, если у системы есть токен локального voice-transcriber).
+5. **Голос** — не спрашивай: сервис расшифровки ставит install.sh и сам кладёт токен в
+   `~/.claude-lab/shared/secrets/voice-transcriber-token`. Нет токена — голос выключен,
+   чинится повторной установкой (шаг «Голос»), а не вводом токена.
 
 ## Ключевые документы — объясни и помоги заполнить
 Скаффолдер создаёт воркспейс `~/.claude-lab/<agent-id>/.claude/`. Главные файлы, по которым
