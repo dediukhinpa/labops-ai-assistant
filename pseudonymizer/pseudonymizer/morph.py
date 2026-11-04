@@ -502,3 +502,58 @@ def inflect_person(text: str, case: str) -> str:
         # Род не определён однозначно: склонение наугад дало бы «Петрову О.И.» женщине.
         return text
     return _WORD_PART_RE.sub(lambda m: _inflect_part(m.group(0), case, gender), text)
+
+
+# Особые падежи pymorphy (второй родительный и т.п.) -> основной падеж метки
+_SPECIAL_CASES = {"gen2": "gent", "acc2": "accs", "loc2": "loct", "gen1": "gent", "loc1": "loct"}
+
+
+def _parse_cases(parse: Parse) -> frozenset[str]:
+    """Падежи метки, которые допускает разбор; несклоняемое слово допускает любой."""
+    raw = parse.tag.case
+    if raw is None:
+        return frozenset(INFLECT_CASES)
+    case = _SPECIAL_CASES.get(raw, raw)
+    return frozenset({case}) & frozenset(INFLECT_CASES)
+
+
+def _word_cases(word: str, gender: str | None) -> frozenset[str] | None:
+    """Падежи слова ФИО по всем его разборам (с учётом рода); None - слово не из ФИО."""
+    parses = _name_parses(word, NAME_GRAMMEMES)
+    if gender:
+        parses = [p for p in parses if gender in p.tag or _GENDER_EITHER in p.tag]
+    if not parses:
+        return None
+    cases: set[str] = set()
+    for parse in parses:
+        cases |= _parse_cases(parse)
+    return frozenset(cases)
+
+
+def person_case(text: str) -> str | None:
+    """Косвенный падеж ФИО для падежной метки или None, если метку ставить нельзя.
+
+    Падеж определяется по словам ФИО: берутся падежи всех разборов каждого слова (род - по
+    имени/отчеству, как в `inflect_person`), и ищется пересечение по словам. Метка ставится,
+    только если пересечение - ровно один косвенный падеж. Именительный (метки нет), несколько
+    общих падежей («Иванову»: муж. дат. / жен. вин.; «Иванова»: жен. им. / муж. род.) и ни одного
+    общего - без метки. Инициалы на падеж не влияют; слова без разбора ФИО не учитываются.
+
+    Args:
+        text: ФИО в том виде, как оно стоит в тексте.
+
+    Returns:
+        Код падежа из INFLECT_CASES, кроме «nomn», либо None.
+    """
+    parts = [p for p in _WORD_PART_RE.findall(text) if len(p) > 1]
+    gender = _person_gender(parts)
+    common: frozenset[str] | None = None
+    for part in parts:
+        cases = _word_cases(part, gender)
+        if cases is None:
+            continue
+        common = cases if common is None else common & cases
+    if common is None or len(common) != 1:
+        return None
+    (case,) = common
+    return None if case == "nomn" else case
