@@ -1,4 +1,6 @@
-node_modules/
+# без «/»: шаблон с косой чертой не ловит симлинк node_modules в worktree,
+# и он попадал в коммит, а pull заменял им настоящую папку в живой копии
+node_modules
 bun.lockb
 bun.lock
 *.log
