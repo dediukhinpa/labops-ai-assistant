@@ -16,7 +16,8 @@ describe('маскирование запроса', () => {
     const thinking = { type: 'thinking', thinking: 'Иван Петров думает', signature: 'SIG==' };
     const body = {
       model: 'm',
-      system: [{ type: 'text', text: 'Система: Иван Петров', cache_control: { type: 'ephemeral' } }],
+      system: [{ type: 'text', text: 'Система: Иван Петров',
+        cache_control: { type: 'ephemeral' } }],
       tools: [{ name: 't', description: 'Иван Петров' }],
       messages: [
         { role: 'user', content: 'Привет, Иван Петров' },
@@ -177,7 +178,8 @@ describe('маршруты и треды', () => {
   test('эфемерный тред удаляется, сессионный остаётся', async () => {
     rig = startRig(DICT, textStream(['ок']));
     const body = { messages: [{ role: 'user', content: 'Иван Петров' }] };
-    const r1 = await fetch(`${rig.base}/v1/messages`, { method: 'POST', body: JSON.stringify(body) });
+    const r1 = await fetch(`${rig.base}/v1/messages`,
+      { method: 'POST', body: JSON.stringify(body) });
     await r1.text();
     await Bun.sleep(50);
     expect(rig.service.state.deleted.length).toBe(1);
@@ -190,7 +192,8 @@ describe('маршруты и треды', () => {
 
   test('GET проксируется как есть, заголовки авторизации доходят', async () => {
     rig = startRig(DICT, { contentType: 'application/json', chunks: ['{"data":[]}'] });
-    const res = await fetch(`${rig.base}/v1/models?limit=1`, { headers: { authorization: 'Bearer o' } });
+    const res = await fetch(`${rig.base}/v1/models?limit=1`,
+      { headers: { authorization: 'Bearer o' } });
     expect(await res.json()).toEqual({ data: [] });
     expect(rig.upstream.hits[0]?.headers.get('authorization')).toBe('Bearer o');
     expect(rig.service.state.calls.filter((c) => c !== 'GET /health')).toEqual([]);

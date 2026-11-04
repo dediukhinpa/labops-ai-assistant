@@ -107,6 +107,8 @@ export interface FakeUpstream {
   readonly url: string;
   readonly hits: UpstreamHit[];
   reply: UpstreamReply;
+  /** Ответ в зависимости от запроса (если задан, важнее `reply`). */
+  replyFor?: (hit: UpstreamHit) => UpstreamReply;
   stop(): Promise<void>;
 }
 
@@ -125,7 +127,7 @@ export function startFakeUpstream(reply: UpstreamReply): FakeUpstream {
     async fetch(req): Promise<Response> {
       hits.push({ method: req.method, path: new URL(req.url).pathname, headers: req.headers,
         body: await req.text() });
-      const r = self.reply;
+      const r = self.replyFor?.(hits[hits.length - 1] as UpstreamHit) ?? self.reply;
       const enc = new TextEncoder();
       const stream = new ReadableStream<Uint8Array>({
         async start(c): Promise<void> {
@@ -225,5 +227,6 @@ export async function collectText(res: Response): Promise<{ text: string; events
 export function post(base: string, path: string, body: unknown, headers: HeadersInit = {}):
   Promise<Response> {
   return fetch(`${base}${path}`, { method: 'POST', body: JSON.stringify(body),
-    headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1', ...headers } });
+    headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 's1',
+      ...headers } });
 }

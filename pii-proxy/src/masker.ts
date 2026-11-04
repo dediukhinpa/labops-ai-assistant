@@ -114,7 +114,8 @@ export class RequestMasker {
 
   /** Вторая линия: /check каждого замаскированного листа без thread_id. */
   private async secondLine(maskedTexts: readonly string[]): Promise<void> {
-    const todo = [...new Set(maskedTexts)].filter((t) => this.cleanCache.get(textKey(t)) === undefined);
+    const todo = [...new Set(maskedTexts)]
+      .filter((t) => this.cleanCache.get(textKey(t)) === undefined);
     const found = new Set<string>();
     await mapLimited(todo, SERVICE_CONCURRENCY, async (text) => {
       let dirty = false;

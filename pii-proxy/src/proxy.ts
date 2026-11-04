@@ -164,8 +164,8 @@ export class PiiProxy {
       const parsed: unknown = await upstream.json();
       const restored = isObject(parsed) ? await restoreMessageJson(parsed, restorer) : parsed;
       finish({ restored_tokens: restorer.restoredTokens });
-      return { response: new Response(JSON.stringify(restored), { status: upstream.status, headers }),
-        deferredCleanup: false };
+      const response = new Response(JSON.stringify(restored), { status: upstream.status, headers });
+      return { response, deferredCleanup: false };
     }
     finish();
     return { response: new Response(upstream.body, { status: upstream.status, headers }),

@@ -5,7 +5,10 @@ import type { Restorer } from './restorer';
  * Восстановить нестриминговый ответ: text и аргументы tool_use. Блоки thinking не трогаются.
  * @returns изменённый объект ответа.
  */
-export async function restoreMessageJson(body: JsonObject, restorer: Restorer): Promise<JsonObject> {
+export async function restoreMessageJson(
+  body: JsonObject,
+  restorer: Restorer,
+): Promise<JsonObject> {
   const content = body.content;
   if (!Array.isArray(content)) return body;
   for (const block of content) {

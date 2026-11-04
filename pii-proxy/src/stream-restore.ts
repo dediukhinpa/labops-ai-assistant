@@ -109,7 +109,9 @@ export async function* restoreSse(
     let at = Number.POSITIVE_INFINITY;
     for (const s of texts.values()) {
       if (s.held !== '') at = Math.min(at, s.heldSince + windowMs);
-      if (s.buffer.hasPending && !s.buffer.holdsTokenStart) at = Math.min(at, s.tailSince + flushMs);
+      if (s.buffer.hasPending && !s.buffer.holdsTokenStart) {
+        at = Math.min(at, s.tailSince + flushMs);
+      }
     }
     return at;
   };
@@ -152,7 +154,9 @@ export async function* restoreSse(
     if (type === 'content_block_start' && isObject(j?.content_block)) {
       const cb = j.content_block;
       if (cb.type === 'text') {
-        texts.set(index, { buffer: new TokenBoundaryBuffer(), held: '', heldSince: 0, tailSince: 0 });
+        texts.set(index, {
+          buffer: new TokenBoundaryBuffer(), held: '', heldSince: 0, tailSince: 0,
+        });
       } else if (typeof cb.type === 'string' && cb.type.endsWith('tool_use')) {
         tools.set(index, '');
       }
