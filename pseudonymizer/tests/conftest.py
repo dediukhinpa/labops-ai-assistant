@@ -10,7 +10,7 @@ from pseudonymizer.api import create_app
 from pseudonymizer.config import Settings
 from pseudonymizer.detector import PiiDetector
 from pseudonymizer.service import Pseudonymizer
-from pseudonymizer.store import SqliteReplacementStore
+from pseudonymizer.store import MemoryReplacementStore, ReplacementStore, SqliteReplacementStore
 
 CONTACTS = ["Вася Рабочий", "Дядя Коля"]
 # Тестовый общий секрет API (R4-SEC-3) и заголовок, который клиент обязан слать
@@ -21,7 +21,7 @@ AUTH_HEADERS = {"Authorization": f"Bearer {API_TOKEN}"}
 def make_client(
     detector: object,
     monkeypatch: pytest.MonkeyPatch,
-    store: SqliteReplacementStore | None = None,
+    store: ReplacementStore | None = None,
     *,
     key: str | None = None,
     headers: dict[str, str] | None = AUTH_HEADERS,
@@ -76,21 +76,35 @@ def fernet_key() -> str:
     return Fernet.generate_key().decode()
 
 
-@pytest.fixture
-def store(fernet_key: str) -> SqliteReplacementStore:
-    """SQLite в памяти."""
+@pytest.fixture(params=["memory", "sqlite"])
+def store(request: pytest.FixtureRequest, fernet_key: str) -> ReplacementStore:
+    """Хранилище: в памяти (по умолчанию в проде) и SQLite; тесты идут на обоих."""
+    if request.param == "memory":
+        return MemoryReplacementStore()
     return SqliteReplacementStore(":memory:", fernet_key)
 
 
 @pytest.fixture
-def service(detector: PiiDetector, store: SqliteReplacementStore) -> Pseudonymizer:
+def sqlite_store(fernet_key: str) -> SqliteReplacementStore:
+    """SQLite в памяти — для тестов, которые смотрят во внутренности SQLite-реализации."""
+    return SqliteReplacementStore(":memory:", fernet_key)
+
+
+@pytest.fixture
+def sqlite_service(detector: PiiDetector, sqlite_store: SqliteReplacementStore) -> Pseudonymizer:
+    """Сервис поверх SQLite — для тестов, которые смотрят во внутренности SQLite."""
+    return Pseudonymizer(detector, sqlite_store)
+
+
+@pytest.fixture
+def service(detector: PiiDetector, store: ReplacementStore) -> Pseudonymizer:
     """Сервис с детектором по умолчанию."""
     return Pseudonymizer(detector, store)
 
 
 @pytest.fixture
 def client(
-    detector: PiiDetector, store: SqliteReplacementStore, fernet_key: str, monkeypatch
+    detector: PiiDetector, store: ReplacementStore, fernet_key: str, monkeypatch
 ) -> TestClient:
     """HTTP-клиент поверх приложения (детектор подменяем на общий, чтобы не грузить модель)."""
     return make_client(detector, monkeypatch, store, key=fernet_key)

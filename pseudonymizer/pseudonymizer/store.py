@@ -1,4 +1,4 @@
-"""Хранилище таблицы замен: интерфейс и SQLite-реализация с шифрованием Fernet."""
+"""Хранилище таблицы замен: интерфейс, реализация в памяти и SQLite с шифрованием Fernet."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -47,6 +47,8 @@ TOUCHED_MAP_LIMIT = 100_000
 # Сколько пар (тред, тип) держит кэш счётчиков count(): запись это ключ и число, кэш
 # только убирает SELECT COUNT(*) на каждый новый токен и при вытеснении пересчитывается.
 COUNT_CACHE_ENTRIES = 4096
+
+SECONDS_PER_HOUR = 3_600
 
 # Последнее обращение к треду (запись/чтение замен) для ретенции. Отдельная таблица:
 # формат replacements и rekey.py не меняются, старые файлы открываются как есть.
@@ -128,6 +130,10 @@ class ReplacementStore(Protocol):
 
     def purge_expired(self, retention_days: int) -> int:
         """Удаляет замены тредов без обращений дольше retention_days; число удалённых тредов."""
+        ...
+
+    def delete_thread(self, thread_id: str) -> bool:
+        """Удаляет все замены треда; True, если тред был. Нет треда — не ошибка."""
         ...
 
 
@@ -428,6 +434,29 @@ class SqliteReplacementStore:
                 self._touched.clear()
         return len(expired)
 
+    def delete_thread(self, thread_id: str) -> bool:
+        """Удаляет все замены треда и отметку его активности.
+
+        Идемпотентно. Во время пачки записей не вызывать: удаление войдёт в её фиксацию.
+
+        Args:
+            thread_id: Идентификатор треда.
+
+        Returns:
+            True, если у треда были замены.
+        """
+        with self._lock:
+            deleted = self._conn.execute(
+                "DELETE FROM replacements WHERE thread_id=?", (thread_id,)
+            ).rowcount
+            self._conn.execute("DELETE FROM thread_activity WHERE thread_id=?", (thread_id,))
+            if not self._in_batch:
+                self._conn.commit()
+            self._key_cache.clear()
+            self._counts.clear()
+            self._touched.pop(thread_id, None)
+        return deleted > 0
+
     def legacy_row_count(self) -> int:
         """Сколько строк ещё в схеме v1 (индекс без метки v2 или шифртекст без метки v2)."""
         with self._lock:
@@ -495,3 +524,168 @@ class SqliteReplacementStore:
         """Закрывает соединение."""
         with self._lock:
             self._conn.close()
+
+
+class ReplacementConflictError(ValueError):
+    """Замена с тем же токеном или тем же ключом (в пределах типа) в треде уже есть."""
+
+
+@dataclass(slots=True)
+class _MemoryThread:
+    """Замены одного треда в памяти.
+
+    Attributes:
+        originals: Токен -> оригинал.
+        by_key: (тип, нормализованный ключ) -> токен.
+        keys: Тип -> пары (ключ, токен) в порядке добавления.
+        last_seen: Время последнего обращения (секунды часов хранилища).
+    """
+
+    originals: dict[str, str] = field(default_factory=dict)
+    by_key: dict[tuple[str, str], str] = field(default_factory=dict)
+    keys: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    last_seen: float = 0.0
+
+
+class MemoryReplacementStore:
+    """Хранилище замен только в памяти процесса: на диск ничего не пишется.
+
+    Оригиналы не шифруются: они живут ровно столько же, сколько сам процесс (при
+    перезапуске таблица теряется, клиент замечает это по смене boot_id в /health).
+    Семантика та же, что у SqliteReplacementStore.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        """Создаёт пустое хранилище.
+
+        Args:
+            clock: Источник времени в секундах (подменяется в тестах).
+        """
+        self._clock = clock
+        self._lock = threading.RLock()
+        self._threads: dict[str, _MemoryThread] = {}
+        # Журнал пачки: (тред, токен) в порядке добавления; None — пачки нет
+        self._journal: list[tuple[str, str]] | None = None
+
+    def _touch_locked(self, thread: _MemoryThread) -> None:
+        """Отмечает обращение к треду; под self._lock."""
+        thread.last_seen = self._clock()
+
+    def find_token(self, thread_id: str, pii_type: str, key: str) -> str | None:
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            token = thread.by_key.get((pii_type, key)) if thread else None
+            if thread is not None and token is not None:
+                self._touch_locked(thread)
+            return token
+
+    def list_keys(self, thread_id: str, pii_type: str) -> list[tuple[str, str]]:
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            return list(thread.keys.get(pii_type, ())) if thread else []
+
+    def count(self, thread_id: str, pii_type: str) -> int:
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            return len(thread.keys.get(pii_type, ())) if thread else 0
+
+    def add(self, thread_id: str, token: str, pii_type: str, key: str, original: str) -> None:
+        """Сохраняет замену.
+
+        Raises:
+            ReplacementConflictError: Такой токен или такой ключ типа в треде уже есть.
+        """
+        with self._lock:
+            thread = self._threads.setdefault(thread_id, _MemoryThread())
+            if token in thread.originals or (pii_type, key) in thread.by_key:
+                raise ReplacementConflictError("замена уже есть в треде")
+            thread.originals[token] = original
+            thread.by_key[(pii_type, key)] = token
+            thread.keys.setdefault(pii_type, []).append((key, token))
+            self._touch_locked(thread)
+            if self._journal is not None:
+                self._journal.append((thread_id, token))
+
+    def get_original(self, thread_id: str, token: str) -> str | None:
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            original = thread.originals.get(token) if thread else None
+            if thread is not None and original is not None:
+                self._touch_locked(thread)
+            return original
+
+    def get_originals(self, thread_id: str, tokens: Collection[str]) -> dict[str, str]:
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            if thread is None:
+                return {}
+            found = {t: thread.originals[t] for t in set(tokens) if t in thread.originals}
+            if found:
+                self._touch_locked(thread)
+            return found
+
+    @contextlib.contextmanager
+    def batch(self) -> Iterator[None]:
+        """Пачка записей: при исключении всё добавленное в блоке откатывается.
+
+        Блоки не вкладываются; вызывающий не пускает в блок другие потоки записи.
+        """
+        with self._lock:
+            self._journal = []
+        try:
+            yield
+        except BaseException:
+            with self._lock:
+                self._rollback_locked()
+            raise
+        with self._lock:
+            self._journal = None
+
+    def _rollback_locked(self) -> None:
+        """Убирает записи, добавленные в пачке (с конца); под self._lock."""
+        for thread_id, token in reversed(self._journal or []):
+            thread = self._threads.get(thread_id)
+            if thread is None or token not in thread.originals:
+                continue
+            del thread.originals[token]
+            for pii_type, pairs in thread.keys.items():
+                if pairs and pairs[-1][1] == token:
+                    key = pairs.pop()[0]
+                    thread.by_key.pop((pii_type, key), None)
+                    break
+            if not thread.originals:
+                del self._threads[thread_id]
+        self._journal = None
+
+    def purge_idle(self, max_idle_seconds: float) -> int:
+        """Удаляет треды без обращений дольше max_idle_seconds целиком.
+
+        Во время пачки ничего не делает (как SQLite). Нулевой и отрицательный срок — выкл.
+
+        Returns:
+            Сколько тредов удалено.
+        """
+        if max_idle_seconds <= 0:
+            return 0
+        cutoff = self._clock() - max_idle_seconds
+        with self._lock:
+            if self._journal is not None:
+                return 0
+            expired = [tid for tid, t in self._threads.items() if t.last_seen < cutoff]
+            for thread_id in expired:
+                del self._threads[thread_id]
+        return len(expired)
+
+    def purge_expired(self, retention_days: int) -> int:
+        """Совместимость с протоколом: срок в днях; см. purge_idle."""
+        return self.purge_idle(retention_days * SECONDS_PER_DAY)
+
+    def delete_thread(self, thread_id: str) -> bool:
+        """Удаляет все замены треда; True, если тред был. Идемпотентно."""
+        with self._lock:
+            return self._threads.pop(thread_id, None) is not None
+
+    def close(self) -> None:
+        """Освобождает память (для симметрии с SQLite)."""
+        with self._lock:
+            self._threads.clear()

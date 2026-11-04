@@ -82,45 +82,45 @@ def test_restore_service_raises_on_token_flood(service: Pseudonymizer) -> None:
 
 
 def test_restore_reads_table_in_one_query(
-    service: Pseudonymizer, store: SqliteReplacementStore
+    sqlite_service: Pseudonymizer, sqlite_store: SqliteReplacementStore
 ) -> None:
     """Все токены текста читаются одним запросом, а не запросом под блокировкой на каждый."""
     people = ", ".join(f"Иван {name}" for name in ("Петров", "Сидоров", "Козлов", "Орлов"))
     text = f"{people}; +7 (902) 123-45-67; a@x.ru; b@x.ru"
-    masked, entities = service.pseudonymize("t1", text)
+    masked, entities = sqlite_service.pseudonymize("t1", text)
     assert len(entities) >= 6
     foreign = " ".join(f"[ORG_{i}]" for i in range(1, 200))  # похожи на токены, в треде их нет
-    seen = _statements(store)
-    assert service.restore("t1", f"{masked} {foreign}") == f"{text} {foreign}"
+    seen = _statements(sqlite_store)
+    assert sqlite_service.restore("t1", f"{masked} {foreign}") == f"{text} {foreign}"
     assert len([s for s in seen if s.lstrip().upper().startswith("SELECT")]) == 1
 
 
-def test_restore_batches_above_sql_parameter_limit(store: SqliteReplacementStore) -> None:
+def test_restore_batches_above_sql_parameter_limit(sqlite_store: SqliteReplacementStore) -> None:
     from pseudonymizer.store import LOOKUP_BATCH
 
     count = LOOKUP_BATCH + 10
-    with store.batch():
+    with sqlite_store.batch():
         for i in range(count):
-            store.add("t", f"[EMAIL_{i}]", "EMAIL", f"k{i}", f"v{i}@x.ru")
+            sqlite_store.add("t", f"[EMAIL_{i}]", "EMAIL", f"k{i}", f"v{i}@x.ru")
     tokens = [f"[EMAIL_{i}]" for i in range(count)] + ["[EMAIL_999999]"]
-    seen = _statements(store)
-    found = store.get_originals("t", tokens)
+    seen = _statements(sqlite_store)
+    found = sqlite_store.get_originals("t", tokens)
     assert len(found) == count and found["[EMAIL_7]"] == "v7@x.ru"
     assert len(seen) == 2
-    assert store.get_originals("other", tokens) == {}
-    assert store.get_originals("t", []) == {}
+    assert sqlite_store.get_originals("other", tokens) == {}
+    assert sqlite_store.get_originals("t", []) == {}
 
 
 def test_pseudonymize_commits_once_and_rolls_back_on_failure(
-    service: Pseudonymizer, store: SqliteReplacementStore, monkeypatch: pytest.MonkeyPatch
+    sqlite_service: Pseudonymizer, sqlite_store: SqliteReplacementStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    seen = _statements(store)
-    service.pseudonymize("t1", "Иван Петров, Олег Сидоров, a@x.ru, b@x.ru, c@x.ru")
+    seen = _statements(sqlite_store)
+    sqlite_service.pseudonymize("t1", "Иван Петров, Олег Сидоров, a@x.ru, b@x.ru, c@x.ru")
     assert len([s for s in seen if s.strip().upper() == "COMMIT"]) == 1
-    assert store.count("t1", "EMAIL") == 3
+    assert sqlite_store.count("t1", "EMAIL") == 3
 
     calls = {"n": 0}
-    real_add = store.add
+    real_add = sqlite_store.add
 
     def failing_add(*args: str) -> None:
         calls["n"] += 1
@@ -128,11 +128,11 @@ def test_pseudonymize_commits_once_and_rolls_back_on_failure(
             raise RuntimeError("сбой записи")
         real_add(*args)
 
-    monkeypatch.setattr(store, "add", failing_add)
+    monkeypatch.setattr(sqlite_store, "add", failing_add)
     with pytest.raises(RuntimeError):
-        service.pseudonymize("t2", "d@x.ru, e@x.ru, f@x.ru")
+        sqlite_service.pseudonymize("t2", "d@x.ru, e@x.ru, f@x.ru")
     # запрос не удался целиком: ни один его токен не остался в таблице
-    assert store.count("t2", "EMAIL") == 0
+    assert sqlite_store.count("t2", "EMAIL") == 0
 
 
 def test_person_matching_unchanged_by_index(service: Pseudonymizer) -> None:

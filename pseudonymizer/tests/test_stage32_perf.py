@@ -24,7 +24,13 @@ from pseudonymizer.detector import (
     _subtract,
 )
 from pseudonymizer.service import Pseudonymizer
-from pseudonymizer.store import COUNT_CACHE_ENTRIES, SqliteReplacementStore
+from pseudonymizer.store import (
+    COUNT_CACHE_ENTRIES,
+    MemoryReplacementStore,
+    ReplacementConflictError,
+    ReplacementStore,
+    SqliteReplacementStore,
+)
 from tests.pii_corpus import NEGATIVE, POSITIVE
 
 RANDOM_SEED = 32
@@ -297,7 +303,10 @@ def test_request_cache_keeps_result(
 
 # --- R5-PY-3: кэш счётчиков хранилища ---------------------------------------------------
 
-def _truth(store: SqliteReplacementStore, thread: str, pii_type: str) -> int:
+def _truth(store: ReplacementStore, thread: str, pii_type: str) -> int:
+    """Число строк пары (тред, тип) без кэша счётчиков: SELECT для SQLite, список для памяти."""
+    if isinstance(store, MemoryReplacementStore):
+        return len(store.list_keys(thread, pii_type))
     row = store._conn.execute(
         "SELECT COUNT(*) FROM replacements WHERE thread_id=? AND pii_type=?",
         (thread, pii_type),
@@ -310,7 +319,7 @@ def _add_n(store: SqliteReplacementStore, thread: str, kind: str, start: int, n:
         store.add(thread, f"[{kind}_{i}]", kind, f"key{i}", f"orig{i}")
 
 
-def test_count_matches_after_add(store: SqliteReplacementStore) -> None:
+def test_count_matches_after_add(store: ReplacementStore) -> None:
     assert store.count("t", "EMAIL") == 0  # кэш заполнен нулём
     _add_n(store, "t", "EMAIL", 1, 5)
     assert store.count("t", "EMAIL") == _truth(store, "t", "EMAIL") == 5
@@ -318,17 +327,18 @@ def test_count_matches_after_add(store: SqliteReplacementStore) -> None:
     assert store.count("other", "EMAIL") == 0
 
 
-def test_count_after_duplicate_insert(store: SqliteReplacementStore) -> None:
+def test_count_after_duplicate_insert(store: ReplacementStore) -> None:
     _add_n(store, "t", "EMAIL", 1, 3)
     assert store.count("t", "EMAIL") == 3
-    with pytest.raises(sqlite3.IntegrityError):  # тот же ключ (UNIQUE по хешу ключа)
+    conflict = (sqlite3.IntegrityError, ReplacementConflictError)
+    with pytest.raises(conflict):  # тот же ключ (UNIQUE по хешу ключа)
         store.add("t", "[EMAIL_99]", "EMAIL", "key1", "dup")
-    with pytest.raises(sqlite3.IntegrityError):  # тот же токен (PRIMARY KEY)
+    with pytest.raises(conflict):  # тот же токен (PRIMARY KEY)
         store.add("t", "[EMAIL_1]", "EMAIL", "new", "dup")
     assert store.count("t", "EMAIL") == _truth(store, "t", "EMAIL") == 3
 
 
-def test_count_after_batch_rollback(store: SqliteReplacementStore) -> None:
+def test_count_after_batch_rollback(store: ReplacementStore) -> None:
     _add_n(store, "t", "EMAIL", 1, 2)
     assert store.count("t", "EMAIL") == 2
     with pytest.raises(RuntimeError), store.batch():
@@ -366,12 +376,12 @@ def test_count_sees_write_from_other_connection(tmp_path: Path, fernet_key: str)
     assert second.count("t", "EMAIL") == 4
 
 
-def test_count_cache_is_bounded(store: SqliteReplacementStore) -> None:
+def test_count_cache_is_bounded(sqlite_store: SqliteReplacementStore) -> None:
     for i in range(COUNT_CACHE_ENTRIES + 50):
-        store.count(f"thread{i}", "EMAIL")
-    assert len(store._counts) <= COUNT_CACHE_ENTRIES
-    _add_n(store, "thread0", "EMAIL", 1, 2)  # вытесненная запись пересчитывается
-    assert store.count("thread0", "EMAIL") == 2
+        sqlite_store.count(f"thread{i}", "EMAIL")
+    assert len(sqlite_store._counts) <= COUNT_CACHE_ENTRIES
+    _add_n(sqlite_store, "thread0", "EMAIL", 1, 2)  # вытесненная запись пересчитывается
+    assert sqlite_store.count("thread0", "EMAIL") == 2
 
 
 def test_count_with_parallel_threads(fernet_key: str) -> None:

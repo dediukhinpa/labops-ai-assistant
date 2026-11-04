@@ -178,23 +178,23 @@ def _persons(store: SqliteReplacementStore, thread: str, n: int) -> None:
         store.add(thread, f"[PERSON_{i}]", "PERSON", f"фамилия{i} имя", f"Фамилия{i} Имя")
 
 
-def test_list_keys_decrypts_once(store: SqliteReplacementStore) -> None:
-    _persons(store, "t", 30)
-    counter = DecryptCounter(store)
-    first = store.list_keys("t", "PERSON")
+def test_list_keys_decrypts_once(sqlite_store: SqliteReplacementStore) -> None:
+    _persons(sqlite_store, "t", 30)
+    counter = DecryptCounter(sqlite_store)
+    first = sqlite_store.list_keys("t", "PERSON")
     assert counter.count <= 30
     counter.count = 0
     for _ in range(5):
-        assert store.list_keys("t", "PERSON") == first
+        assert sqlite_store.list_keys("t", "PERSON") == first
     assert counter.count == 0
 
 
-def test_list_keys_sees_new_rows_without_full_decrypt(store: SqliteReplacementStore) -> None:
-    _persons(store, "t", 20)
-    store.list_keys("t", "PERSON")
-    counter = DecryptCounter(store)
-    store.add("t", "[PERSON_21]", "PERSON", "новый человек", "Новый Человек")
-    keys = store.list_keys("t", "PERSON")
+def test_list_keys_sees_new_rows_without_full_decrypt(sqlite_store: SqliteReplacementStore) -> None:
+    _persons(sqlite_store, "t", 20)
+    sqlite_store.list_keys("t", "PERSON")
+    counter = DecryptCounter(sqlite_store)
+    sqlite_store.add("t", "[PERSON_21]", "PERSON", "новый человек", "Новый Человек")
+    keys = sqlite_store.list_keys("t", "PERSON")
     assert ("новый человек", "[PERSON_21]") in keys and len(keys) == 21
     assert counter.count == 0
 
@@ -229,11 +229,11 @@ def test_cache_is_bounded_and_correct(fernet_key: str) -> None:
 
 
 def test_service_does_not_decrypt_all_keys_every_call(
-    detector: PiiDetector, store: SqliteReplacementStore
+    detector: PiiDetector, sqlite_store: SqliteReplacementStore
 ) -> None:
-    service = Pseudonymizer(detector, store)
-    _persons(store, "t", 40)
+    service = Pseudonymizer(detector, sqlite_store)
+    _persons(sqlite_store, "t", 40)
     service.pseudonymize("t", "Позвоните Петрову Петру Петровичу")  # прогрев кэша
-    counter = DecryptCounter(store)
+    counter = DecryptCounter(sqlite_store)
     service.pseudonymize("t", "Он сказал что завтра будет")
     assert counter.count == 0

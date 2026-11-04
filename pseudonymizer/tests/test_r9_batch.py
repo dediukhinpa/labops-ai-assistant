@@ -225,30 +225,30 @@ def test_batch_validation_errors(client: TestClient) -> None:
 )
 def test_batch_over_limits_is_413_and_writes_nothing(
     detector: PiiDetector,
-    store: SqliteReplacementStore,
+    sqlite_store: SqliteReplacementStore,
     monkeypatch: pytest.MonkeyPatch,
     overrides: dict[str, int],
     texts: list[str],
 ) -> None:
     """Пачка сверх пределов: 413 до обработки, в таблице ни одного токена, ПДн нет в ответе."""
-    client = make_client(detector, monkeypatch, store, **overrides)
+    client = make_client(detector, monkeypatch, sqlite_store, **overrides)
     resp = client.post("/pseudonymize_batch", json={"thread_id": "t1", "texts": texts})
     assert resp.status_code == 413
     assert "batch is too large" in resp.json()["detail"]
     assert "Петров" not in resp.text
-    assert _rows(store) == []
+    assert _rows(sqlite_store) == []
 
 
 def test_batch_with_too_long_text_is_422_like_single(
-    detector: PiiDetector, store: SqliteReplacementStore, monkeypatch: pytest.MonkeyPatch
+    detector: PiiDetector, sqlite_store: SqliteReplacementStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Один слишком длинный текст: 422, как у /pseudonymize, и ничего не записано."""
-    client = make_client(detector, monkeypatch, store, max_text_chars=30)
+    client = make_client(detector, monkeypatch, sqlite_store, max_text_chars=30)
     texts = ["Петров", "Секретный текст Сидорова " * 3]
     resp = client.post("/pseudonymize_batch", json={"thread_id": "t1", "texts": texts})
     assert resp.status_code == 422 and "limit is 30" in resp.json()["detail"]
     assert "Секретный" not in resp.text
-    assert _rows(store) == []
+    assert _rows(sqlite_store) == []
 
 
 def test_batch_items_limit_from_env() -> None:
