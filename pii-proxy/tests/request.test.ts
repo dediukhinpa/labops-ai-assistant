@@ -137,10 +137,29 @@ describe('детерминизм и кэш', () => {
     await post(rig.base, '/v1/messages', body);
     expect(rig.service.state.batches.length).toBe(before); // из кэша
     rig.service.state.bootId = 'boot-2';
-    await Bun.sleep(5_100); // окно опроса /health
-    await post(rig.base, '/v1/messages', body);
+    await post(rig.base, '/v1/messages', body); // boot_id сверяется на каждом запросе
     expect(rig.service.state.batches.length).toBe(before + 1);
-  }, 15_000);
+  });
+
+  test('перезапуск сервиса во время маскирования: кэш сброшен, запрос замаскирован заново',
+    async () => {
+      rig = startRig(DICT, textStream(['ок']));
+      rig.service.state.bootAfterBatch = ['boot-2'];
+      const res = await post(rig.base, '/v1/messages',
+        { messages: [{ role: 'user', content: 'Иван Петров' }] });
+      expect(res.status).toBe(200);
+      expect(rig.service.state.batches.length).toBe(2); // первый проход отброшен
+      expect(JSON.stringify(rig.upstream.hits[0]?.body)).not.toContain('Иван Петров');
+    });
+
+  test('сервис перезапускается на каждом проходе: 503, upstream не вызван', async () => {
+    rig = startRig(DICT, textStream(['ок']));
+    rig.service.state.bootAfterBatch = ['boot-2', 'boot-3', 'boot-4'];
+    const res = await post(rig.base, '/v1/messages',
+      { messages: [{ role: 'user', content: 'Иван Петров' }] });
+    expect(res.status).toBe(503);
+    expect(rig.upstream.hits.length).toBe(0);
+  });
 });
 
 describe('fail closed и вторая линия', () => {

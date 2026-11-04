@@ -23,6 +23,8 @@ export interface FakeService {
     deleted: string[];
     restoreFailAfter: number;
     restoreCount: number;
+    /** boot_id, которые сервис примет после очередных пачек (имитация перезапуска). */
+    bootAfterBatch: string[];
   };
   stop(): Promise<void>;
 }
@@ -31,7 +33,7 @@ export interface FakeService {
 export function startFakeService(dict: Record<string, string> = {}): FakeService {
   const state: FakeService['state'] = {
     mode: 'ok', bootId: 'boot-1', dict, checkOnly: [], calls: [], batches: [], deleted: [],
-    restoreFailAfter: Number.POSITIVE_INFINITY, restoreCount: 0,
+    restoreFailAfter: Number.POSITIVE_INFINITY, restoreCount: 0, bootAfterBatch: [],
   };
   const mask = (t: string): string => {
     let out = t;
@@ -64,6 +66,8 @@ export function startFakeService(dict: Record<string, string> = {}): FakeService
       }
       const body = (await req.json()) as { thread_id?: string; text?: string; texts?: string[] };
       if (path === '/pseudonymize_batch') {
+        const nextBoot = state.bootAfterBatch.shift();
+        if (nextBoot !== undefined) state.bootId = nextBoot;
         state.batches.push({ threadId: body.thread_id ?? '', texts: body.texts ?? [] });
         return Response.json({ items: (body.texts ?? []).map((t) => ({ text: mask(t) })) });
       }

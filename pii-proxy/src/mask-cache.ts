@@ -80,9 +80,13 @@ export class BootTracker {
     private readonly pollMs: number = HEALTH_POLL_MS,
   ) {}
 
-  /** Актуальный boot_id (сбой /health - PseudonymizerError). */
-  async current(): Promise<string> {
-    if (this.bootId !== undefined && this.now() - this.checkedAt < this.pollMs) return this.bootId;
+  /**
+   * Актуальный boot_id (сбой /health - PseudonymizerError).
+   * @param force - спросить сервис, не глядя на окно опроса.
+   */
+  async current(force = false): Promise<string> {
+    const fresh = this.now() - this.checkedAt < this.pollMs;
+    if (!force && this.bootId !== undefined && fresh) return this.bootId;
     this.inflight ??= this.refresh().finally(() => {
       this.inflight = undefined;
     });

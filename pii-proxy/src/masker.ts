@@ -1,5 +1,6 @@
 import type { ImagePolicy } from './config';
 import {
+  MASK_BOOT_ATTEMPTS,
   CHECK_OVERLAP_CHARS,
   MASK_CACHE_MAX_CHARS,
   MAX_TEXT_CHARS,
@@ -7,7 +8,7 @@ import {
   SERVICE_CONCURRENCY,
   SYSTEM_INSERT_TEXT,
 } from './constants';
-import { RequestRejectedError } from './errors';
+import { PseudonymizerError, RequestRejectedError } from './errors';
 import { isObject, setLeaf, type JsonObject } from './json-leaves';
 import { BoundedCache, BootTracker, maskCacheKey, textKey } from './mask-cache';
 import type { Pseudonymizer } from './pseudonymizer-client';
@@ -50,7 +51,27 @@ export class RequestMasker {
   async mask(body: JsonObject, threadId: string): Promise<MaskStats> {
     const walker = new RequestWalker(this.imagePolicy);
     walker.walk(body);
-    const bootId = await this.boot.current();
+    for (let attempt = 0; attempt < MASK_BOOT_ATTEMPTS; attempt++) {
+      // boot_id сверяется до и после маскирования: если сервис перезапустился в середине,
+      // кэш хранит маски старой таблицы, и [PERSON_1] из кэша и [PERSON_1] новой таблицы
+      // могли бы оказаться разными людьми. Тогда кэш сброшен (onReset), маскируем заново.
+      const bootId = await this.boot.current(true);
+      const stats = await this.maskOnce(walker, threadId, bootId);
+      if ((await this.boot.current(true)) === bootId) {
+        await this.secondLine(stats.maskedTexts);
+        insertSystemNote(body);
+        return stats.stats;
+      }
+    }
+    throw new PseudonymizerError('boot_changed');
+  }
+
+  /** Один проход маскирования листьев при известном boot_id. */
+  private async maskOnce(
+    walker: RequestWalker,
+    threadId: string,
+    bootId: string,
+  ): Promise<{ stats: MaskStats; maskedTexts: string[] }> {
     const keys = walker.leaves.map((l) => maskCacheKey(threadId, bootId, l.text));
     // Уже известные маски снимаем сразу: запись кэша может быть вытеснена новыми.
     const resolved = new Map<string, string>();
@@ -79,12 +100,13 @@ export class RequestMasker {
       setLeaf(leaf, masked);
       maskedTexts.push(masked);
     });
-    await this.secondLine(maskedTexts);
-    insertSystemNote(body);
     return {
-      leaves: walker.leaves.length,
-      cacheHits,
-      strippedAttachments: walker.strippedAttachments,
+      stats: {
+        leaves: walker.leaves.length,
+        cacheHits,
+        strippedAttachments: walker.strippedAttachments,
+      },
+      maskedTexts,
     };
   }
 
