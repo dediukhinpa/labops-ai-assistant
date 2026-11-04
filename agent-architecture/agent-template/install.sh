@@ -283,6 +283,9 @@ log "Filling templates..."
 
 fill_template "${TEMPLATES_DIR}/CLAUDE.md.template"    "${WORKSPACE}/CLAUDE.md"
 fill_template "${TEMPLATES_DIR}/agents.md.template"    "${WORKSPACE}/core/AGENTS.md"
+# В шаблоне только поля, которые спрашивает установщик. Профиль, стиль общения и нужды
+# оператор дописывает уроком курса 08-user-md; заготовки под них раньше доезжали
+# до агента строками «TODO: fill in» и читались в каждом разговоре.
 fill_template "${TEMPLATES_DIR}/USER.md.template"      "${WORKSPACE}/core/USER.md"
 fill_template "${TEMPLATES_DIR}/rules.md.template"     "${WORKSPACE}/core/rules.md"
 fill_template "${TEMPLATES_DIR}/tools.md.template"     "${WORKSPACE}/tools/TOOLS.md"
