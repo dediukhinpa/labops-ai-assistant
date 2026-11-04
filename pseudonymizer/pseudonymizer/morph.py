@@ -407,3 +407,78 @@ def name_gramme(word: str) -> str | None:
     if not parses or "anim" not in parses[0].tag:
         return None
     return next((g for g in NAME_GRAMMEMES if g in parses[0].tag), None)
+
+
+# Падежи, допустимые в падежной метке «[PERSON_N|<падеж>]»; грамматика согласована с клиентом.
+INFLECT_CASES = ("nomn", "gent", "datv", "accs", "ablt", "loct")
+GENDER_MASC = "masc"
+GENDER_FEMN = "femn"
+_GENDER_EITHER = "ms-f"  # несклоняемые фамилии (Шевченко, Дюма): подходят любому роду
+_WORD_PART_RE = re.compile(r"[А-Яа-яЁё]+")
+
+
+def _name_parses(word: str, grammemes: tuple[str, ...]) -> list[Parse]:
+    """Разборы слова в единственном числе с одной из грамем ФИО (в порядке убывания веса)."""
+    lowered = word.lower()
+    return [
+        p for p in _parse(lowered)
+        if "plur" not in p.tag and any(g in p.tag for g in grammemes)
+    ]
+
+
+def _word_gender(word: str, grammemes: tuple[str, ...]) -> str | None:
+    """Род («masc»/«femn») главного разбора слова с нужной граммемой или None."""
+    parses = _name_parses(word, grammemes)
+    if not parses:
+        return None
+    return next((g for g in (GENDER_MASC, GENDER_FEMN) if g in parses[0].tag), None)
+
+
+def _person_gender(parts: list[str]) -> str | None:
+    """Род человека по ФИО: сперва имя/отчество, при их отсутствии — фамилия."""
+    for grammemes in (("Patr",), ("Name",), ("Surn",)):
+        genders = [g for g in (_word_gender(p, grammemes) for p in parts) if g]
+        if genders:
+            return max(set(genders), key=genders.count)
+    return None
+
+
+def _match_case(source: str, result: str) -> str:
+    """Переносит регистр исходного слова на результат (Заглавная, КАПС, строчная)."""
+    if len(source) > 1 and source.isupper():
+        return result.upper()
+    if source[:1].isupper():
+        return result[:1].upper() + result[1:]
+    return result
+
+
+def _inflect_part(part: str, case: str, gender: str | None) -> str:
+    """Склоняет одно слово ФИО (без дефиса); без разбора или инициал — как есть."""
+    if len(part) < 2:  # инициал
+        return part
+    for parse in _name_parses(part, NAME_GRAMMEMES):
+        if gender and gender not in parse.tag and _GENDER_EITHER not in parse.tag:
+            continue
+        inflected = parse.inflect({case})
+        if inflected is None:
+            return part
+        return _match_case(part, inflected.word)
+    return part
+
+
+def inflect_person(text: str, case: str) -> str:
+    """Склоняет ФИО пословно в падеж `case` (одна из INFLECT_CASES).
+
+    Пол берётся по имени/отчеству (иначе по фамилии), фамилия склоняется в том же роде.
+    Инициалы, латиница и слова без разбора ФИО остаются в исходной форме; части слов через
+    дефис склоняются каждая отдельно, регистр исходного слова сохраняется.
+
+    Args:
+        text: ФИО в любой форме («Петрова Ольга», «ИВАНОВ П.С.»).
+        case: Граммема падежа pymorphy.
+
+    Returns:
+        ФИО в нужном падеже.
+    """
+    gender = _person_gender([p for p in _WORD_PART_RE.findall(text) if len(p) > 1])
+    return _WORD_PART_RE.sub(lambda m: _inflect_part(m.group(0), case, gender), text)
