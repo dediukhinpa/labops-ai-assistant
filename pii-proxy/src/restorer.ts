@@ -11,10 +11,20 @@ export class Restorer {
   /** Сколько полных токенов встретилось в восстановленных текстах. */
   restoredTokens = 0;
 
+  /**
+   * @param onRestored - приёмник пар «восстановленная строка, исходная строка модели»
+   *   (память восстановлений); не задан для эфемерных тредов и служебных маршрутов.
+   */
   constructor(
     private readonly service: Pseudonymizer,
     private readonly threadId: string,
+    private readonly onRestored?: (restored: string, original: string) => void,
   ) {}
+
+  /** Запомнить пару, если восстановление что-то изменило (иначе в истории та же строка). */
+  remember(restored: string, original: string): void {
+    if (restored !== '' && restored !== original) this.onRestored?.(restored, original);
+  }
 
   /** Восстановить текст (без «]» токенов нет - вызов сервиса не нужен). */
   async text(text: string): Promise<string> {
@@ -31,6 +41,10 @@ export class Restorer {
   async leaves(value: unknown): Promise<void> {
     const leaves = collectStringLeaves(value).filter((l) => l.text.includes(']'));
     const restored = await mapLimited(leaves, SERVICE_CONCURRENCY, (l) => this.text(l.text));
-    leaves.forEach((leaf, i) => setLeaf(leaf, restored[i] as string));
+    leaves.forEach((leaf, i) => {
+      // Лист tool_use попадёт в историю уже восстановленным: помним, что писала модель.
+      this.remember(restored[i] as string, leaf.text);
+      setLeaf(leaf, restored[i] as string);
+    });
   }
 }
