@@ -98,7 +98,7 @@ untrusted input.
 |-----------|--------|
 | workspace (`~/.claude-lab/<agent>/.claude/`), SOUL, memory files | `~/.claude/CLAUDE.md`, `~/.claude/rules/` |
 | bot, `channel.env`, webhook port, plugin copy | skills (`~/.claude-lab/shared/skills`, symlinked) |
-| second_brain token and scopes | `~/.claude-lab/shared/secrets/groq-api-key` |
+| second_brain token and scopes | `~/.claude-lab/shared/secrets/voice-transcriber-token` |
 | systemd unit, tmux session, task poller | second_brain: vault, task board, events |
 
 "Per agent" is a layout convention. All agents run as one OS user, so the operating

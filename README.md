@@ -244,7 +244,7 @@ Self-hosted by design: agents run on the operator's own Linux server, `second_br
 |---|---|---|---|
 | `api.anthropic.com` (via the Claude Code engine) | LLM inference — the model the agent runs on | while the agent is active | no (core) |
 | `api.telegram.org` | chat I/O — receiving and sending messages | while running | no |
-| `api.groq.com` | voice transcription / synthesis | only on voice messages | yes (optional) |
+| `127.0.0.1` (local `voice-transcriber`, faster-whisper) | voice transcription | only on voice messages | local — audio never leaves the host |
 | `second_brain` (`localhost` MCP, Postgres + vault) | conversation memory & state | always | local — never leaves the host |
 
 > [!IMPORTANT]

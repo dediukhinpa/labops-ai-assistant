@@ -89,7 +89,7 @@ it, so agents do not have these commands unless you add the plugin yourself:
 | When you want to... | Use |
 |---------------------|-----|
 | Run a quick action | **Command** (`/compact`, `/clear`, `/code-review`) |
-| Apply specialized knowledge | **Skill** (groq-voice, memory-consolidate, agent-browser) |
+| Apply specialized knowledge | **Skill** (local-voice, memory-consolidate, agent-browser) |
 | Delegate a complex task | **Agent** (subagent via Agent tool) |
 
 Commands are for **you** (operator). Skills are for **knowledge**. Agents are for **delegation**.

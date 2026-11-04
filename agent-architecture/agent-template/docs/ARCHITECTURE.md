@@ -54,8 +54,8 @@ OPERATOR writes to the agent's bot
     v
 CHANNEL PLUGIN (inside the session)
     | 1. getUpdates; drops senders not in TELEGRAM_ALLOWED_USER_IDS
-    | 2. voice: transcribed with Groq Whisper when a key is configured
-    |    (otherwise the agent runs the groq-voice skill itself)
+    | 2. voice: transcribed by the local voice-transcriber service when its token is
+    |    configured (otherwise the agent runs the local-voice skill itself)
     | 3. 👀 reaction, "typing…" status
     | 4. MCP notification -> the message is injected into the live session
     |

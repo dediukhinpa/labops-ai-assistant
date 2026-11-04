@@ -16,7 +16,7 @@ Do not build a workspace by hand: the script wires pieces that are easy to miss
       memory_router 5002, agent_router 5000, tasks 5003)
 - [ ] A Telegram bot from @BotFather: `/newbot`, copy the token
 - [ ] Your Telegram user id (the bot answers only the ids you allow)
-- [ ] Optional: a Groq API key for voice (console.groq.com/keys)
+- [ ] Optional: the token of the local `voice-transcriber` service for voice (see its README)
 
 ## 2. What the script does (steps it prints)
 
@@ -27,7 +27,7 @@ Do not build a workspace by hand: the script wires pieces that are easy to miss
 | 2. Shared-brain token | issues a Bearer with `decisions,knowledge,inbox,error-patterns,task-board,personal,projects,daily` |
 | 3. Workspace | runs `agent-template/install.sh` non-interactively: see [FILES-REFERENCE.md](FILES-REFERENCE.md) |
 | 4. Telegram channel | `channel.env`, webhook token, `config.json`, private plugin copy |
-| 5. Voice | stores the Groq key in `~/.claude-lab/shared/secrets/groq-api-key` |
+| 5. Voice | stores the voice-transcriber token in `~/.claude-lab/shared/secrets/voice-transcriber-token` |
 | 6. Autostart | `claude-agent-<agent>.service` (systemd → watchdog → tmux + claude) |
 | 7. Smoke test | memory_router answers, Telegram `getMe` passes |
 

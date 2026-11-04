@@ -300,7 +300,10 @@ export async function maybeTranscribeVoice(
 
   const baseUrl = (env.VOICE_TRANSCRIBER_URL ?? DEFAULT_TRANSCRIBER_URL).replace(/\/+$/, '')
   if (!isLoopbackUrl(baseUrl)) {
-    return { status: 'unavailable', errorMessage: 'VOICE_TRANSCRIBER_URL must be a loopback http URL' }
+    return {
+      status: 'unavailable',
+      errorMessage: 'VOICE_TRANSCRIBER_URL must be a loopback http URL',
+    }
   }
 
   // Size guard BEFORE download. `input.size` is the Telegram-reported

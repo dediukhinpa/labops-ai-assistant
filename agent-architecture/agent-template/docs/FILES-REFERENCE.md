@@ -166,7 +166,7 @@ logs in `logs/` (`hooks.log`, `verbose-YYYY-MM-DD.jsonl`, per-script logs).
 
 | Path | Role | Loads |
 |------|------|-------|
-| **skills** | Symlink to `~/.claude-lab/shared/skills` (a copy of `agent-architecture/skills`, refreshed by `orchestration/sync-skills.sh`), shared by every agent: agent-browser, create-agent, groq-voice, memory-consolidate, second_brain-doctor. An edit in the repo reaches all agents at once | on-demand (Skill tool) |
+| **skills** | Symlink to `~/.claude-lab/shared/skills` (a copy of `agent-architecture/skills`, refreshed by `orchestration/sync-skills.sh`), shared by every agent: agent-browser, create-agent, local-voice, memory-consolidate, second_brain-doctor. An edit in the repo reaches all agents at once | on-demand (Skill tool) |
 | **agents/** | Subagent definitions (`<name>.md`); empty at install | on-demand (Agent tool) |
 | **labops-tg-plugin/plugin/** | Private copy of the Telegram channel plugin; `node_modules` links to the shared checkout. Refreshed only when the agent is created | never (runs as the channel MCP server) |
 
@@ -180,7 +180,7 @@ Never loaded into context, never committed, never printed.
 |------|------|
 | `~/.claude-lab/shared/state/<agent>/telegram/channel.env` | Telegram bot token, allowed users, webhook port and token |
 | `~/.claude-lab/shared/state/<agent>/telegram/webhook-token` | the webhook token again, as a flat file for the webhook listener |
-| `~/.claude-lab/shared/secrets/groq-api-key` | Groq key for voice transcription, one for all agents |
+| `~/.claude-lab/shared/secrets/voice-transcriber-token` | token of the local voice-transcriber service, one for all agents |
 | `.claude/agent.env`, `.claude/.mcp.json` | the agent's second_brain Bearer token |
 
 Channel settings that are not secret live next to `channel.env` in `config.json`

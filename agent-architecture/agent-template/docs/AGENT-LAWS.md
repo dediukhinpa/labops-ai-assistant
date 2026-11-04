@@ -112,7 +112,7 @@ Claude Code загружает оба уровня. Глобальный все�
 | Пришёл nudge на консолидацию памяти | `memory-consolidate` |
 | Recall или общий мозг ведут себя странно | `second_brain-doctor` |
 | Оператор просит завести нового агента | `create-agent` |
-| В сообщении `<media:audio>` | `groq-voice` |
+| В `<media kind="voice">` нет расшифровки, или пришёл аудиофайл | `local-voice` |
 | Нужен браузер | `agent-browser` |
 
 Раньше здесь предписывался набор `superpowers`. Он никогда не устанавливался
