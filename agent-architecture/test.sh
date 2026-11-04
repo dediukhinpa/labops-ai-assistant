@@ -746,12 +746,6 @@ unit "без живого ввода недостающие имя и allowlist 
      "agent-inputs: юнит-тест провален (orchestration/lib/agent-inputs.test.sh)" \
      bash orchestration/lib/agent-inputs.test.sh
 
-# 16g. Голос ставит сам install.sh: сервис, веса, токен агентам; повтор не меняет токен
-# (lib/voice-install.sh). Раньше new-agent.sh спрашивал токен, которого у клиента не было.
-unit "install.sh ставит сервис голоса и раздаёт токен, повтор его не меняет — юнит-тест зелёный" \
-     "voice-install: юнит-тест провален (orchestration/lib/voice-install.test.sh)" \
-     bash orchestration/lib/voice-install.test.sh
-
 echo "── 17. Секреты не попадают в командную строку ──"
 
 # 17a. Поведенческий тест: реальный запуск session-exec.sh с подставным claude,
@@ -819,6 +813,12 @@ unit "preflight: разбор кодов ответа — юнит-тест зе
 # 18b. Поведение самого install.sh: реальный запуск с закрытым хостом должен
 # останавливать установку на шаге 0, до пакетов и создания пользователя.
 unit "install.sh останавливается на закрытом хосте — юнит-тест зелёный" "preflight в install.sh: юнит-тест провален (install-preflight.test.sh)" bash install-preflight.test.sh
+
+# Голос ставит сам install.sh: сервис, веса, токен агентам; повтор не меняет токен
+# (lib/voice-install.sh). Раньше new-agent.sh спрашивал токен, которого у клиента не было.
+unit "install.sh ставит сервис голоса и раздаёт токен, повтор его не меняет — юнит-тест зелёный" \
+     "voice-install: юнит-тест провален (orchestration/lib/voice-install.test.sh)" \
+     bash orchestration/lib/voice-install.test.sh
 
 # Тест гоняет НАСТОЯЩИЙ install.sh, поэтому обязан быть глух к флагам в шелле
 # оператора: с PREFLIGHT_DONE=1 в окружении он винил установщик в том, чего тот
