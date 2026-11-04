@@ -84,7 +84,7 @@ def test_overload_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_busy_wait_plus_worst_processing_fits_client_timeout() -> None:
     """Ожидание слота и худшая обработка вместе короче таймаута клиента.
 
-    Иначе ядро бросает запрос по таймауту и повторяет, а сервер доделывает первый.
+    Иначе клиент бросает запрос по таймауту и повторяет, а сервер доделывает первый.
     """
     worst_processing = DEFAULT_MAX_TEXT_CHARS * WORST_SECONDS_PER_CHAR
     assert BUSY_TIMEOUT_SECONDS + worst_processing < CLIENT_TIMEOUT_SECONDS

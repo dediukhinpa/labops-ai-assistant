@@ -33,8 +33,8 @@ EVENT_SERVICE_STARTED = "service_started"
 EVENT_SERVICE_STOPPED = "service_stopped"
 EVENT_RESTORE_FAILED = "pseudonymizer_restore_failed"
 
-# Класс события; значения совпадают с core/src/adapters/telemetry/severity.ts (парити-тест
-# разбирает строки ниже, поэтому формат строго `    "событие": "класс",`).
+# Класс события; значения общие для сервисов LabOps
+# (тест разбирает строки ниже, поэтому формат строго `    "событие": "класс",`).
 EVENT_SEVERITY: dict[str, str] = {
     "service_started": "info",
     "service_stopped": "info",
