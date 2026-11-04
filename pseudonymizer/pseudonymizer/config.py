@@ -11,6 +11,9 @@ from cryptography.fernet import Fernet
 
 ENV_KEY = "PSEUDONYMIZER_KEY"
 ENV_API_TOKEN = "PSEUDONYMIZER_API_TOKEN"
+ENV_STORE = "PSEUDONYMIZER_STORE"
+ENV_RETENTION_HOURS = "PSEUDONYMIZER_RETENTION_HOURS"
+# Устаревшая переменная: учитывается, только если не задана RETENTION_HOURS
 ENV_RETENTION_DAYS = "PSEUDONYMIZER_RETENTION_DAYS"
 ENV_DB = "PSEUDONYMIZER_DB"
 ENV_MASK_LEGAL = "PSEUDONYMIZER_MASK_LEGAL_ENTITY"
@@ -73,9 +76,15 @@ MAX_BUSY_TIMEOUT_SECONDS = 4.0
 BUSY_TIMEOUT_SECONDS = min(
     CLIENT_TIMEOUT_SECONDS * (1 - WORST_CASE_TIMEOUT_SHARE), MAX_BUSY_TIMEOUT_SECONDS
 )
-# Сколько дней хранится таблица замен треда без обращений (R4-RES-10). Через столько дней
-# после последней записи/восстановления тред удаляется целиком. 0 в окружении — не удалять.
-DEFAULT_RETENTION_DAYS = 90
+# Где хранится таблица замен: в памяти процесса (по умолчанию, на диск ничего не пишется)
+# или в зашифрованном SQLite-файле.
+STORE_MEMORY = "memory"
+STORE_SQLITE = "sqlite"
+STORE_BACKENDS = frozenset({STORE_MEMORY, STORE_SQLITE})
+HOURS_PER_DAY = 24
+# Сколько часов хранится таблица замен треда без обращений. Через столько часов после
+# последней записи/восстановления тред удаляется целиком. 0 в окружении — не удалять.
+DEFAULT_RETENTION_HOURS = 24
 TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
@@ -101,9 +110,10 @@ class Settings:
     """Настройки сервиса.
 
     Attributes:
-        key: Ключ Fernet (в логи и repr не попадает).
+        key: Ключ Fernet (в логи и repr не попадает); нужен только для store_backend=sqlite.
+        store_backend: Хранилище замен: "memory" (по умолчанию) или "sqlite".
         api_token: Общий секрет клиентов (Authorization: Bearer ...); в repr не попадает.
-        retention_days: Срок хранения замен треда без обращений, дней (0 — без удаления).
+        retention_hours: Срок хранения замен треда без обращений, часов (0 — без удаления).
         db_path: Путь к SQLite-файлу таблицы замен.
         mask_legal_entity_requisites: Маскировать ли названия организаций (реквизиты — всегда).
         contacts: Словарь контактов.
@@ -116,11 +126,12 @@ class Settings:
         busy_timeout_seconds: Ожидание слота до ответа 503.
     """
 
-    key: str = field(repr=False)
+    key: str = field(default="", repr=False)
+    store_backend: str = STORE_MEMORY
     api_token: str = field(default="", repr=False)
-    retention_days: int = DEFAULT_RETENTION_DAYS
+    retention_hours: int = DEFAULT_RETENTION_HOURS
     db_path: Path = DEFAULT_DB
-    mask_legal_entity_requisites: bool = False
+    mask_legal_entity_requisites: bool = True
     contacts: tuple[str, ...] = ()
     host: str = DEFAULT_HOST
     port: int = DEFAULT_PORT
@@ -160,6 +171,25 @@ def _int_env(env: Mapping[str, str], name: str, default: int, *, allow_zero: boo
     return value
 
 
+def _bool_env(env: Mapping[str, str], name: str, *, default: bool) -> bool:
+    """Читает флаг из окружения; пусто — значение по умолчанию."""
+    raw = env.get(name, "").strip().lower()
+    return default if not raw else raw in TRUE_VALUES
+
+
+def _retention_hours(env: Mapping[str, str]) -> int:
+    """Срок ретенции в часах: HOURS главнее устаревшей DAYS (она переводится в часы).
+
+    Raises:
+        ConfigError: Значение не число или отрицательное.
+    """
+    if env.get(ENV_RETENTION_HOURS, "").strip():
+        return _int_env(env, ENV_RETENTION_HOURS, DEFAULT_RETENTION_HOURS, allow_zero=True)
+    if env.get(ENV_RETENTION_DAYS, "").strip():
+        return HOURS_PER_DAY * _int_env(env, ENV_RETENTION_DAYS, 1, allow_zero=True)
+    return DEFAULT_RETENTION_HOURS
+
+
 def load_settings(
     env: Mapping[str, str] | None = None, require_api_token: bool = True
 ) -> Settings:
@@ -174,26 +204,30 @@ def load_settings(
         ConfigError: Нет ключа или токена API, ключ невалиден или не найден файл контактов.
     """
     env = os.environ if env is None else env
+    backend = env.get(ENV_STORE, "").strip().lower() or STORE_MEMORY
+    if backend not in STORE_BACKENDS:
+        raise ConfigError(f"{ENV_STORE} должна быть одной из: {', '.join(sorted(STORE_BACKENDS))}")
     key = env.get(ENV_KEY, "").strip()
-    if not key:
-        raise ConfigError(f"Не задана переменная {ENV_KEY}: сервис не стартует без ключа")
-    try:
-        Fernet(key.encode())
-    except (ValueError, TypeError) as exc:
-        # Значение ключа в сообщение не включаем.
-        raise ConfigError(f"{ENV_KEY} не является валидным ключом Fernet") from exc
+    # Ключ нужен только SQLite (шифрование на диске); в памяти шифровать нечего
+    if backend == STORE_SQLITE:
+        if not key:
+            raise ConfigError(f"Не задана переменная {ENV_KEY}: сервис не стартует без ключа")
+        try:
+            Fernet(key.encode())
+        except (ValueError, TypeError) as exc:
+            # Значение ключа в сообщение не включаем.
+            raise ConfigError(f"{ENV_KEY} не является валидным ключом Fernet") from exc
     api_token = env.get(ENV_API_TOKEN, "").strip()
     if require_api_token and not api_token:
         raise ConfigError(f"Не задана переменная {ENV_API_TOKEN}: сервис не стартует без токена")
     contacts_file = env.get(ENV_CONTACTS, "").strip()
     return Settings(
         key=key,
+        store_backend=backend,
         api_token=api_token,
-        retention_days=_int_env(
-            env, ENV_RETENTION_DAYS, DEFAULT_RETENTION_DAYS, allow_zero=True
-        ),
+        retention_hours=_retention_hours(env),
         db_path=Path(env.get(ENV_DB, str(DEFAULT_DB))),
-        mask_legal_entity_requisites=env.get(ENV_MASK_LEGAL, "").lower() in TRUE_VALUES,
+        mask_legal_entity_requisites=_bool_env(env, ENV_MASK_LEGAL, default=True),
         contacts=load_contacts(Path(contacts_file)) if contacts_file else (),
         host=env.get(ENV_HOST, DEFAULT_HOST),
         port=int(env.get(ENV_PORT, str(DEFAULT_PORT))),

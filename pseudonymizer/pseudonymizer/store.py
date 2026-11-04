@@ -128,8 +128,12 @@ class ReplacementStore(Protocol):
         """Пачка записей: фиксируется целиком при выходе, при ошибке отменяется."""
         ...
 
+    def purge_idle(self, max_idle_seconds: float) -> int:
+        """Удаляет замены тредов без обращений дольше max_idle_seconds; число тредов."""
+        ...
+
     def purge_expired(self, retention_days: int) -> int:
-        """Удаляет замены тредов без обращений дольше retention_days; число удалённых тредов."""
+        """То же, что purge_idle, со сроком в днях (совместимость)."""
         ...
 
     def delete_thread(self, thread_id: str) -> bool:
@@ -395,21 +399,25 @@ class SqliteReplacementStore:
         return {str(token): self._decrypt(value) for token, value in rows}
 
     def purge_expired(self, retention_days: int) -> int:
-        """Удаляет замены тредов, к которым не обращались дольше retention_days дней.
+        """Удаляет треды без обращений дольше retention_days дней; см. purge_idle."""
+        return self.purge_idle(retention_days * SECONDS_PER_DAY)
+
+    def purge_idle(self, max_idle_seconds: float) -> int:
+        """Удаляет замены тредов, к которым не обращались дольше max_idle_seconds.
 
         Тред удаляется целиком (токены нельзя рвать: остальные ссылки в нём перестали бы
         восстанавливаться вразнобой). Во время пачки записей ничего не делает: коммит
         захватил бы чужие незавершённые записи, вызвать можно позже.
 
         Args:
-            retention_days: Срок в днях; 0 и меньше — ретенция выключена.
+            max_idle_seconds: Срок в секундах; 0 и меньше — ретенция выключена.
 
         Returns:
             Сколько тредов удалено.
         """
-        if retention_days <= 0:
+        if max_idle_seconds <= 0:
             return 0
-        cutoff = int(self._clock()) - retention_days * SECONDS_PER_DAY
+        cutoff = int(self._clock() - max_idle_seconds)
         with self._lock:
             if self._in_batch:
                 return 0

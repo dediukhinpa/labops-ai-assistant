@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from pseudonymizer.body_guard import BodyGuardMiddleware
 from pseudonymizer.config import (
     BATCH_ITEM_COST_CHARS,
+    STORE_SQLITE,
     ConfigError,
     Settings,
     load_settings,
@@ -29,7 +30,12 @@ from pseudonymizer.jsonlog import (
     log_event,
 )
 from pseudonymizer.service import Pseudonymizer, TooManyTokensError
-from pseudonymizer.store import ReplacementStore, SqliteReplacementStore
+from pseudonymizer.store import (
+    SECONDS_PER_HOUR,
+    MemoryReplacementStore,
+    ReplacementStore,
+    SqliteReplacementStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +49,12 @@ HTTP_BUSY = 503
 BEARER_SCHEME = "bearer"
 # Пути с телом JSON: токен и размер тела проверяются в BodyGuardMiddleware до его чтения
 GUARDED_PATHS = ("/pseudonymize", "/pseudonymize_batch", "/restore", "/check")
-# Как часто проверять ретенцию таблицы замен во время работы (при старте проверяется всегда)
-RETENTION_CHECK_INTERVAL_SECONDS = 6 * 3600.0
+# Как часто проверять ретенцию таблицы замен во время работы (при старте проверяется всегда).
+# SQLite: срок задан в часах, проверка не реже раза в час. Память: тред дешёвый для обхода,
+# поэтому проверяем чаще, чтобы оригиналы не жили сверх срока.
+SECONDS_PER_MINUTE = 60.0
+SQLITE_RETENTION_CHECK_INTERVAL_SECONDS = 60 * SECONDS_PER_MINUTE
+MEMORY_RETENTION_CHECK_INTERVAL_SECONDS = 10 * SECONDS_PER_MINUTE
 
 
 def batch_cost_chars(texts: list[str]) -> int:
@@ -119,23 +129,28 @@ class _RetentionGate:
     времени; сам запрос DELETE короткий (по индексированному thread_activity).
     """
 
-    def __init__(self, store: ReplacementStore, retention_days: int) -> None:
+    def __init__(self, store: ReplacementStore, retention_hours: int) -> None:
         self._store = store
-        self._days = retention_days
+        self._hours = retention_hours
+        self._interval = (
+            MEMORY_RETENTION_CHECK_INTERVAL_SECONDS
+            if isinstance(store, MemoryReplacementStore)
+            else SQLITE_RETENTION_CHECK_INTERVAL_SECONDS
+        )
         self._last = 0.0
         self._lock = threading.Lock()
 
     def run_if_due(self, force: bool = False) -> None:
         """Удаляет просроченные треды, если пора; ошибка удаления запрос не ломает."""
-        if self._days <= 0:
+        if self._hours <= 0:
             return
         now = time.monotonic()
         with self._lock:
-            if not force and now - self._last < RETENTION_CHECK_INTERVAL_SECONDS:
+            if not force and now - self._last < self._interval:
                 return
             self._last = now
         try:
-            removed = self._store.purge_expired(self._days)
+            removed = self._store.purge_idle(self._hours * SECONDS_PER_HOUR)
         except Exception:  # noqa: BLE001 - ретенция не должна валить обработку запроса
             logger.exception("retention purge failed")
             return
@@ -176,11 +191,16 @@ def create_app(
         # Fail closed (R4-SEC-3): без секрета API не поднимается, тихого отката нет
         raise ConfigError("Не задан токен API (PSEUDONYMIZER_API_TOKEN): сервис не стартует")
     expected_token = api_token.encode()
-    store = store or SqliteReplacementStore(settings.db_path, settings.key)
+    if store is None:
+        store = (
+            SqliteReplacementStore(settings.db_path, settings.key)
+            if settings.store_backend == STORE_SQLITE
+            else MemoryReplacementStore()
+        )
     detector = PiiDetector(settings.mask_legal_entity_requisites, settings.contacts)
     service = Pseudonymizer(detector, store, settings.max_restore_tokens)
     slots = threading.BoundedSemaphore(settings.max_concurrency)
-    retention = _RetentionGate(store, settings.retention_days)
+    retention = _RetentionGate(store, settings.retention_hours)
     retention.run_if_due(force=True)
 
     def token_valid(authorization: str) -> bool:

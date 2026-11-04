@@ -9,10 +9,12 @@ import pytest
 from cryptography.fernet import Fernet
 
 from pseudonymizer.config import (
-    DEFAULT_RETENTION_DAYS,
+    DEFAULT_RETENTION_HOURS,
     ENV_API_TOKEN,
     ENV_KEY,
     ENV_RETENTION_DAYS,
+    ENV_RETENTION_HOURS,
+    ENV_STORE,
     ConfigError,
     load_settings,
 )
@@ -124,7 +126,7 @@ def test_create_app_purges_at_start(
     store = SqliteReplacementStore(":memory:", fernet_key, clock=clock)
     _fill(store, "old")
     clock.advance_days(100)
-    client = make_client(detector, monkeypatch, store, retention_days=90)
+    client = make_client(detector, monkeypatch, store, retention_hours=90 * 24)
     assert store.count("old", "PERSON") == 0
     assert client.get("/health").status_code == 200
 
@@ -133,29 +135,37 @@ def test_runtime_purge_not_more_often_than_interval(
     detector: PiiDetector, fernet_key: str, clock: Clock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = SqliteReplacementStore(":memory:", fernet_key, clock=clock)
-    calls: list[int] = []
-    real = store.purge_expired
+    calls: list[float] = []
+    real = store.purge_idle
 
-    def spy(days: int) -> int:
-        calls.append(days)
-        return real(days)
+    def spy(seconds: float) -> int:
+        calls.append(seconds)
+        return real(seconds)
 
-    store.purge_expired = spy  # type: ignore[method-assign]
-    client = make_client(detector, monkeypatch, store, retention_days=7)
+    store.purge_idle = spy  # type: ignore[method-assign]
+    client = make_client(detector, monkeypatch, store, retention_hours=7 * 24)
     for _ in range(5):
         client.post("/pseudonymize", json={"thread_id": "t", "text": "привет"})
-    assert calls == [7]  # только запуск при старте
+    assert calls == [7 * 24 * 3600]  # только запуск при старте
 
 
 def test_retention_settings() -> None:
     key = Fernet.generate_key().decode()
-    base = {ENV_KEY: key, ENV_API_TOKEN: API_TOKEN}
-    assert load_settings(base).retention_days == DEFAULT_RETENTION_DAYS
-    assert load_settings({**base, ENV_RETENTION_DAYS: "30"}).retention_days == 30
-    assert load_settings({**base, ENV_RETENTION_DAYS: "0"}).retention_days == 0
+    base = {ENV_KEY: key, ENV_API_TOKEN: API_TOKEN, ENV_STORE: "sqlite"}
+    assert load_settings(base).retention_hours == DEFAULT_RETENTION_HOURS == 24
+    assert load_settings({**base, ENV_RETENTION_HOURS: "6"}).retention_hours == 6
+    assert load_settings({**base, ENV_RETENTION_HOURS: "0"}).retention_hours == 0
     for bad in ("-1", "abc"):
         with pytest.raises(ConfigError):
-            load_settings({**base, ENV_RETENTION_DAYS: bad})
+            load_settings({**base, ENV_RETENTION_HOURS: bad})
+
+
+def test_retention_days_is_legacy_alias_and_hours_win() -> None:
+    base = {ENV_API_TOKEN: API_TOKEN}
+    assert load_settings({**base, ENV_RETENTION_DAYS: "3"}).retention_hours == 72
+    assert load_settings({**base, ENV_RETENTION_DAYS: "0"}).retention_hours == 0
+    both = {**base, ENV_RETENTION_DAYS: "3", ENV_RETENTION_HOURS: "5"}
+    assert load_settings(both).retention_hours == 5
 
 
 # --- кэш list_keys --------------------------------------------------------------------

@@ -22,7 +22,15 @@ from pathlib import Path
 
 from cryptography.fernet import InvalidToken
 
-from pseudonymizer.config import DEFAULT_DB, ENV_DB, ENV_KEY, ConfigError, load_settings
+from pseudonymizer.config import (
+    DEFAULT_DB,
+    ENV_DB,
+    ENV_KEY,
+    ENV_STORE,
+    STORE_SQLITE,
+    ConfigError,
+    load_settings,
+)
 from pseudonymizer.store import SqliteReplacementStore
 
 logger = logging.getLogger("pseudonymizer.rekey")
@@ -102,7 +110,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse(argv)
     try:
         settings = load_settings(
-            {ENV_KEY: os.environ.get(ENV_KEY, "")}, require_api_token=False
+            {ENV_KEY: os.environ.get(ENV_KEY, ""), ENV_STORE: STORE_SQLITE},
+            require_api_token=False
         )
     except ConfigError as exc:
         logger.error("%s", exc)
