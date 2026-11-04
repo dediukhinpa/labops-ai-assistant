@@ -45,6 +45,7 @@ import { ProgressReporter } from './status/progress-reporter.js'
 import { TaskMirror } from './status/task-mirror.js'
 import { loadPolicyFromPath, type MultichatPolicy } from './chats/policy-loader.js'
 import { MultichatRouter } from './router/multichat-router.js'
+import { warnIfSharedDmContext } from './telegram/dm-routing.js'
 import { TmuxSessionPool } from './router/tmux-session-pool.js'
 import { InboundWatcher } from './telegram/watcher.js'
 import { MemoryWriter, type MemoryConfig } from './memory/writer.js'
@@ -871,6 +872,13 @@ if (
     multichatPool = undefined
   }
 }
+
+// Этап 1b: если роутера нет, а людей в allowlist несколько, их личка делит одну сессию.
+warnIfSharedDmContext(
+  config,
+  multichatRouter !== undefined && multichatPolicy !== undefined,
+  log,
+)
 
 // Релей клиентов поддержки: включается парой SUPPORT_FOLLOWUP_URL/_TOKEN из channel.env.
 const clientRelay = createClientRelayFromEnv(process.env, { telegramApi, log })
