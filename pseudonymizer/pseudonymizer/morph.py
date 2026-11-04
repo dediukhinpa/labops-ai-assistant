@@ -434,13 +434,29 @@ def _word_gender(word: str, grammemes: tuple[str, ...]) -> str | None:
     return next((g for g in (GENDER_MASC, GENDER_FEMN) if g in parses[0].tag), None)
 
 
+def _surname_gender(word: str) -> str | None:
+    """Род по фамилии, только если ВСЕ её разборы-фамилии одного рода.
+
+    «Иванова» — и женская фамилия, и мужская в родительном падеже; «Ким» — мужская и
+    несклоняемая женская. Угадывать нельзя: ошибка рода хуже несклонённого ФИО.
+    """
+    genders = {
+        g
+        for parse in _name_parses(word, ("Surn",))
+        for g in (GENDER_MASC, GENDER_FEMN)
+        if g in parse.tag
+    }
+    return genders.pop() if len(genders) == 1 else None
+
+
 def _person_gender(parts: list[str]) -> str | None:
-    """Род человека по ФИО: сперва имя/отчество, при их отсутствии — фамилия."""
-    for grammemes in (("Patr",), ("Name",), ("Surn",)):
+    """Род человека по ФИО: сперва отчество и имя, при их отсутствии — однозначная фамилия."""
+    for grammemes in (("Patr",), ("Name",)):
         genders = [g for g in (_word_gender(p, grammemes) for p in parts) if g]
         if genders:
             return max(set(genders), key=genders.count)
-    return None
+    surnames = {_surname_gender(p) for p in parts}
+    return surnames.pop() if len(surnames) == 1 else None
 
 
 def _match_case(source: str, result: str) -> str:
@@ -469,7 +485,8 @@ def _inflect_part(part: str, case: str, gender: str | None) -> str:
 def inflect_person(text: str, case: str) -> str:
     """Склоняет ФИО пословно в падеж `case` (одна из INFLECT_CASES).
 
-    Пол берётся по имени/отчеству (иначе по фамилии), фамилия склоняется в том же роде.
+    Пол берётся по отчеству/имени, иначе по фамилии, если она однозначна по роду; род не
+    определён — ФИО возвращается как есть. Фамилия склоняется в том же роде.
     Инициалы, латиница и слова без разбора ФИО остаются в исходной форме; части слов через
     дефис склоняются каждая отдельно, регистр исходного слова сохраняется.
 
@@ -481,4 +498,7 @@ def inflect_person(text: str, case: str) -> str:
         ФИО в нужном падеже.
     """
     gender = _person_gender([p for p in _WORD_PART_RE.findall(text) if len(p) > 1])
+    if gender is None:
+        # Род не определён однозначно: склонение наугад дало бы «Петрову О.И.» женщине.
+        return text
     return _WORD_PART_RE.sub(lambda m: _inflect_part(m.group(0), case, gender), text)

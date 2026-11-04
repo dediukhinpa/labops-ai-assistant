@@ -132,3 +132,25 @@ def test_cases_of_one_token_count_once(detector: PiiDetector, store: Replacement
 
 def test_check_ignores_labels(service: Pseudonymizer) -> None:
     assert service.check("Передайте [PERSON_1|datv] и [PHONE_1|gent]") == []
+
+
+@pytest.mark.parametrize(
+    "original",
+    ["Петрова О.И.", "Иванова", "Иванову", "ИВАНОВА А.А."],
+)
+def test_ambiguous_gender_surname_is_not_inflected(original: str) -> None:
+    """Род по одной фамилии неоднозначен («Иванова» - и она, и его родительный): как есть."""
+    from pseudonymizer.morph import inflect_person
+
+    assert inflect_person(original, "datv") == original
+
+
+@pytest.mark.parametrize(
+    ("original", "expected"),
+    [("Петров П.С.", "Петрову П.С."), ("Сидоров", "Сидорову")],
+)
+def test_unambiguous_surname_is_inflected(original: str, expected: str) -> None:
+    """Фамилия, у которой все разборы одного рода, склоняется и без имени."""
+    from pseudonymizer.morph import inflect_person
+
+    assert inflect_person(original, "datv") == expected
