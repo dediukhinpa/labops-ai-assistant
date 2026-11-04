@@ -1,0 +1,37 @@
+[Unit]
+Description=LabOps media-masker (OCR masking of images and PDFs, 127.0.0.1:8310)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__USER__
+# Каталог подпроекта media-masker/ с готовым .venv
+# (python3.12 -m venv .venv && pip install -e ../pseudonymizer -e .)
+WorkingDirectory=__INSTALL_DIR__
+# API-токен и пути Tesseract -- файл с правами 600, вне репозитория.
+# Образец: media-masker.env.example
+EnvironmentFile=__ENV_FILE__
+ExecStart=__INSTALL_DIR__/.venv/bin/python -m media_masker
+Restart=on-failure
+RestartSec=5
+# Замер 04.11.2026: после старта RSS ~260 МБ (детектор Natasha), после фото 1600x1200 ~280 МБ
+# плюс дочерний tesseract ~340 МБ; пять страниц A4 (300 dpi) -- процесс ~460 МБ + tesseract.
+# Два одновременных запроса (MEDIA_MASKER_MAX_CONCURRENCY=2) на страницах A4 -- до ~1,8 ГБ.
+# Tesseract - дочерний процесс и считается в тот же cgroup, поэтому лимит с запасом.
+MemoryMax=2G
+# Рендер страниц и OCR -- CPU; не отнимаем всё у остальных сервисов роя
+CPUQuota=200%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Сервис ничего не пишет на диск: картинки идут через stdin Tesseract.
+
+[Install]
+WantedBy=multi-user.target

@@ -53,7 +53,9 @@ def scan_pdf(pages: int = 1) -> bytes:
     return buf.getvalue()
 
 
-def post(client: TestClient, path: str, auth: dict[str, str], media_type: str, raw: bytes):  # noqa: ANN201
+def post(
+    client: TestClient, path: str, auth: dict[str, str], media_type: str, raw: bytes
+):  # noqa: ANN201
     return client.post(path, headers=auth, json={"media_type": media_type, "data": b64(raw)})
 
 

@@ -24,6 +24,13 @@ COL_BLOCK, COL_PAR, COL_LINE = 2, 3, 4
 COL_LEFT, COL_TOP, COL_WIDTH, COL_HEIGHT, COL_CONF, COL_TEXT = 6, 7, 8, 9, 10, 11
 # Режим сегментации страницы: 3 - автоматический, без OSD (документ и фото с блоками текста)
 PSM_AUTO = "3"
+# Режим «только ориентация и письмо» и языковые данные для него
+PSM_OSD = "0"
+LANG_OSD = "osd"
+# Ниже этой уверенности OSD поворот не применяется (на коротком тексте OSD ошибается)
+MIN_ORIENTATION_CONF = 1.5
+ROTATE_PREFIX = "Rotate:"
+ORIENTATION_CONF_PREFIX = "Orientation confidence:"
 # Один поток OpenMP: параллелизм даёт семафор сервиса, а не потоки одного OCR
 OMP_THREADS = "1"
 
@@ -89,6 +96,21 @@ def parse_tsv(tsv: str, scale: float = 1.0) -> list[OcrWord]:
     return words
 
 
+def parse_osd(text: str) -> int:
+    """Достаёт поворот из вывода `--psm 0`; при низкой уверенности или мусоре возвращает 0."""
+    rotate = 0
+    confidence = 0.0
+    for line in text.splitlines():
+        try:
+            if line.startswith(ROTATE_PREFIX):
+                rotate = int(line[len(ROTATE_PREFIX):].strip())
+            elif line.startswith(ORIENTATION_CONF_PREFIX):
+                confidence = float(line[len(ORIENTATION_CONF_PREFIX):].strip())
+        except ValueError:
+            return 0
+    return rotate if confidence >= MIN_ORIENTATION_CONF and rotate in (90, 180, 270) else 0
+
+
 class TesseractOcr:
     """Обёртка над бинарём tesseract.
 
@@ -126,6 +148,33 @@ class TesseractOcr:
         missing = [lang for lang in self._langs.split("+") if lang not in have]
         if done.returncode != 0 or missing:
             raise OcrError(f"tesseract: нет языков {','.join(missing) or '?'}")
+
+    def detect_rotation(self, image: Image.Image) -> int:
+        """Определяет, на сколько градусов по часовой стрелке повернуть картинку, чтобы текст
+        стал горизонтальным (0, 90, 180 или 270).
+
+        Без этого повёрнутый текст не читается OCR и остаётся незакрашенным. Если текста мало
+        или уверенность низка, возвращает 0.
+
+        Raises:
+            OcrError: Tesseract не запускается или завис.
+        """
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        try:
+            done = subprocess.run(
+                [self._cmd, "stdin", "stdout", "--psm", PSM_OSD, "-l", LANG_OSD],
+                input=buf.getvalue(), capture_output=True, timeout=self._timeout_s,
+                env=self._env, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise OcrError("tesseract osd: таймаут") from exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise OcrError(f"tesseract не запускается: {type(exc).__name__}") from exc
+        if done.returncode != 0:
+            # «Too few characters»: ориентацию определить не по чему
+            return 0
+        return parse_osd(done.stdout.decode("utf-8", "replace"))
 
     def recognize(self, image: Image.Image, scale: float = 1.0) -> list[OcrWord]:
         """Распознаёт слова на изображении.

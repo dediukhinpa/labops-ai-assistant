@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from pseudonymizer.config import load_contacts
+
 ENV_API_TOKEN = "MEDIA_MASKER_API_TOKEN"
 ENV_HOST = "MEDIA_MASKER_HOST"
 ENV_PORT = "MEDIA_MASKER_PORT"
@@ -116,8 +118,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     contacts_file = source.get(ENV_CONTACTS, "").strip()
     contacts: tuple[str, ...] = ()
     if contacts_file:
-        lines = Path(contacts_file).read_text(encoding="utf-8").splitlines()
-        contacts = tuple(line.strip() for line in lines if line.strip())
+        contacts = load_contacts(Path(contacts_file))
     mask_legal = source.get(ENV_MASK_LEGAL, "true").strip().lower() not in ("0", "false", "no")
     return Settings(
         api_token=token,

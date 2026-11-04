@@ -79,6 +79,20 @@ def test_small_image_is_upscaled_for_ocr(masker: ImageMasker, ocr: TesseractOcr)
     assert "345-67-89" not in ocr_text(ocr, out)
 
 
+@pytest.mark.parametrize("angle", [90, 180, 270])
+def test_rotated_text_is_still_masked(
+    masker: ImageMasker, ocr: TesseractOcr, angle: int
+) -> None:
+    # Повёрнутый текст Tesseract без OSD не читает: он остался бы незакрашенным
+    src = make_text_image(PII_LINES).rotate(angle, expand=True, fillcolor="white")
+    out = Image.open(io.BytesIO(masker.mask_bytes(to_bytes(src)).data))
+    assert out.size == src.size
+    upright = out.rotate(-angle, expand=True, fillcolor="white")
+    text = ocr_text(ocr, upright)
+    for fragment in PII_FRAGMENTS:
+        assert fragment not in text
+
+
 def test_low_confidence_words_are_painted(masker: ImageMasker, ocr: TesseractOcr) -> None:
     # Сильно размытый текст читается плохо: его нельзя проверить, значит закрашиваем
     blurred = make_text_image((INN_LINE, PHONE_LINE)).filter(ImageFilter.GaussianBlur(3))

@@ -150,11 +150,18 @@ class ImageMasker:
             raise MediaRefusedError(500, "face_detection_failed") from exc
         for box in boxes:
             self._faces.pixelate(image, box)
+        # Повёрнутый текст OCR не читает: работаем на выпрямленной копии и без потерь
+        # (поворот кратен 90) возвращаем назад
+        rotation = self._rotation(image)
+        if rotation:
+            image = image.rotate(-rotation, expand=True)
         total_boxes = total_low = 0
         for _ in range(MAX_PASSES):
             words, rects, low = self._find_rects(image)
             if not rects:
                 # Чистый проход: words - всё, что осталось читаемым после заливки
+                if rotation:
+                    image = image.rotate(rotation, expand=True)
                 return image, MaskStats(len(words), total_boxes, len(boxes), total_low)
             total_boxes += len(rects)
             total_low += low
@@ -162,6 +169,19 @@ class ImageMasker:
             for rect in rects:
                 draw.rectangle(rect, fill=FILL_COLOR)
         raise MediaRefusedError(422, "pii_remains_after_masking")
+
+    def _rotation(self, image: Image.Image) -> int:
+        """Поворот страницы по OSD (на уменьшенной копии)."""
+        scale = self._ocr_scale(image.size)
+        gray = image.convert("L")
+        if scale < 1.0:
+            gray = gray.resize(
+                (round(image.width * scale), round(image.height * scale)), Image.Resampling.BOX
+            )
+        try:
+            return self._ocr.detect_rotation(gray)
+        except OcrError as exc:
+            raise MediaRefusedError(500, "ocr_failed") from exc
 
     def _find_rects(
         self, image: Image.Image
