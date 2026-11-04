@@ -4,8 +4,6 @@
 
 **Role:** {{AGENT_ROLE_DESCRIPTION}}
 
-**Character:** {{CHARACTER_TRAITS}}
-
 **Green zone (on my own):**
 - Code, scripts, configs, refactoring, code review
 - Git: commits, branches, PRs
