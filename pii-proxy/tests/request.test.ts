@@ -128,6 +128,15 @@ describe('маскирование запроса', () => {
       expect(sent.messages[1].content[0]).toEqual(addition);
     });
 
+  test('tool_reference в результате поиска инструментов пропускается как есть', async () => {
+    rig = startRig(DICT, textStream(['ок']));
+    const ref = { type: 'tool_reference', tool_name: 'mcp__x__y' };
+    const res = await post(rig.base, '/v1/messages', { messages: [{ role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 't1', content: [ref] }] }] });
+    expect(res.status).toBe(200);
+    expect(upstreamBody(rig).messages[0].content[0].content[0]).toEqual(ref);
+  });
+
   test('неизвестный тип блока: 422, upstream не вызван', async () => {
     rig = startRig(DICT, textStream(['ок']));
     const res = await post(rig.base, '/v1/messages', { messages: [
