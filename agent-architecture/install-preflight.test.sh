@@ -63,6 +63,8 @@ cp "$HERE/orchestration/lib/ui.sh" "$REPO/orchestration/lib/ui.sh"
 # plugin.sh даёт clear_foreign_modules — без него install.sh упадёт на сорсе,
 # и тест решит, что шаг 0 сломан, хотя сломана как раз копия.
 cp "$HERE/orchestration/lib/plugin.sh" "$REPO/orchestration/lib/plugin.sh"
+# voice-install.sh даёт voice_install (шаг «Голос»): install.sh сорсит его при старте.
+cp "$HERE/orchestration/lib/voice-install.sh" "$REPO/orchestration/lib/voice-install.sh"
 
 # 1. Закрытый хост (403) — установка обязана остановиться.
 make_curl_stub 403

@@ -52,8 +52,13 @@ export VOICE_TRANSCRIBER_API_TOKEN="$(.venv/bin/python -c 'import secrets; print
 `~/.claude-lab/shared/secrets/voice-transcriber-token` (`chmod 600`) или
 `VOICE_TRANSCRIBER_TOKEN` в `channel.env`; `agent-env.sh` и `new-agent.sh` его подхватывают.
 
-Деплой: `deploy/voice-transcriber.service.template` и `deploy/voice-transcriber.env.example`
-(копия env-файла вне репозитория, `chmod 600`). Юнит не устанавливается автоматически.
+Деплой: сервис ставит установщик роя (`agent-architecture/install.sh`, шаг «Голос»,
+`orchestration/lib/voice-install.sh`): код и `.venv` в `/opt/labops-voice-transcriber`, веса
+закреплённой ревизии в `/var/lib/labops-voice/models`, env-файл `/etc/labops-voice/voice-transcriber.env`
+(640, root:labops-voice), юнит `labops-voice-transcriber.service` под системным пользователем
+`labops-voice`; токен кладётся агентам в общие секреты. Повторная установка обновляет код и
+сохраняет токен и веса. Пропустить: `SKIP_VOICE=1`. Шаблоны — `deploy/voice-transcriber.service.template`
+и `deploy/voice-transcriber.env.example`.
 
 ## Модели
 
