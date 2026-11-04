@@ -49,6 +49,15 @@ export const AppConfigSchema = z.object({
   dm_only: z.boolean().default(true),
   allowed_user_ids: z.array(z.number().int().positive()).min(1).default([100000001]),
   allowed_chat_ids: z.array(z.union([z.number(), z.string()])).default([100000001]),
+  // Оператор (владелец) агента: его личка живёт в главной сессии, он же отвечает
+  // на разрешения и OOB-команды. Не задано -- берём permission_relay.allowed_user_ids
+  // (см. resolveOperatorUserIds в telegram/dm-routing.ts), чтобы не плодить два списка.
+  operator_user_ids: z.array(z.number().int().positive()).min(1).optional(),
+  // Куда идёт личка НЕ-оператора из allowed_user_ids: 'main' -- в главную сессию
+  // (как раньше), 'per_person' -- через multichat-роутер в отдельную сессию на
+  // человека (изоляция контекста). Не задано: per_person, если роутер включён,
+  // иначе main (см. resolveDmRoutingMode).
+  dm_routing: z.enum(['main', 'per_person']).optional(),
   workspace_root: z.string().optional(),
   status: z.object({
     enabled: z.boolean().default(true),
@@ -293,6 +302,8 @@ export const RuntimeEnvSchema = z.object({
   // same value as TELEGRAM_ALLOWED_USER_IDS — without this, gate.ts:
   // chat_not_allowed silently drops every inbound DM.
   TELEGRAM_ALLOWED_CHAT_IDS: z.string().optional(),
+  TELEGRAM_OPERATOR_USER_IDS: z.string().optional(), // CSV
+  TELEGRAM_DM_ROUTING: z.enum(['main', 'per_person']).optional(),
   TELEGRAM_WORKSPACE_ROOT: z.string().optional(),
   TELEGRAM_STATUS_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   TELEGRAM_ALBUM_FLUSH_MS: z.coerce.number().int().positive().optional(),
@@ -453,6 +464,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   }
   if (parsedEnv.TELEGRAM_ALLOWED_USER_IDS !== undefined) {
     merged.allowed_user_ids = parseCsvUserIds(parsedEnv.TELEGRAM_ALLOWED_USER_IDS)
+  }
+  if (parsedEnv.TELEGRAM_OPERATOR_USER_IDS !== undefined) {
+    merged.operator_user_ids = parseCsvUserIds(parsedEnv.TELEGRAM_OPERATOR_USER_IDS)
+  }
+  if (parsedEnv.TELEGRAM_DM_ROUTING !== undefined) {
+    merged.dm_routing = parsedEnv.TELEGRAM_DM_ROUTING
   }
   if (parsedEnv.TELEGRAM_ALLOWED_CHAT_IDS !== undefined) {
     merged.allowed_chat_ids = parseCsvChatIds(parsedEnv.TELEGRAM_ALLOWED_CHAT_IDS)
