@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pseudonymizer.config import DEFAULT_MAX_RESTORE_TOKENS
 from pseudonymizer.detector import Detection, PiiDetector, PiiType
 from pseudonymizer.jsonlog import log_info_formatted, thread_hash
-from pseudonymizer.morph import inflect_person, keys_compatible, split_key
+from pseudonymizer.morph import inflect_person, keys_compatible, person_case, split_key
 from pseudonymizer.store import ReplacementStore
 
 logger = logging.getLogger(__name__)
@@ -200,8 +200,17 @@ class Pseudonymizer:
         self._max_restore_tokens = max_restore_tokens
         self._lock = threading.Lock()  # токены выдаются последовательно
 
-    def pseudonymize(self, thread_id: str, text: str) -> tuple[str, list[EntityRef]]:
+    def pseudonymize(
+        self, thread_id: str, text: str, case_labels: bool = False
+    ) -> tuple[str, list[EntityRef]]:
         """Маскирует ПДн в тексте.
+
+        Args:
+            thread_id: Идентификатор треда.
+            text: Исходный текст.
+            case_labels: Ставить у ФИО в косвенном падеже метку «[PERSON_N|падеж]» (см.
+                `morph.person_case`). Номера токенов, таблица замен и `entities` от флага
+                не зависят: метка только украшает текст ответа.
 
         Returns:
             Пара (текст с токенами, уникальные сущности в порядке появления).
@@ -222,7 +231,7 @@ class Pseudonymizer:
             for det in detections:
                 token = self._token_for(thread_id, det, text[det.start:det.end], persons)
                 parts.append(_escape_literal_tokens(text[cursor:det.start], foreign))
-                parts.append(token)
+                parts.append(self._labelled(token, det, text[det.start:det.end], case_labels))
                 cursor = det.end
                 if token not in seen:
                     seen.add(token)
@@ -233,8 +242,19 @@ class Pseudonymizer:
         )
         return "".join(parts), entities
 
+    @staticmethod
+    def _labelled(token: str, det: Detection, original: str, case_labels: bool) -> str:
+        """Токен с падежной меткой, если она включена и падеж ФИО определён однозначно.
+
+        Часть имени файла (`exact`) метку не получает: restore склонил бы кусок имени файла.
+        """
+        if not case_labels or det.pii_type.value != INFLECTABLE_TYPE or det.exact:
+            return token
+        case = person_case(original)
+        return token if case is None else f"{token[:-1]}|{case}]"
+
     def pseudonymize_batch(
-        self, thread_id: str, texts: Sequence[str]
+        self, thread_id: str, texts: Sequence[str], case_labels: bool = False
     ) -> list[tuple[str, list[EntityRef]]]:
         """Маскирует список текстов одного треда: ровно как вызовы `pseudonymize` подряд.
 
@@ -247,7 +267,7 @@ class Pseudonymizer:
         Returns:
             Для каждого текста пара (текст с токенами, его уникальные сущности).
         """
-        return [self.pseudonymize(thread_id, text) for text in texts]
+        return [self.pseudonymize(thread_id, text, case_labels) for text in texts]
 
     def _foreign_literals(self, thread_id: str, text: str) -> set[str]:
         """Буквальные метки входа, которых сервис в этом треде не выдавал.

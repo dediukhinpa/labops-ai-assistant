@@ -42,6 +42,7 @@ export class RequestMasker {
   constructor(
     private readonly service: Pseudonymizer,
     private readonly imagePolicy: ImagePolicy,
+    private readonly caseLabels = false,
   ) {
     // Таблица замен сервиса потеряна: память восстановлений теряет смысл так же, как кэш.
     this.boot = new BootTracker(service, () => {
@@ -65,7 +66,7 @@ export class RequestMasker {
    * Ключ совпадает с ключом кэша маскирования: тред, boot_id и строка листа.
    */
   remember(threadId: string, bootId: string, restored: string, original: string): void {
-    this.rememberCache.set(maskCacheKey(threadId, bootId, restored), original);
+    this.rememberCache.set(maskCacheKey(threadId, bootId, restored, this.caseLabels), original);
   }
 
   /**
@@ -96,7 +97,9 @@ export class RequestMasker {
     threadId: string,
     bootId: string,
   ): Promise<{ stats: MaskStats; maskedTexts: string[] }> {
-    const keys = walker.leaves.map((l) => maskCacheKey(threadId, bootId, l.text));
+    const keys = walker.leaves.map(
+      (l) => maskCacheKey(threadId, bootId, l.text, this.caseLabels),
+    );
     // Уже известные маски снимаем сразу: запись кэша может быть вытеснена новыми.
     const resolved = new Map<string, string>();
     let rememberedLeaves = 0;

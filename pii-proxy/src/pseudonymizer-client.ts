@@ -26,6 +26,8 @@ export interface ClientOptions {
   readonly baseUrl: string;
   readonly token: string;
   readonly timeoutMs: number;
+  /** Слать `case_labels: true` в /pseudonymize_batch; false - поле не отправляется вовсе. */
+  readonly caseLabels?: boolean;
 }
 
 /** HTTP-клиент сервиса. Любой сбой (сеть, таймаут, не 2xx, неверный ответ) - PseudonymizerError. */
@@ -38,7 +40,11 @@ export class HttpPseudonymizer implements Pseudonymizer {
   }
 
   async pseudonymizeBatch(threadId: string, texts: readonly string[]): Promise<string[]> {
-    const data = await this.call('POST', '/pseudonymize_batch', { thread_id: threadId, texts });
+    // Без флага тело такое же, как у старого сервиса: поле case_labels не добавляется.
+    const body = this.options.caseLabels === true
+      ? { thread_id: threadId, texts, case_labels: true }
+      : { thread_id: threadId, texts };
+    const data = await this.call('POST', '/pseudonymize_batch', body);
     const items = parseWith(batchSchema, data).items;
     if (items.length !== texts.length) throw new PseudonymizerError('batch_size_mismatch');
     return items.map((i) => i.text);

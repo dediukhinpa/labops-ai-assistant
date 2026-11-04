@@ -63,8 +63,9 @@ export class PiiProxy {
         baseUrl: config.pseudonymizerUrl,
         token: config.pseudonymizerToken,
         timeoutMs: config.timeoutMs,
+        caseLabels: config.caseLabels,
       });
-    this.masker = new RequestMasker(this.service, config.imagePolicy);
+    this.masker = new RequestMasker(this.service, config.imagePolicy, config.caseLabels);
   }
 
   /** Запустить HTTP-сервер. */

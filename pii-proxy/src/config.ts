@@ -23,6 +23,10 @@ const envSchema = z.object({
   PSEUDONYMIZER_API_TOKEN: z.string().min(1),
   PSEUDONYMIZER_TIMEOUT_MS: z.coerce.number().int().positive().default(DEFAULT_TIMEOUT_MS),
   PII_PROXY_IMAGE_POLICY: z.enum(['passthrough', 'strip', 'reject']).default('passthrough'),
+  // Падежные метки во входе: просим сервис ставить [PERSON_N|падеж] у ФИО в косвенном падеже.
+  // По умолчанию включено (решение владельца); false не шлёт поле: совместимо со старым
+  // сервисом.
+  PII_PROXY_CASE_LABELS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
 });
 
 /** Настройки прокси. Токен сервиса нельзя выводить в журнал. */
@@ -35,6 +39,8 @@ export interface ProxyConfig {
   readonly pseudonymizerToken: string;
   readonly timeoutMs: number;
   readonly imagePolicy: ImagePolicy;
+  /** Просить у сервиса падежные метки у ФИО во входе (`case_labels`). */
+  readonly caseLabels: boolean;
 }
 
 /**
@@ -57,5 +63,6 @@ export function loadConfig(env: Record<string, string | undefined>): ProxyConfig
     pseudonymizerToken: v.PSEUDONYMIZER_API_TOKEN,
     timeoutMs: v.PSEUDONYMIZER_TIMEOUT_MS,
     imagePolicy: v.PII_PROXY_IMAGE_POLICY,
+    caseLabels: v.PII_PROXY_CASE_LABELS,
   };
 }
