@@ -774,8 +774,6 @@ fi
 [ -n "$SB" ] && [ ! -x "$SB/.venv/bin/python" ] && \
   note "labops-second-brain пока не развёрнут — это нормально: он ставится вторым шагом (sudo bash $SB/scripts/install.sh), и его установщик сам выдаст токен агенту (connect-agents.sh). До этого recall у агента выключен."
 export AGENT_NAME="${AGENT_NAME:-Developer}"
-export AGENT_ROLE="${AGENT_ROLE:-Разработчик}"
-export AGENT_ROLE_DESCRIPTION="${AGENT_ROLE_DESCRIPTION:-Автономный разработчик: пишет код, ревьюит архитектуру, гоняет тесты и помогает оператору создавать новых агентов.}"
 [ -n "$SB" ] && export SECOND_BRAIN_DIR="$SB"
 [ -n "$TG" ] && export TG_PLUGIN_DIR="$TG"
 

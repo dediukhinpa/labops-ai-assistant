@@ -103,8 +103,8 @@ if [[ ! "${AGENT_ID}" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]]; then
     exit 1
 fi
 
-prompt AGENT_ROLE             "Agent role (e.g. Coder, Coordinator, Research assistant)" "Coder"
-prompt AGENT_ROLE_DESCRIPTION "One-sentence role description" "Autonomous coding assistant. Writes code, reviews architecture, runs tests."
+# Роль, описание и характер не спрашиваются: они пишутся в личный CLAUDE.md уроком курса
+# 07-claude-md, а ответ установщика ложился туда же второй, расходящейся версией.
 
 # Алиасы, а не версии: см. комментарий в skills/create-agent/new-agent.sh.
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "  Aliases resolve to the latest model of their tier: fable / opus (code+review) / sonnet (subagents+research). A full model name pins a version."; }
@@ -165,7 +165,6 @@ echo "  Setup Summary"
 echo "============================================"
 echo ""
 echo "  Agent:       ${AGENT_NAME} (${AGENT_ID})"
-echo "  Role:        ${AGENT_ROLE}"
 echo "  Model:       ${PRIMARY_MODEL}"
 echo "  Address as:  ${OPERATOR_ADDRESS}"
 echo "  Language:    ${LANGUAGE}"
@@ -224,8 +223,6 @@ fill_template() {
     # {{VAR}} placeholders
     sed_i "s|{{AGENT_NAME}}|${AGENT_NAME}|g" "$dst"
     sed_i "s|{{AGENT_ID}}|${AGENT_ID}|g" "$dst"
-    sed_i "s|{{AGENT_ROLE}}|${AGENT_ROLE}|g" "$dst"
-    sed_i "s|{{AGENT_ROLE_DESCRIPTION}}|${AGENT_ROLE_DESCRIPTION}|g" "$dst"
     sed_i "s|{{PRIMARY_MODEL}}|${PRIMARY_MODEL}|g" "$dst"
     sed_i "s|{{RESEARCH_MODEL}}|${RESEARCH_MODEL}|g" "$dst"
     sed_i "s|{{MAX_SUBAGENTS}}|${MAX_SUBAGENTS}|g" "$dst"

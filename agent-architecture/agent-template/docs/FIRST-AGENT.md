@@ -15,8 +15,6 @@ Ask Developer in Telegram: *"Create a new agent: code reviewer"*. It runs the
 
 ```bash
 AGENT_NAME="Reviewer" \
-AGENT_ROLE="Code reviewer" \
-AGENT_ROLE_DESCRIPTION="Senior code reviewer: finds bugs, security issues and architectural problems." \
 PRIMARY_MODEL="sonnet" \
 TELEGRAM_BOT_TOKEN="<token from @BotFather>" \
 TELEGRAM_ALLOWED_USER_IDS="<your Telegram id>" \

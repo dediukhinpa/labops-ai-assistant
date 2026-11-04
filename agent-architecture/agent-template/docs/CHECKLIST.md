@@ -40,10 +40,11 @@ The installer leaves these as `TODO: fill in`:
 
 - [ ] `core/AGENTS.md` -- the team table
 - [ ] `tools/TOOLS.md` -- servers and services this agent works with
-- [ ] `CLAUDE.md` -- the extra red-zone line, if the role needs one
 
 `core/USER.md` holds only your name, address, timezone and language from the installer;
-profile, communication style and needs are added by the course lesson "USER.md".
+profile, communication style and needs are added by the course lesson "USER.md"; later agents
+copy the first agent's file. Role, character and the agent's own red zone go into `CLAUDE.md`
+by the lesson "CLAUDE.md" -- the installer does not ask for them.
 
 Leave `core/rules.md` empty: rules are added later, from the agent's own mistakes.
 
