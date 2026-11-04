@@ -1,0 +1,497 @@
+"""Хранилище таблицы замен: интерфейс и SQLite-реализация с шифрованием Fernet."""
+
+from __future__ import annotations
+
+import base64
+import contextlib
+import hashlib
+import hmac
+import logging
+import sqlite3
+import threading
+import time
+from collections import OrderedDict
+from collections.abc import Callable, Collection, Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+logger = logging.getLogger(__name__)
+
+# Схема ключей (S-02). v1 (прежняя): мастер-ключ напрямую и для Fernet, и для HMAC-индекса.
+# v2: два независимых ключа через HKDF-SHA256 с разными метками info. Версия записана в
+# самих данных: шифртекст v2 = b"v2:" + токен Fernet (в base64 нет «:», путаницы с v1 нет),
+# индекс v2 = "v2:" + hex. Схему SQLite менять не нужно, старые файлы читаются как есть.
+V2_PREFIX = "v2:"
+V2_PREFIX_BYTES = V2_PREFIX.encode()
+HKDF_INFO_FERNET = b"pseudonymizer/replacements/fernet/v2"
+HKDF_INFO_INDEX = b"pseudonymizer/replacements/index-hmac/v2"
+DERIVED_KEY_LEN = 32
+# Сколько токенов читается одним запросом (предел числа параметров SQLite не меньше 999).
+LOOKUP_BATCH = 500
+
+SECONDS_PER_DAY = 86_400
+# Метку последнего обращения к треду пишем не чаще раза в этот интервал: запись на диск
+# на каждый запрос не нужна, а точность до часа для ретенции в днях достаточна.
+ACTIVITY_TOUCH_INTERVAL_SECONDS = 3_600
+# Сколько пар (тред, тип) держит кэш расшифрованных ключей list_keys. Кэш только ускоряет
+# повторные чтения и перестраивается из таблицы; хранит нормализованные ключи в памяти
+# процесса так же, как их держит сам запрос при разборе текста.
+DEFAULT_KEY_CACHE_ENTRIES = 256
+# Верхняя граница словаря «когда последний раз писали метку»: при превышении сбрасывается.
+TOUCHED_MAP_LIMIT = 100_000
+# Сколько пар (тред, тип) держит кэш счётчиков count(): запись это ключ и число, кэш
+# только убирает SELECT COUNT(*) на каждый новый токен и при вытеснении пересчитывается.
+COUNT_CACHE_ENTRIES = 4096
+
+# Последнее обращение к треду (запись/чтение замен) для ретенции. Отдельная таблица:
+# формат replacements и rekey.py не меняются, старые файлы открываются как есть.
+ACTIVITY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS thread_activity (
+    thread_id TEXT PRIMARY KEY,
+    last_seen INTEGER NOT NULL
+)
+"""
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS replacements (
+    thread_id TEXT NOT NULL,
+    token TEXT NOT NULL,
+    pii_type TEXT NOT NULL,
+    key_hash TEXT NOT NULL,
+    key_enc BLOB NOT NULL,
+    value_enc BLOB NOT NULL,
+    PRIMARY KEY (thread_id, token),
+    UNIQUE (thread_id, pii_type, key_hash)
+)
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class RekeyReport:
+    """Итог перешифрования таблицы замен.
+
+    Attributes:
+        total: Всего строк.
+        legacy: Строк, где остались данные схемы v1 (до операции).
+        migrated: Строк переведено на v2 (0 при dry-run).
+        dry_run: Ничего не записывалось.
+    """
+
+    total: int
+    legacy: int
+    migrated: int
+    dry_run: bool
+
+
+def _hkdf(master: bytes, info: bytes) -> bytes:
+    """Выводит подключ из мастер-ключа (HKDF-SHA256, без соли: мастер-ключ уже случайный)."""
+    return HKDF(algorithm=hashes.SHA256(), length=DERIVED_KEY_LEN, salt=None, info=info).derive(
+        master
+    )
+
+
+class ReplacementStore(Protocol):
+    """Интерфейс таблицы замен «токен <-> оригинал» в пределах треда."""
+
+    def find_token(self, thread_id: str, pii_type: str, key: str) -> str | None:
+        """Токен для нормализованного ключа или None."""
+        ...
+
+    def list_keys(self, thread_id: str, pii_type: str) -> list[tuple[str, str]]:
+        """Все пары (ключ, токен) данного типа в треде."""
+        ...
+
+    def count(self, thread_id: str, pii_type: str) -> int:
+        """Сколько токенов данного типа уже выдано в треде."""
+        ...
+
+    def add(self, thread_id: str, token: str, pii_type: str, key: str, original: str) -> None:
+        """Сохраняет замену."""
+        ...
+
+    def get_original(self, thread_id: str, token: str) -> str | None:
+        """Оригинал по токену треда или None."""
+        ...
+
+    def get_originals(self, thread_id: str, tokens: Collection[str]) -> dict[str, str]:
+        """Оригиналы для тех токенов из набора, которые есть в треде."""
+        ...
+
+    def batch(self) -> contextlib.AbstractContextManager[None]:
+        """Пачка записей: фиксируется целиком при выходе, при ошибке отменяется."""
+        ...
+
+    def purge_expired(self, retention_days: int) -> int:
+        """Удаляет замены тредов без обращений дольше retention_days; число удалённых тредов."""
+        ...
+
+
+class SqliteReplacementStore:
+    """SQLite-хранилище для разработки. Ключи и значения шифруются Fernet."""
+
+    def __init__(
+        self,
+        path: Path | str,
+        fernet_key: str,
+        clock: Callable[[], float] = time.time,
+        key_cache_entries: int = DEFAULT_KEY_CACHE_ENTRIES,
+    ) -> None:
+        """Открывает (создаёт) базу.
+
+        Args:
+            path: Путь к файлу SQLite или ":memory:".
+            fernet_key: Ключ Fernet (urlsafe base64, 32 байта).
+            clock: Источник времени в секундах (подменяется в тестах).
+            key_cache_entries: Размер кэша расшифрованных ключей list_keys.
+        """
+        master = base64.urlsafe_b64decode(fernet_key.encode())
+        # v1 (только для чтения старых данных и перешифрования): мастер-ключ напрямую
+        self._legacy_fernet = Fernet(fernet_key.encode())
+        self._legacy_index_secret = master
+        # v2: раздельные ключи шифрования и слепого индекса (HMAC от ключа записи)
+        self._fernet = Fernet(base64.urlsafe_b64encode(_hkdf(master, HKDF_INFO_FERNET)))
+        self._index_secret = _hkdf(master, HKDF_INFO_INDEX)
+        if str(path) != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._in_batch = False
+        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._clock = clock
+        self._key_cache_entries = max(1, key_cache_entries)
+        self._key_cache: OrderedDict[tuple[str, str], list[tuple[str, str]]] = OrderedDict()
+        self._touched: dict[str, int] = {}
+        # Счётчики строк по (тред, тип); значение всегда равно COUNT(*) либо записи нет.
+        # Версия файла нужна, чтобы увидеть запись другим соединением/процессом.
+        self._counts: OrderedDict[tuple[str, str], int] = OrderedDict()
+        self._counts_version: int | None = None
+        self._conn.execute(SCHEMA)
+        self._conn.execute(ACTIVITY_SCHEMA)
+        # Удалённые строки с ПДн затираются на странице, а не остаются в свободном месте
+        self._conn.execute("PRAGMA secure_delete=ON")
+        # Файл, созданный до этапа 26, не знает дат: треды получают дату запуска (удалены
+        # будут не раньше чем через срок ретенции после первого запуска новой версии)
+        self._conn.execute(
+            "INSERT OR IGNORE INTO thread_activity "
+            "SELECT DISTINCT thread_id, ? FROM replacements",
+            (int(self._clock()),),
+        )
+        self._conn.commit()
+        legacy = self.legacy_row_count()
+        if legacy:
+            logger.warning(
+                "в таблице замен %d строк со старой схемой ключей (v1); "
+                "выполните перешифрование: python -m pseudonymizer.rekey (см. RUNBOOK)",
+                legacy,
+            )
+
+    def _hash(self, key: str) -> str:
+        """Слепой индекс схемы v2."""
+        digest = hmac.new(self._index_secret, key.encode(), hashlib.sha256).hexdigest()
+        return V2_PREFIX + digest
+
+    def _legacy_hash(self, key: str) -> str:
+        """Слепой индекс схемы v1 (HMAC мастер-ключом)."""
+        return hmac.new(self._legacy_index_secret, key.encode(), hashlib.sha256).hexdigest()
+
+    def _encrypt(self, plain: str) -> bytes:
+        """Шифрует по схеме v2 с меткой версии."""
+        return V2_PREFIX_BYTES + self._fernet.encrypt(plain.encode())
+
+    def _decrypt(self, blob: bytes) -> str:
+        """Расшифровывает данные v2 и v1 (по метке версии).
+
+        Raises:
+            cryptography.fernet.InvalidToken: Неверный ключ или повреждённые данные.
+        """
+        raw = bytes(blob)
+        if raw.startswith(V2_PREFIX_BYTES):
+            return self._fernet.decrypt(raw[len(V2_PREFIX_BYTES):]).decode()
+        return self._legacy_fernet.decrypt(raw).decode()
+
+    def _touch_locked(self, thread_id: str) -> None:
+        """Отмечает обращение к треду (не чаще интервала); вызывать под self._lock."""
+        now = int(self._clock())
+        last = self._touched.get(thread_id)
+        if last is not None and now - last < ACTIVITY_TOUCH_INTERVAL_SECONDS:
+            return
+        if len(self._touched) >= TOUCHED_MAP_LIMIT:
+            self._touched.clear()
+        self._conn.execute(
+            "INSERT INTO thread_activity VALUES (?, ?) "
+            "ON CONFLICT(thread_id) DO UPDATE SET last_seen=excluded.last_seen",
+            (thread_id, now),
+        )
+        self._touched[thread_id] = now
+        if not self._in_batch:
+            self._conn.commit()
+
+    def find_token(self, thread_id: str, pii_type: str, key: str) -> str | None:
+        with self._lock:
+            # Сначала индекс v2, затем v1: строки, ещё не прошедшие rekey, остаются находимыми
+            for key_hash in (self._hash(key), self._legacy_hash(key)):
+                row = self._conn.execute(
+                    "SELECT token FROM replacements "
+                    "WHERE thread_id=? AND pii_type=? AND key_hash=?",
+                    (thread_id, pii_type, key_hash),
+                ).fetchone()
+                if row:
+                    self._touch_locked(thread_id)
+                    return str(row[0])
+        return None
+
+    def list_keys(self, thread_id: str, pii_type: str) -> list[tuple[str, str]]:
+        """Пары (ключ, токен) типа в треде; расшифровка один раз, дальше из кэша.
+
+        Кэш по (тред, тип) ведётся в add() и сбрасывается при откате/ретенции/перешифровании.
+        Совпадение числа строк в базе с длиной кэша проверяется на каждом чтении: запись
+        другим процессом в тот же файл приводит к перечитыванию, а не к устаревшему ответу.
+        """
+        cache_key = (thread_id, pii_type)
+        with self._lock:
+            total = self._row_count_locked(cache_key)
+            cached = self._key_cache.get(cache_key)
+            if cached is not None and len(cached) == total:
+                self._key_cache.move_to_end(cache_key)
+                return list(cached)
+            rows = self._conn.execute(
+                "SELECT key_enc, token FROM replacements WHERE thread_id=? AND pii_type=?",
+                cache_key,
+            ).fetchall()
+            keys = [(self._decrypt(enc), str(token)) for enc, token in rows]
+            self._key_cache[cache_key] = keys
+            self._key_cache.move_to_end(cache_key)
+            while len(self._key_cache) > self._key_cache_entries:
+                self._key_cache.popitem(last=False)
+            return list(keys)
+
+    def _row_count_locked(self, cache_key: tuple[str, str]) -> int:
+        """COUNT(*) строк пары (тред, тип) прямо из таблицы; под self._lock."""
+        return int(self._conn.execute(
+            "SELECT COUNT(*) FROM replacements WHERE thread_id=? AND pii_type=?", cache_key
+        ).fetchone()[0])
+
+    def _sync_counts_locked(self) -> None:
+        """Сбрасывает счётчики, если файл менялся не этим соединением; под self._lock.
+
+        PRAGMA data_version не сканирует таблицу: значение растёт только от записей других
+        соединений, поэтому свои add() кэш не обнуляют, а чужая запись (другой процесс,
+        rekey) приводит к честному пересчёту.
+        """
+        version = int(self._conn.execute("PRAGMA data_version").fetchone()[0])
+        if version != self._counts_version:
+            self._counts.clear()
+            self._counts_version = version
+
+    def count(self, thread_id: str, pii_type: str) -> int:
+        """Сколько токенов типа выдано в треде; из кэша, при промахе один COUNT(*)."""
+        cache_key = (thread_id, pii_type)
+        with self._lock:
+            self._sync_counts_locked()
+            cached = self._counts.get(cache_key)
+            if cached is not None:
+                self._counts.move_to_end(cache_key)
+                return cached
+            total = self._row_count_locked(cache_key)
+            self._counts[cache_key] = total
+            while len(self._counts) > COUNT_CACHE_ENTRIES:
+                self._counts.popitem(last=False)
+            return total
+
+    def add(self, thread_id: str, token: str, pii_type: str, key: str, original: str) -> None:
+        with self._lock:
+            self._sync_counts_locked()
+            count_key = (thread_id, pii_type)
+            try:
+                self._conn.execute(
+                    "INSERT INTO replacements VALUES (?,?,?,?,?,?)",
+                    (
+                        thread_id,
+                        token,
+                        pii_type,
+                        self._hash(key),
+                        self._encrypt(key),
+                        self._encrypt(original),
+                    ),
+                )
+                self._touch_locked(thread_id)
+                cached = self._key_cache.get((thread_id, pii_type))
+                if cached is not None:
+                    cached.append((key, token))
+                if not self._in_batch:
+                    self._conn.commit()
+            except BaseException:
+                # Дубль (UNIQUE), сбой диска: состояние строки неясно, счётчик пересчитается
+                # из таблицы при следующем обращении
+                self._counts.pop(count_key, None)
+                raise
+            cached_count = self._counts.get(count_key)
+            if cached_count is not None:
+                self._counts[count_key] = cached_count + 1
+
+    @contextlib.contextmanager
+    def batch(self) -> Iterator[None]:
+        """Откладывает фиксацию записей до выхода из блока.
+
+        Один коммит на запрос вместо коммита на каждый токен: на файловой базе каждый
+        коммит это запись на диск, и текст с тысячей новых ФИО обрабатывался секундами.
+        При исключении всё записанное в блоке отменяется. Блоки не вкладываются; вызывающий
+        сам не пускает в блок другие потоки (сервис держит свою блокировку).
+        """
+        with self._lock:
+            self._in_batch = True
+        try:
+            yield
+        except BaseException:
+            with self._lock:
+                self._in_batch = False
+                self._conn.rollback()
+                # Кэш и метки времени могли включить откатанные записи
+                self._key_cache.clear()
+                self._counts.clear()
+                self._touched.clear()
+            raise
+        with self._lock:
+            self._in_batch = False
+            self._conn.commit()
+
+    def get_original(self, thread_id: str, token: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value_enc FROM replacements WHERE thread_id=? AND token=?",
+                (thread_id, token),
+            ).fetchone()
+            if row:
+                self._touch_locked(thread_id)
+        return self._decrypt(row[0]) if row else None
+
+    def get_originals(self, thread_id: str, tokens: Collection[str]) -> dict[str, str]:
+        """Читает оригиналы пачкой: один запрос на LOOKUP_BATCH токенов."""
+        wanted = sorted(set(tokens))
+        rows: list[tuple[str, bytes]] = []
+        with self._lock:
+            for start in range(0, len(wanted), LOOKUP_BATCH):
+                chunk = wanted[start:start + LOOKUP_BATCH]
+                marks = ",".join("?" * len(chunk))
+                rows.extend(
+                    self._conn.execute(
+                        "SELECT token, value_enc FROM replacements "
+                        f"WHERE thread_id=? AND token IN ({marks})",
+                        (thread_id, *chunk),
+                    ).fetchall()
+                )
+            if rows:
+                self._touch_locked(thread_id)
+        return {str(token): self._decrypt(value) for token, value in rows}
+
+    def purge_expired(self, retention_days: int) -> int:
+        """Удаляет замены тредов, к которым не обращались дольше retention_days дней.
+
+        Тред удаляется целиком (токены нельзя рвать: остальные ссылки в нём перестали бы
+        восстанавливаться вразнобой). Во время пачки записей ничего не делает: коммит
+        захватил бы чужие незавершённые записи, вызвать можно позже.
+
+        Args:
+            retention_days: Срок в днях; 0 и меньше — ретенция выключена.
+
+        Returns:
+            Сколько тредов удалено.
+        """
+        if retention_days <= 0:
+            return 0
+        cutoff = int(self._clock()) - retention_days * SECONDS_PER_DAY
+        with self._lock:
+            if self._in_batch:
+                return 0
+            expired = [
+                str(row[0]) for row in self._conn.execute(
+                    "SELECT thread_id FROM thread_activity WHERE last_seen < ?", (cutoff,)
+                ).fetchall()
+            ]
+            for start in range(0, len(expired), LOOKUP_BATCH):
+                chunk = expired[start:start + LOOKUP_BATCH]
+                marks = ",".join("?" * len(chunk))
+                self._conn.execute(
+                    f"DELETE FROM replacements WHERE thread_id IN ({marks})", chunk
+                )
+                self._conn.execute(
+                    f"DELETE FROM thread_activity WHERE thread_id IN ({marks})", chunk
+                )
+            self._conn.commit()
+            if expired:
+                self._key_cache.clear()
+                self._counts.clear()
+                self._touched.clear()
+        return len(expired)
+
+    def legacy_row_count(self) -> int:
+        """Сколько строк ещё в схеме v1 (индекс без метки v2 или шифртекст без метки v2)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM replacements WHERE key_hash NOT LIKE ? "
+                "OR substr(key_enc,1,3) != ? OR substr(value_enc,1,3) != ?",
+                (V2_PREFIX + "%", V2_PREFIX_BYTES, V2_PREFIX_BYTES),
+            ).fetchone()
+        return int(row[0])
+
+    def rekey_legacy(self, dry_run: bool = False) -> RekeyReport:
+        """Переводит все строки схемы v1 на v2 одной транзакцией (всё или ничего).
+
+        Идемпотентна: строки v2 не трогаются, повторный запуск ничего не меняет. Все строки
+        сначала расшифровываются и проверяются, и только потом пишутся: неверный ключ
+        прерывает операцию до первой записи. Запись в сервис на время операции остановить.
+
+        Args:
+            dry_run: Только проверить расшифровку и посчитать, ничего не записывать.
+
+        Returns:
+            Отчёт со счётчиками.
+
+        Raises:
+            cryptography.fernet.InvalidToken: Неверный ключ или повреждённая строка
+                (база не изменена).
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT thread_id, token, key_hash, key_enc, value_enc FROM replacements"
+            ).fetchall()
+            updates: list[tuple[str, bytes, bytes, str, str]] = []
+            for thread_id, token, key_hash, key_enc, value_enc in rows:
+                is_v2 = (
+                    str(key_hash).startswith(V2_PREFIX)
+                    and bytes(key_enc).startswith(V2_PREFIX_BYTES)
+                    and bytes(value_enc).startswith(V2_PREFIX_BYTES)
+                )
+                key = self._decrypt(key_enc)  # проверка ключа касается и строк v2
+                original = self._decrypt(value_enc)
+                if is_v2:
+                    continue
+                updates.append(
+                    (self._hash(key), self._encrypt(key), self._encrypt(original),
+                     str(thread_id), str(token))
+                )
+            if dry_run or not updates:
+                return RekeyReport(len(rows), len(updates), 0, dry_run)
+            try:
+                self._conn.executemany(
+                    "UPDATE replacements SET key_hash=?, key_enc=?, value_enc=? "
+                    "WHERE thread_id=? AND token=?",
+                    updates,
+                )
+                self._conn.commit()
+                self._key_cache.clear()
+                self._counts.clear()
+            except Exception:
+                self._conn.rollback()
+                self._counts.clear()
+                raise
+        return RekeyReport(len(rows), len(updates), len(updates), False)
+
+    def close(self) -> None:
+        """Закрывает соединение."""
+        with self._lock:
+            self._conn.close()
