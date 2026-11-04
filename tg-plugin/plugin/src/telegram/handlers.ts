@@ -25,6 +25,10 @@ import type { MultichatPolicy } from '../chats/policy-loader.js'
 import type { MultichatRouter } from '../router/multichat-router.js'
 import type { InboundMessage } from '../router/inbox-bridge.js'
 import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
+import {
+  checkDmRouterAccess,
+  shouldRouteDmPerPerson,
+} from './dm-routing.js'
 import { ensureSubmitted, resolveAgentSession } from '../channel/ensure-submit.js'
 import { recordInboundDelivery } from '../channel/inbound-marker.js'
 import type { ClientRelay } from './client-relay.js'
@@ -443,6 +447,23 @@ async function gateAndNotify(
   const hasPolicy = deps.policy !== undefined
   const hasRouter = deps.router !== undefined
   const isGroup = input.chatType === 'group' || input.chatType === 'supergroup'
+  // Личка не-оператора идёт через роутер в свою сессию (изоляция по собеседникам,
+  // этап 1b): иначе токены ПДн одного человека восстановятся в ответе другому.
+  const isPersonalDm =
+    input.chatType === 'private'
+    && shouldRouteDmPerPerson(deps.config, hasRouter && hasPolicy, decision.senderId)
+  if (isPersonalDm && deps.policy) {
+    const refusal = checkDmRouterAccess(deps.policy, decision.chatId, decision.senderId)
+    if (refusal !== null) {
+      // Fail closed: в главную сессию не падаем, чтобы не смешать контексты.
+      deps.log.warn('handlers.dm_router_refused — dropping personal dm', {
+        reason: refusal,
+        kind,
+        hint: 'добавьте человека и его чат в chats/policy.yaml (allowlist.users, chats)',
+      })
+      return
+    }
+  }
   if (isPolicyRouterMisconfig(hasPolicy, hasRouter, isGroup)) {
     deps.log.error('handlers.policy_router_misconfig — dropping group dispatch', {
       chat_id: decision.chatId,
@@ -512,7 +533,7 @@ async function gateAndNotify(
   // that "DMs use the legacy notify path even in multichat builds").
   // For groups the router still takes full ownership — no fallback — so
   // the master session never sees traffic belonging to a different chat.
-  if (deps.router && deps.policy && isGroup) {
+  if (deps.router && deps.policy && (isGroup || isPersonalDm)) {
     // Open a status before dispatch — symmetric with the legacy path so
     // the user sees "Печатает..." within a tick. Streaming is per-chat
     // gated inside StatusManager.start via shouldStreamForChat(policy,
@@ -931,6 +952,25 @@ export async function sendAlbumNotification(
   deps: AlbumDispatchDeps,
 ): Promise<AlbumDispatchOutcome> {
   const isGroup = isGroupChatId(ids.chatId)
+  // Альбом из лички не-оператора -- тоже через роутер (как одиночное сообщение).
+  const isPersonalDm =
+    !isGroup
+    && shouldRouteDmPerPerson(
+      deps.config,
+      deps.router !== undefined && deps.policy !== undefined,
+      ids.senderId,
+    )
+  if (isPersonalDm && deps.policy) {
+    const refusal = checkDmRouterAccess(deps.policy, ids.chatId, ids.senderId)
+    if (refusal !== null) {
+      deps.log.warn('album.dm_router_refused — dropping personal dm album', {
+        reason: refusal,
+        kind: ids.kind,
+        hint: 'добавьте человека и его чат в chats/policy.yaml (allowlist.users, chats)',
+      })
+      return { dispatched: false, silentDrop: 'dm_router_refused' }
+    }
+  }
 
   // FIX-D M1 (2026-05-27) — policy/router XOR defence-in-depth at the
   // dispatch site. If we somehow buffered a group album despite the
@@ -1005,7 +1045,7 @@ export async function sendAlbumNotification(
   // gone by album flush time. Channel-type posts never reach this path
   // (gate.ts drops chatType==='channel' before buffering), so the
   // negative-id check cannot misclassify a channel as a group here.
-  if (deps.router && deps.policy && isGroup) {
+  if (deps.router && deps.policy && (isGroup || isPersonalDm)) {
     const combinedMediaPaths: string[] = []
     for (const m of album.messages) {
       for (const p of m.mediaPaths) combinedMediaPaths.push(p)
@@ -1190,9 +1230,14 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
     const senderId = ctx.from?.id !== undefined ? String(ctx.from.id) : undefined
     const senderNum = ctx.from?.id
     const chatNum = ctx.chat?.id
+    // OOB-команды (/reset, /doctor и т.п.) управляют ГЛАВНОЙ сессией. Когда личка
+    // разведена по людям, их выполняет только оператор: иначе любой из allowlist
+    // мог бы перезапустить чужого агента.
+    const routerActive = deps.router !== undefined && deps.policy !== undefined
     const allowedSender =
       senderNum !== undefined
       && deps.config.allowed_user_ids.includes(senderNum)
+      && !shouldRouteDmPerPerson(deps.config, routerActive, String(senderNum))
     // Defence-in-depth: even DM from allowed user must come from a chat in
     // allowed_chat_ids. The allowlists can drift (chat list tighter than user
     // list); without this check an OOB command could run from an unverified
