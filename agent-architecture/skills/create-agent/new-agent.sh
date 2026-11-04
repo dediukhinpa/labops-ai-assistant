@@ -12,8 +12,8 @@
 #   • labops-tg-plugin      — Telegram-канал (бот, голос, реакции)
 #
 # Переменные (любую можно передать заранее — тогда без вопроса):
-#   AGENT_NAME AGENT_ROLE AGENT_ROLE_DESCRIPTION CHARACTER_TRAITS
-#   PRIMARY_MODEL OPERATOR_NAME OPERATOR_ADDRESS TIMEZONE LANGUAGE
+#   AGENT_NAME PRIMARY_MODEL LANGUAGE
+#   USER_MD_SOURCE (чей core/USER.md взять; по умолчанию — первого агента роя)
 #   MCP_HOST (default: 127.0.0.1, colocated) AGENT_SCOPES
 #   SECOND_BRAIN_MEMORY_URL/_MEMORY_ROUTER_URL/_AGENT_ROUTER_URL/_TASKS_URL (override for remote/reverse-proxy)
 #   TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USER_IDS
@@ -34,7 +34,7 @@ set -euo pipefail
 # so the new agent's channel collides with the parent's port. These are all
 # per-agent and must be derived fresh here (or taken only from explicit CLI/env
 # the operator set for THIS run) — never inherited from the parent session.
-# Operator-supplied inputs (AGENT_NAME/AGENT_ROLE/TELEGRAM_BOT_TOKEN/
+# Operator-supplied inputs (AGENT_NAME/TELEGRAM_BOT_TOKEN/
 # TELEGRAM_ALLOWED_USER_IDS/PRIMARY_MODEL/...) are intentionally NOT in this list.
 #
 # AGENT_BEARER остаётся в списке: из родительской сессии он прилетает ЧУЖОЙ, и
@@ -100,6 +100,8 @@ ORCH_DIR="$REPO_DIR/orchestration"
 . "$ORCH_DIR/lib/sudo-compat.sh"
 # shellcheck source=../../orchestration/lib/agent-inputs.sh
 . "$ORCH_DIR/lib/agent-inputs.sh"
+# shellcheck source=../../orchestration/lib/operator-profile.sh
+. "$ORCH_DIR/lib/operator-profile.sh"
 # Нативный claude ставится в ~/.local/bin, но PATH туда правится только в
 # ~/.bashrc — при запуске не-login шеллом (sudo -u ... -H bash ...) это не
 # подхватывается. Подмешиваем явно, чтобы claude находился и здесь, и в
@@ -225,8 +227,8 @@ say "1. Конфигурация агента"
 # до того, как создано хоть что-то; см. lib/agent-inputs.sh.
 require_unattended_inputs
 ask AGENT_NAME  "Имя агента (напр. Developer, Friday)" "Developer"
-ask AGENT_ROLE  "Роль агента" "Разработчик"
-ask AGENT_ROLE_DESCRIPTION "Описание роли одной фразой" "Автономный разработчик: пишет код, ревьюит архитектуру, гоняет тесты, помогает ставить других агентов."
+# Роль и характер не спрашиваем: оператор пишет их в личный CLAUDE.md агента по уроку
+# курса 07-claude-md. Строка-ответ из установщика ложилась туда же и расходилась с уроком.
 AGENT_ID=$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 [[ "$AGENT_ID" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || die "имя: только латиница/цифры/дефис, ≤31"
 # Идемпотентность: не затираем уже существующего агента молча.
@@ -242,8 +244,15 @@ ask PRIMARY_MODEL    "Модель — алиас последней (fable / op
 # Haiku не отвечает через reply канала — агент молчит в Telegram при зелёной
 # установке. Спрашиваем подтверждение, см. lib/model-choice.sh.
 confirm_primary_model
-ask LANGUAGE         "Язык ответов" "Russian"
-ask OPERATOR_ADDRESS "Как обращаться к вам" "Boss"
+# Профиль оператора общий: у второго и следующих агентов USER.md копируется у первого,
+# и язык из него не переспрашивается (см. lib/operator-profile.sh). Обращение не
+# спрашивается вовсе: его пишет урок курса 08-user-md.
+USER_MD_FROM="$(operator_profile_source "$LAB_DIR" "$AGENT_ID")"
+if [ -n "$USER_MD_FROM" ]; then
+  ok "профиль оператора (USER.md) возьму у первого агента: $USER_MD_FROM"
+  [ -n "${LANGUAGE:-}" ] || LANGUAGE="$(operator_profile_language "$USER_MD_FROM")"
+fi
+ask LANGUAGE "Язык ответов" "Russian"
 # Второй мозг всегда колоцирован на этом же VPS, без reverse proxy — прямые
 # host:port URL на дефолтных портах, без вопроса. Переопределяется через
 # MCP_HOST (другой хост) или напрямую SECOND_BRAIN_*_URL (напр. свой домен+proxy).
@@ -381,10 +390,15 @@ fi
 
 # ── 3. Скаффолд воркспейса (agent-template, неинтерактивно) ──────
 say "3. Скаффолд воркспейса"
-NONINTERACTIVE=1 AGENT_NAME="$AGENT_NAME" AGENT_ROLE="$AGENT_ROLE" \
-  AGENT_ROLE_DESCRIPTION="$AGENT_ROLE_DESCRIPTION" LANGUAGE="$LANGUAGE" \
+# Копия профиля ДО шаблонов: fill_template пропускает существующий файл, и свежий
+# шаблон USER.md не ложится поверх профиля первого агента.
+if [ -n "$USER_MD_FROM" ]; then
+  operator_profile_copy "$USER_MD_FROM" "$LAB_DIR/$AGENT_ID/.claude" \
+    || warn "не удалось скопировать $USER_MD_FROM — у агента будет пустой шаблон USER.md"
+fi
+NONINTERACTIVE=1 AGENT_NAME="$AGENT_NAME" LANGUAGE="$LANGUAGE" \
   PRIMARY_MODEL="$PRIMARY_MODEL" \
-  OPERATOR_ADDRESS="$OPERATOR_ADDRESS" MCP_HOST="$MCP_HOST" \
+  MCP_HOST="$MCP_HOST" \
   SECOND_BRAIN_MEMORY_URL="$SECOND_BRAIN_MEMORY_URL" \
   SECOND_BRAIN_MEMORY_ROUTER_URL="$SECOND_BRAIN_MEMORY_ROUTER_URL" \
   SECOND_BRAIN_AGENT_ROUTER_URL="$SECOND_BRAIN_AGENT_ROUTER_URL" \

@@ -103,9 +103,8 @@ if [[ ! "${AGENT_ID}" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]]; then
     exit 1
 fi
 
-prompt AGENT_ROLE             "Agent role (e.g. Coder, Coordinator, Research assistant)" "Coder"
-prompt AGENT_ROLE_DESCRIPTION "One-sentence role description" "Autonomous coding assistant. Writes code, reviews architecture, runs tests."
-prompt CHARACTER_TRAITS       "Character traits (e.g. Pragmatic, calm, precise)" "Efficient, precise, proactive. Reports results, not process."
+# Роль, описание и характер не спрашиваются: они пишутся в личный CLAUDE.md уроком курса
+# 07-claude-md, а ответ установщика ложился туда же второй, расходящейся версией.
 
 # Алиасы, а не версии: см. комментарий в skills/create-agent/new-agent.sh.
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "  Aliases resolve to the latest model of their tier: fable / opus (code+review) / sonnet (subagents+research). A full model name pins a version."; }
@@ -129,9 +128,6 @@ prompt RESEARCH_MODEL         "Research model [Perplexity Sonar]" "Perplexity So
 prompt MAX_SUBAGENTS          "Max simultaneous subagents [5]" "5"
 
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "--- Operator (you) ---"; }
-prompt OPERATOR_NAME          "Your name" "Operator"
-prompt OPERATOR_ADDRESS       "How agent should address you (e.g. Boss, Chief)" "Boss"
-prompt TIMEZONE               "Your timezone (e.g. UTC+3, America/New_York)" "UTC"
 prompt LANGUAGE               "Response language (e.g. English, Russian)" "English"
 prompt COMMIT_LANGUAGE        "Commit language (e.g. English, Russian)" "English"
 # Порога трат нет: любые траты агента -- через владельца (общая красная зона).
@@ -168,9 +164,7 @@ echo "  Setup Summary"
 echo "============================================"
 echo ""
 echo "  Agent:       ${AGENT_NAME} (${AGENT_ID})"
-echo "  Role:        ${AGENT_ROLE}"
 echo "  Model:       ${PRIMARY_MODEL}"
-echo "  Operator:    ${OPERATOR_NAME}"
 echo "  Language:    ${LANGUAGE}"
 echo "  Workspace:   ${LAB_DIR}/${AGENT_ID}/.claude/"
 echo "  second_brain memory:        ${SECOND_BRAIN_MEMORY_URL}"
@@ -227,15 +221,9 @@ fill_template() {
     # {{VAR}} placeholders
     sed_i "s|{{AGENT_NAME}}|${AGENT_NAME}|g" "$dst"
     sed_i "s|{{AGENT_ID}}|${AGENT_ID}|g" "$dst"
-    sed_i "s|{{AGENT_ROLE}}|${AGENT_ROLE}|g" "$dst"
-    sed_i "s|{{AGENT_ROLE_DESCRIPTION}}|${AGENT_ROLE_DESCRIPTION}|g" "$dst"
-    sed_i "s|{{CHARACTER_TRAITS}}|${CHARACTER_TRAITS}|g" "$dst"
     sed_i "s|{{PRIMARY_MODEL}}|${PRIMARY_MODEL}|g" "$dst"
     sed_i "s|{{RESEARCH_MODEL}}|${RESEARCH_MODEL}|g" "$dst"
     sed_i "s|{{MAX_SUBAGENTS}}|${MAX_SUBAGENTS}|g" "$dst"
-    sed_i "s|{{OPERATOR_NAME}}|${OPERATOR_NAME}|g" "$dst"
-    sed_i "s|{{OPERATOR_ADDRESS}}|${OPERATOR_ADDRESS}|g" "$dst"
-    sed_i "s|{{TIMEZONE}}|${TIMEZONE}|g" "$dst"
     sed_i "s|{{LANGUAGE}}|${LANGUAGE}|g" "$dst"
     sed_i "s|{{COMMIT_LANGUAGE}}|${COMMIT_LANGUAGE}|g" "$dst"
     sed_i "s|{{GITHUB_USERNAME}}|${GITHUB_USERNAME}|g" "$dst"
@@ -283,6 +271,10 @@ log "Filling templates..."
 
 fill_template "${TEMPLATES_DIR}/CLAUDE.md.template"    "${WORKSPACE}/CLAUDE.md"
 fill_template "${TEMPLATES_DIR}/agents.md.template"    "${WORKSPACE}/core/AGENTS.md"
+# В шаблоне только поля, которые спрашивает установщик (язык). Обращение, имя, часовой
+# пояс, профиль, стиль и нужды оператор дописывает уроком курса 08-user-md, характер --
+# уроком 07-claude-md: имя и пояс никто не спрашивал, и агенту доставались «Operator»/UTC; заготовки под них раньше доезжали
+# до агента строками «TODO: fill in» и читались в каждом разговоре.
 fill_template "${TEMPLATES_DIR}/USER.md.template"      "${WORKSPACE}/core/USER.md"
 fill_template "${TEMPLATES_DIR}/rules.md.template"     "${WORKSPACE}/core/rules.md"
 fill_template "${TEMPLATES_DIR}/tools.md.template"     "${WORKSPACE}/tools/TOOLS.md"
@@ -300,6 +292,10 @@ fill_template "${TEMPLATES_DIR}/settings.json.template" "${WORKSPACE}/settings.j
 # (пользователь пришёл уже настроенным) больше нельзя молча пропустить: агент
 # остался бы без этих правил вовсе. Свой файл владельца не трогаем -- кладём наши
 # правила рядом и прямо говорим, что их нужно перенести.
+# Шаблон не повторяет того, что оператор сам вписывает уроками курса «Своя ИИ-команда»
+# (07-claude-md, 08-user-md): план перед работой, копия перед изменением, удаление
+# только с разрешения, секреты вне репозитория, без переписывания истории, проверка
+# по первоисточнику. Иначе одно правило лежит дважды в разных формулировках.
 GLOBAL_MD="${GLOBAL_DIR}/CLAUDE.md"
 GLOBAL_MARKER='# Global Rules -- All Agents'
 if [ -f "$GLOBAL_MD" ] && ! grep -qxF "$GLOBAL_MARKER" "$GLOBAL_MD"; then

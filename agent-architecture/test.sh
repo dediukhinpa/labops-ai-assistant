@@ -746,6 +746,12 @@ unit "без живого ввода недостающие имя и allowlist 
      "agent-inputs: юнит-тест провален (orchestration/lib/agent-inputs.test.sh)" \
      bash orchestration/lib/agent-inputs.test.sh
 
+# 16f. Профиль оператора общий: второй агент берёт core/USER.md у первого, а не
+# получает пустой шаблон (lib/operator-profile.sh).
+unit "второй агент получает USER.md первого, свой профиль не перезаписывается — юнит-тест зелёный" \
+     "operator-profile: юнит-тест провален (orchestration/lib/operator-profile.test.sh)" \
+     bash orchestration/lib/operator-profile.test.sh
+
 echo "── 17. Секреты не попадают в командную строку ──"
 
 # 17a. Поведенческий тест: реальный запуск session-exec.sh с подставным claude,
