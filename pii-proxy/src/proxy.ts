@@ -44,6 +44,8 @@ interface RequestContext {
   readonly route: string;
   readonly session: string;
   readonly started: number;
+  /** Тред использовался сервисом (иначе удалять нечего). */
+  used: boolean;
 }
 
 /** Прокси CLI -> API: маскирует запросы, восстанавливает ответы. */
@@ -93,6 +95,7 @@ export class PiiProxy {
       route: url.pathname,
       session: ephemeral ? 'none' : sessionFingerprint(sessionId),
       started: performance.now(),
+      used: false,
     };
     let keepThread = false;
     try {
@@ -102,7 +105,7 @@ export class PiiProxy {
     } catch (e) {
       return this.failure(e, ctx);
     } finally {
-      if (ctx.ephemeral && !keepThread) await this.dropThread(ctx);
+      if (ctx.ephemeral && ctx.used && !keepThread) await this.dropThread(ctx);
     }
   }
 
@@ -129,6 +132,7 @@ export class PiiProxy {
     let stats: LogFields = {};
     if (masked && body !== undefined) {
       const parsed = parseJsonBody(body);
+      ctx.used = true;
       const s = await this.masker.mask(parsed, ctx.threadId);
       stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits };
       outBody = JSON.stringify(parsed);
@@ -180,7 +184,7 @@ export class PiiProxy {
       if (closed) return;
       closed = true;
       finish({ restored_tokens: restorer.restoredTokens });
-      if (ctx.ephemeral) await this.dropThread(ctx);
+      if (ctx.ephemeral && ctx.used) await this.dropThread(ctx);
     };
     return new ReadableStream<Uint8Array>({
       async pull(controller): Promise<void> {
