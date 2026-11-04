@@ -323,7 +323,7 @@ flowchart LR
   end
   subgraph c2["Провижн · проверка"]
     direction TB
-    S5["5. Голос<br/>скилл groq-voice (GROQ_API_KEY)"]
+    S5["5. Голос<br/>скилл local-voice (VOICE_TRANSCRIBER_TOKEN)"]
     S6["6. second_brain-токен<br/>Bearer + scopes от labops-second-brain"]
     S7["7. Автозапуск<br/>systemd-юнит + watchdog"]
     S8["8. Smoke-тест<br/>проверка канала, memory_router, agent_router, реакций"]
@@ -346,7 +346,7 @@ flowchart LR
 | 2. Идентичность | проводит по `CLAUDE.md` (SOUL, характер, принципы) и `rules.md` | заполненные RED-файлы |
 | 3. Скаффолд | прогоняет `agent-template` → рендерит шаблоны | `~/.claude-lab/<agent>/.claude/` |
 | 4. Telegram-бот | регистрирует бота через `@BotFather`, пишет токен | `channel.env` (`/etc/labops-plugin/<agent>/` или `shared/state/<agent>/telegram/`) |
-| 5. Голос | подключает скилл `groq-voice` (транскрипция `.ogg`) | `GROQ_API_KEY` в секретах |
+| 5. Голос | подключает скилл `local-voice` (транскрипция `.ogg` локальным voice-transcriber) | `VOICE_TRANSCRIBER_TOKEN` в секретах |
 | 6. Токен мозга | запрашивает у `labops-second-brain` Bearer + `scopes` | `.mcp.json` (chmod 600) |
 | 7. Автозапуск | ставит `claude-agent-<agent>.service` + watchdog, добавляет в roster | юнит + строка в `agents.conf` |
 | 8. Smoke-тест | финальная проверка: канал слушает, memory_router/agent_router отвечают, реакции ставятся | зелёный прогон |
@@ -468,7 +468,7 @@ sudo /usr/local/sbin/labops-runtime-deploy   # заодно обновляет �
 |---|---|---|
 | `create-agent` | заводит нового агента под ключ: личность, бот, голос, автозапуск, смоук-тест | — |
 | `memory-consolidate` | сворачивает сырую эпизодическую память в устойчивые выводы по сигналу рефлексии | — |
-| `groq-voice` | транскрипция голосовых `.ogg` через Groq Whisper (обязательно при `<media:audio>`) | `GROQ_API_KEY` |
+| `local-voice` | транскрипция голосовых/аудио `.ogg` локальным сервисом voice-transcriber (когда канал не дал расшифровку) | `VOICE_TRANSCRIBER_TOKEN` |
 | `second_brain-doctor` | агент-сайд-диагностика second_brain: коннект, identity, memory_router, agent_router, hooks-parity, webhooks, repo, безопасность MCP-URL; вывод редактируется (секреты маскируются) | — |
 | `agent-browser` | браузерная автоматизация через CDP (навигация, формы, скриншоты) | бинарь `agent-browser` + Chrome — `install.sh` их не ставит |
 
@@ -537,7 +537,7 @@ bash install.sh --test-only
 | `AGENT_BEARER` | `.mcp.json` (chmod 600) | Bearer-токен агента для MCP (в БД хранится только `token_sha256`) |
 | `AGENT_SCOPES` | install | RBAC-scopes на чтение/запись (scope = первая папка пути в vault) |
 | `CLAUDE_LAB` | окружение | корень лаборатории (по умолчанию `$HOME/.claude-lab`); roster и токены ищутся относительно него |
-| `GROQ_API_KEY` | `.claude/secrets/groq-api-key` | транскрипция голоса (Groq Whisper) |
+| `VOICE_TRANSCRIBER_TOKEN` | `.claude/secrets/voice-transcriber-token` | токен локального сервиса расшифровки голоса |
 | `TELEGRAM_BOT_TOKEN` | `.claude/secrets/telegram-bot-token`, `channel.env` | токен бота агента (`@BotFather`) |
 | `TELEGRAM_WEBHOOK_TOKEN` | `.claude/secrets/telegram-webhook-token` | Bearer для входящих POST на `/hooks/*` |
 | `TELEGRAM_WEBHOOK_PORT` | `lib/agent-env.sh` (config, не секрет) | порт webhook агента (`:6000+`, по агенту) |
@@ -629,7 +629,7 @@ Self-hosted by design: агенты работают на собственном
 |---|---|---|---|
 | `api.anthropic.com` (через движок Claude Code) | инференс LLM — модель, на которой работает агент | пока агент активен | нет (ядро) |
 | `api.telegram.org` | ввод-вывод чата — приём и отправка сообщений | во время работы | нет |
-| `api.groq.com` | транскрипция / синтез голоса | только на голосовых сообщениях | да (опционально) |
+| `127.0.0.1` (локальный voice-transcriber, faster-whisper) | транскрипция голоса | только на голосовых сообщениях | локально — аудио не покидает хост |
 | `second_brain` (`localhost` MCP, Postgres + vault) | память диалога и состояние | всегда | локально — не покидает хост |
 
 > [!IMPORTANT]

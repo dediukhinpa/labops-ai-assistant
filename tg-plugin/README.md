@@ -196,7 +196,7 @@ This is noticeably more responsive than "eyes-on-read" on the actual read event.
 
 ## Voice and media
 
-- **Incoming voice/audio** is downloaded into the state dir's inbox and transcribed; the agent receives the text. The transcriber is plugged in separately (we recommend Groq `whisper-large-v3-turbo` — see [`agent-architecture`](#part-of-labops), the voice skill).
+- **Incoming voice/audio** is downloaded into the state dir's inbox and transcribed; the agent receives the text. Transcription is done by the local `voice-transcriber` service (faster-whisper on the same host, see `voice-transcriber/` in the monorepo); audio is never sent to an external service. Without the service the message carries a short "transcription unavailable" note.
 - **Photos/documents/albums** are buffered (`album-buffer.ts`) and passed as turn attachments.
 - Voice replies are optional (TTS is plugged in on the agent side).
 
@@ -324,7 +324,7 @@ External endpoints actually used:
 | Endpoint | Purpose | When |
 |---|---|---|
 | `api.telegram.org` | Telegram Bot API — send/receive messages, download attachments | While the channel is running |
-| `api.groq.com` | Voice transcription (Whisper) via the configured provider | Only when a voice message arrives and `GROQ_API_KEY` is set |
+| `127.0.0.1:8310` (local `voice-transcriber`) | Voice transcription (faster-whisper) | Only when a voice message arrives and `VOICE_TRANSCRIBER_TOKEN` is set; never leaves the host |
 | `127.0.0.1` (internal webhook) | Local IPC between Claude Code hooks and the channel server (read-receipts, progress, ask-user) | Local only — bound to loopback, never exposed off-host |
 
 > [!NOTE]

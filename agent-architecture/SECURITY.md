@@ -18,7 +18,7 @@ We aim to acknowledge a report within **3 business days** and to share a remedia
 ## Scope
 
 - **In scope:** the code in this repository — scripts, services, templates.
-- **Out of scope:** third-party services this software talks to (Telegram, Anthropic, Groq, …). Report those to the respective vendor. See the **Data & privacy** section of the README for the exact endpoints used.
+- **Out of scope:** third-party services this software talks to (Telegram, Anthropic, …). Report those to the respective vendor. See the **Data & privacy** section of the README for the exact endpoints used.
 
 ## Secrets & operator responsibility
 

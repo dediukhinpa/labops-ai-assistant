@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,7 +28,10 @@ DEFAULT_POLL_TIMEOUT = 20
 DEFAULT_IDLE_SLEEP = 1.0
 DEFAULT_CLAUDE_TIMEOUT = 120
 DEFAULT_CLAUDE_MAX_BUDGET_USD = "0.05"
-DEFAULT_GROQ_KEY_PATH = "~/.secrets/groq-api-key"
+DEFAULT_VOICE_TOKEN_PATH = "~/.claude-lab/shared/secrets/voice-transcriber-token"
+DEFAULT_VOICE_URL = "http://127.0.0.1:8310"
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+VOICE_TIMEOUT_SECONDS = 180
 TOKEN_PATTERN = re.compile(r"\b\d{5,}:[A-Za-z0-9_-]{10,}\b")
 
 
@@ -392,64 +396,52 @@ def load_token(config: CanaryBotConfig) -> str:
     return token
 
 
-class GroqTranscriber:
-    def __init__(self, key_path: str | Path = DEFAULT_GROQ_KEY_PATH, language: str = "ru"):
-        self.key_path = Path(key_path).expanduser()
-        self.language = language
+class LocalVoiceTranscriber:
+    """Расшифровка через локальный voice-transcriber (faster-whisper на этом хосте).
 
-    def load_key(self) -> str | None:
-        env_key = os.environ.get("GROQ_API_KEY", "").strip()
-        if env_key:
-            return env_key
-        if self.key_path.exists():
-            value = self.key_path.read_text(encoding="utf-8").strip()
+    Аудио уходит только на loopback-адрес; внешних провайдеров нет.
+    """
+
+    def __init__(
+        self,
+        token_path: str | Path = DEFAULT_VOICE_TOKEN_PATH,
+        language: str = "ru",
+        url: str | None = None,
+    ):
+        self.token_path = Path(token_path).expanduser()
+        self.language = language
+        self.url = (url or os.environ.get("VOICE_TRANSCRIBER_URL", "") or DEFAULT_VOICE_URL).rstrip("/")
+
+    def load_token(self) -> str | None:
+        env_token = os.environ.get("VOICE_TRANSCRIBER_TOKEN", "").strip()
+        if env_token:
+            return env_token
+        if self.token_path.exists():
+            value = self.token_path.read_text(encoding="utf-8").strip()
             return value or None
         return None
 
     def transcribe(self, path: Path) -> str | None:
-        key = self.load_key()
-        if not key:
+        token = self.load_token()
+        if not token:
             return None
-        boundary = f"----labops-canary-{uuid4().hex}"
+        # Адрес обязан вести на этот же хост, иначе аудио ушло бы наружу
+        if urllib.parse.urlparse(self.url).hostname not in LOOPBACK_HOSTS:
+            return None
         mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        fields = {
-            "model": "whisper-large-v3-turbo",
-            "response_format": "text",
-            "language": self.language,
-        }
-        parts: list[bytes] = []
-        for name, value in fields.items():
-            parts.extend(
-                [
-                    f"--{boundary}\r\n".encode("utf-8"),
-                    f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
-                    f"{value}\r\n".encode("utf-8"),
-                ]
-            )
-        parts.extend(
-            [
-                f"--{boundary}\r\n".encode("utf-8"),
-                f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'.encode("utf-8"),
-                f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"),
-                path.read_bytes(),
-                b"\r\n",
-                f"--{boundary}--\r\n".encode("utf-8"),
-            ]
-        )
         request = urllib.request.Request(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            data=b"".join(parts),
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-            },
+            f"{self.url}/transcribe?language={urllib.parse.quote(self.language)}",
+            data=path.read_bytes(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": mime_type},
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                return response.read().decode("utf-8", errors="replace").strip() or None
-        except (OSError, urllib.error.URLError):
+            with urllib.request.urlopen(request, timeout=VOICE_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        except (OSError, urllib.error.URLError, ValueError):
             return None
+        text = payload.get("text") if isinstance(payload, dict) else None
+        return text.strip() or None if isinstance(text, str) else None
 
 
 def read_last_update_id(path: Path) -> int | None:
@@ -859,7 +851,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--claude-max-budget-usd", default=DEFAULT_CLAUDE_MAX_BUDGET_USD)
     parser.add_argument("--no-session-persistence", action="store_true")
     parser.add_argument("--no-voice-transcription", action="store_true")
-    parser.add_argument("--groq-api-key-file", default=DEFAULT_GROQ_KEY_PATH)
+    parser.add_argument("--voice-token-file", default=DEFAULT_VOICE_TOKEN_PATH)
     return parser
 
 
@@ -890,7 +882,7 @@ def main(
             session_root=None if args.no_session_persistence else config.session_dir,
             extra_add_dirs=(config.media_dir,),
         )
-    transcriber = None if args.no_voice_transcription else GroqTranscriber(args.groq_api_key_file)
+    transcriber = None if args.no_voice_transcription else LocalVoiceTranscriber(args.voice_token_file)
     if args.once:
         return run_once(config, client, args.poll_timeout, stdout, stderr, reply_provider, transcriber)
     try:

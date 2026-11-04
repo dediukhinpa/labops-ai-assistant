@@ -97,7 +97,7 @@ function redactReplyMarkup(
  * @param raw           The underlying TelegramApi (typically createTelegramApi()).
  * @param log           Channel logger.
  * @param extraSecrets  Optional list of exact-substring secrets to mask
- *                      (e.g. webhook token, Groq key). Passed through to
+ *                      (e.g. webhook token, voice-transcriber token). Passed through to
  *                      redactSecrets on every send.
  */
 export function createSafeTelegramApi(

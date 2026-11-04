@@ -28,7 +28,7 @@ it when the description matches.
 | `create-agent` | Roll out a new agent end to end: identity, Telegram bot, voice, autostart, smoke test. | this repo |
 | `memory-consolidate` | Distil raw episodic memory into durable insights on a reflection nudge. | the agent memory layout |
 | `second_brain-doctor` | Diagnose the agent's second_brain setup end to end; output is redacted. | second_brain |
-| `groq-voice` | Transcribe voice messages (`.ogg`) via Groq Whisper. | `GROQ_API_KEY` |
+| `local-voice` | Transcribe voice/audio files (`.ogg`) with the local voice-transcriber service (faster-whisper); audio never leaves the host. | `VOICE_TRANSCRIBER_TOKEN` |
 | `agent-browser` | Browser automation CLI (Chrome/Chromium via CDP). Navigate, click, fill forms, screenshot. | `agent-browser` binary + Chrome, not installed by `install.sh` |
 
 | `deep-research` | Cited, cross-checked research report with stated confidence and gaps. | web search; perplexity-research skill optional |
@@ -48,7 +48,7 @@ Provenance and licenses: `THIRD_PARTY.md`.
 
 ## Skill independence
 
-`groq-voice` and `agent-browser` do not depend on each other
+`local-voice` and `agent-browser` do not depend on each other
 or on second_brain and run in a vanilla Claude Code workspace. `create-agent`,
 `memory-consolidate` and `second_brain-doctor` are part of this distro and expect its
 workspace layout.

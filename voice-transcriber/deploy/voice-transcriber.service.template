@@ -1,0 +1,35 @@
+[Unit]
+Description=LabOps voice transcriber (local faster-whisper, 127.0.0.1:8310)
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__USER__
+# Каталог подпроекта voice-transcriber/ с готовым .venv (python3.12 -m venv .venv,
+# затем pip install -c constraints.txt -e .)
+WorkingDirectory=__INSTALL_DIR__
+# Секрет (API-токен) и пути -- файл с правами 600, вне репозитория.
+# Образец: voice-transcriber.env.example
+EnvironmentFile=__ENV_FILE__
+ExecStart=__INSTALL_DIR__/.venv/bin/python -m voice_transcriber
+Restart=on-failure
+RestartSec=5
+# Загрузка модели занимает десятки секунд: готовность -- по GET /health (ready)
+TimeoutStartSec=120
+# Замер 04.11.2026 (small, int8): после загрузки RSS ~555 МБ, после 60 с звука пик ~900 МБ.
+# 1536 МБ -- запас ~1,7x. Для medium (пик ~2,3 ГБ) нужно не меньше 3G.
+MemoryMax=1536M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Пока идёт расшифровка, сервис не должен вытеснять агентов: низкий приоритет CPU
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

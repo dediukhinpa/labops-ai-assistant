@@ -12,8 +12,8 @@
 //
 // Photo handler additionally downloads the photo after the allowlist gate
 // passes (mirrors gateway.py:863-901 + server.ts:791-815). Voice handler
-// optionally calls Groq Whisper via maybeTranscribeVoice — failure does
-// not crash, the descriptor records transcription_status=failed/missing_key.
+// optionally calls the local voice-transcriber via maybeTranscribeVoice — failure does
+// not crash, the descriptor records transcription_status=failed/unavailable.
 import type { Context } from 'grammy'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 
@@ -151,8 +151,8 @@ export interface HandlerDeps {
   // Telegram bot token, used to build file-CDN URLs. Redacted in logs by
   // config.redactToken before any error escapes the process.
   botToken: string
-  // Minimal env subset — currently only GROQ_API_KEY for voice transcription.
-  env: { GROQ_API_KEY?: string }
+  // Minimal env subset — address and token of the local voice transcriber.
+  env: { VOICE_TRANSCRIBER_URL?: string; VOICE_TRANSCRIBER_TOKEN?: string }
   // Permission relay hooks — when present, the text handler intercepts
   // "yes <id>" / "no <id>" replies from approvers and emits verdicts.
   // Optional so older tests that don't exercise permissions still compile.
@@ -1342,7 +1342,7 @@ export async function handleInboundDocument(ctx: Context, deps: HandlerDeps): Pr
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Voice — calls Groq Whisper if GROQ_API_KEY is set. Transcript folds into
+// Voice — calls the local voice-transcriber if its token is set. Transcript folds into
 // the descriptor; failure does not crash.
 // ─────────────────────────────────────────────────────────────────────
 

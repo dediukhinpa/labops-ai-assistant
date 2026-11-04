@@ -58,7 +58,7 @@ function mkConfig(allowedIds: number[] = [100000001]): AppConfig {
     allowed_chat_ids: [100000001],
     status: { enabled: true, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, delete_on_expire: true, suppress_typing_bubble: false },
     album: { flush_ms: 2000 },
-    voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
+    voice: { provider: 'local', language: 'ru' },
     webhook: { enabled: false, host: '127.0.0.1', port: 0 },
     permission_relay: { enabled: true, allowed_user_ids: allowedIds, bash_only_proof: true },
     commands: { help: true, status: true, stop: true, reset: true },

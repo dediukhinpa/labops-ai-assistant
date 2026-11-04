@@ -757,7 +757,7 @@ unit "agent-env: секреты в окружении, но не в argv — ю�
 # пользователю машины — и не мельком, а до перезапуска всего роя, потому что
 # tmux-сервер живёт с cmdline поднявшей его команды.
 if grep -n 'tmux new-session' orchestration/start-agent.sh | grep -q . \
-   && ! grep -qE '^\s*-e (TELEGRAM|AGENT_BEARER|GROQ|MCP_|SECOND_BRAIN)' orchestration/start-agent.sh; then
+   && ! grep -qE '^\s*-e (TELEGRAM|AGENT_BEARER|VOICE|MCP_|SECOND_BRAIN)' orchestration/start-agent.sh; then
   ok "сессия поднимается без передачи секретов флагами"
 else
   bad "секреты снова уходят в командную строку tmux (-e VAR=value)"

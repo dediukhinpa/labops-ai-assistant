@@ -20,7 +20,7 @@
 └── .claude-lab/
     ├── shared/                        SHARED RESOURCES
     │   ├── secrets/
-    │   │   └── groq-api-key           Groq Whisper key (one for all agents)
+    │   │   └── voice-transcriber-token  token of the local voice service (one for all agents)
     │   └── state/<agent>/telegram/    per-agent channel state
     │       ├── channel.env            bot token, allowed users, webhook port + token
     │       ├── config.json            webhook.enabled, status.suppress_typing_bubble
@@ -77,7 +77,7 @@
 |-----------|--------|
 | CLAUDE.md (SOUL), core/, tools/TOOLS.md | ~/.claude/CLAUDE.md, ~/.claude/rules/*.md |
 | hooks/, scripts/ (copies) | skills (one directory, symlinked) |
-| settings.json, .mcp.json, agent.env | shared/secrets/groq-api-key |
+| settings.json, .mcp.json, agent.env | shared/secrets/voice-transcriber-token |
 | channel.env, bot, webhook port | second_brain (vault and task board) |
 | plugin copy, systemd unit, tmux session | the OS user the agents run as |
 
