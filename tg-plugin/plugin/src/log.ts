@@ -16,7 +16,7 @@ export interface Logger {
 export interface CreateLoggerOptions {
   stream?: NodeJS.WritableStream
   // Exact-substring secrets to redact alongside the pattern-based ones
-  // (Telegram bot token, Groq key, Bearer/query tokens). Useful for the
+  // (Telegram bot token, Bearer/query tokens). Useful for the
   // configured TELEGRAM_WEBHOOK_TOKEN which has no public pattern.
   secrets?: ReadonlyArray<string>
 }

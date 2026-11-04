@@ -69,8 +69,8 @@ Each test sends a Telegram DM from your test account (`<your-telegram-user-id>`)
 | 3 | Reply-to anti-spoof | reply to a bot message with "что ты сказал?" | Claude's prompt contains `<untrusted_metadata type="telegram_reply">` with `sender="agent_previous_message"` |
 | 4 | Photo | send a photo | Claude reads inbox path |
 | 5 | Document | send a PDF | Channel meta has `attachment_kind=document` |
-| 6 | Voice (with GROQ_API_KEY) | send voice message | Transcript in `<media>` tag |
-| 7 | Voice (without GROQ_API_KEY) | send voice message | `transcription_status=missing_key` |
+| 6 | Voice (with VOICE_TRANSCRIBER_TOKEN and the service running) | send voice message | Transcript in `<media>` tag |
+| 7 | Voice (without VOICE_TRANSCRIBER_TOKEN) | send voice message | `transcription_status=unavailable` plus a `note` |
 | 8 | Album | send 3 photos in album | Single channel notification with `album_size=3` |
 | 9 | /status | "/status" | HTML reply listing bot_id, state_dir, workspace, uptime |
 | 10 | /help | "/help" | HTML reply listing OOB commands |
@@ -80,7 +80,7 @@ Each test sends a Telegram DM from your test account (`<your-telegram-user-id>`)
 | 14 | Permission deny | trigger Bash, press Deny | Bash refused |
 | 15 | Webhook (if enabled) | `curl -X POST http://127.0.0.1:6000/hooks/agent -H 'Authorization: Bearer <TELEGRAM_WEBHOOK_TOKEN>' -d '{...}'` | `meta.source=webhook` in Claude context |
 
-For tests 6/7, toggle by exporting `GROQ_API_KEY` before launch or leaving it unset. Restart the tmux session after changing env.
+For tests 6/7, toggle by exporting `VOICE_TRANSCRIBER_TOKEN` before launch or leaving it unset. Restart the tmux session after changing env.
 
 For test 15, only run if the canary launch includes `TELEGRAM_WEBHOOK_PORT` and `TELEGRAM_WEBHOOK_TOKEN`.
 

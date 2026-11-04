@@ -206,7 +206,7 @@ if (!process.env.TELEGRAM_BOT_TOKEN) {
 // HIGH #11 / TASK-8: we maintain a mutable secret list so the crash
 // handlers can be registered BEFORE the full set of secrets is known
 // (Telegram bot token from env is the only one in scope at this point).
-// Downstream code appends webhook token + Groq key once the runtime
+// Downstream code appends webhook token + voice-transcriber token once the runtime
 // env is parsed. `redactToken` (alias of `redactSecrets`) already runs
 // the full pattern-based redactor (Telegram tokens, Bearer, IP, etc.);
 // the exact-substring list catches secrets that have NO public shape
@@ -264,7 +264,8 @@ const env = RuntimeEnvSchema.parse({
   ...(process.env.TELEGRAM_WORKSPACE_ROOT !== undefined ? { TELEGRAM_WORKSPACE_ROOT: process.env.TELEGRAM_WORKSPACE_ROOT } : {}),
   ...(process.env.TELEGRAM_STATUS_INTERVAL_MS !== undefined ? { TELEGRAM_STATUS_INTERVAL_MS: process.env.TELEGRAM_STATUS_INTERVAL_MS } : {}),
   ...(process.env.TELEGRAM_ALBUM_FLUSH_MS !== undefined ? { TELEGRAM_ALBUM_FLUSH_MS: process.env.TELEGRAM_ALBUM_FLUSH_MS } : {}),
-  ...(process.env.GROQ_API_KEY !== undefined ? { GROQ_API_KEY: process.env.GROQ_API_KEY } : {}),
+  ...(process.env.VOICE_TRANSCRIBER_URL !== undefined ? { VOICE_TRANSCRIBER_URL: process.env.VOICE_TRANSCRIBER_URL } : {}),
+  ...(process.env.VOICE_TRANSCRIBER_TOKEN !== undefined ? { VOICE_TRANSCRIBER_TOKEN: process.env.VOICE_TRANSCRIBER_TOKEN } : {}),
   ...(process.env.TELEGRAM_WEBHOOK_HOST !== undefined ? { TELEGRAM_WEBHOOK_HOST: process.env.TELEGRAM_WEBHOOK_HOST } : {}),
   ...(process.env.TELEGRAM_WEBHOOK_PORT !== undefined ? { TELEGRAM_WEBHOOK_PORT: process.env.TELEGRAM_WEBHOOK_PORT } : {}),
   ...(process.env.TELEGRAM_WEBHOOK_TOKEN !== undefined ? { TELEGRAM_WEBHOOK_TOKEN: process.env.TELEGRAM_WEBHOOK_TOKEN } : {}),
@@ -288,7 +289,7 @@ ensureStateDirs(statePaths)
 migrateLegacyAllowlist(statePaths)
 
 // Secrets we want redacted by exact match in addition to pattern-based
-// redaction (Telegram bot token, Groq key, Bearer/query tokens). The webhook
+// redaction (Telegram bot token, Bearer/query tokens). The webhook
 // token has no public pattern — feed it in explicitly. We also append the
 // same secrets to `crashSecrets` so the unhandledRejection/uncaughtException
 // handlers registered above pick them up retroactively (the closure reads
@@ -298,9 +299,9 @@ if (env.TELEGRAM_WEBHOOK_TOKEN) {
   logSecrets.push(env.TELEGRAM_WEBHOOK_TOKEN)
   crashSecrets.push(env.TELEGRAM_WEBHOOK_TOKEN)
 }
-if (env.GROQ_API_KEY) {
-  logSecrets.push(env.GROQ_API_KEY)
-  crashSecrets.push(env.GROQ_API_KEY)
+if (env.VOICE_TRANSCRIBER_TOKEN) {
+  logSecrets.push(env.VOICE_TRANSCRIBER_TOKEN)
+  crashSecrets.push(env.VOICE_TRANSCRIBER_TOKEN)
 }
 const log = createLogger('labops-channel', { secrets: logSecrets })
 
@@ -887,7 +888,14 @@ const handlerDeps: HandlerDeps = {
   // so the media module never reaches into grammY internals.
   botApi: { api: bot.api },
   botToken: env.TELEGRAM_BOT_TOKEN,
-  env: env.GROQ_API_KEY !== undefined ? { GROQ_API_KEY: env.GROQ_API_KEY } : {},
+  env: {
+    ...(env.VOICE_TRANSCRIBER_URL !== undefined
+      ? { VOICE_TRANSCRIBER_URL: env.VOICE_TRANSCRIBER_URL }
+      : {}),
+    ...(env.VOICE_TRANSCRIBER_TOKEN !== undefined
+      ? { VOICE_TRANSCRIBER_TOKEN: env.VOICE_TRANSCRIBER_TOKEN }
+      : {}),
+  },
   permissionHooks,
   statusManager,
   albumBuffer,

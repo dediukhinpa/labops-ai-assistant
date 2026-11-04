@@ -48,7 +48,7 @@ const DEFAULT_SPAWN_WRAPPER_PATH = resolve(
 
 // Environment variables that, if present in the plugin's own env, must
 // NEVER be inherited by the spawned `claude` tmux session. Telegram /
-// Groq / second_brain credentials belong to the plugin orchestrator, not to
+// voice-transcriber / second_brain credentials belong to the plugin orchestrator, not to
 // the user-facing claude instance — leaking them gives a compromised
 // session unintended escalation paths.
 //
@@ -62,7 +62,7 @@ const DEFAULT_SPAWN_WRAPPER_PATH = resolve(
 const SENSITIVE_ENV_VARS = [
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_WEBHOOK_TOKEN',
-  'GROQ_API_KEY',
+  'VOICE_TRANSCRIBER_TOKEN',
   'SECOND_BRAIN_BEARER',
   'SECOND_BRAIN_API_KEY',
   'ANTHROPIC_API_KEY',

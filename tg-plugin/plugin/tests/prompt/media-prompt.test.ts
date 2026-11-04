@@ -5,14 +5,15 @@
 //   - renderMediaDescriptor for every kind emits well-formed <media ... />
 //   - attribute escaping handles quotes/<>/& without corrupting structure
 //   - undefined attributes are omitted (no orphan `name=""` for example)
-//   - maybeTranscribeVoice handles missing key without crashing
+//   - maybeTranscribeVoice handles a missing token/service without crashing
 //   - maybeTranscribeVoice returns ok / failed paths with stub fetch
-//   - GROQ_API_KEY is redacted in every error path
+//   - audio goes only to a loopback URL; the token is redacted in every error path
 
 import { describe, expect, test } from 'bun:test'
 
 import {
   maybeTranscribeVoice,
+  VOICE_UNAVAILABLE_NOTE,
   renderMediaDescriptor,
   safeMediaName,
   type MediaDescriptor,
@@ -29,7 +30,7 @@ const voiceConfig: AppConfig = {
   allowed_chat_ids: [1],
   status: { enabled: true, interval_ms: 700, ttl_ms: 300_000, delete_on_complete: true, delete_on_expire: true, suppress_typing_bubble: false },
   album: { flush_ms: 2000 },
-  voice: { provider: 'groq', language: 'ru', model: 'whisper-large-v3-turbo' },
+  voice: { provider: 'local', language: 'ru' },
   webhook: { enabled: false, host: '127.0.0.1', port: 0 },
   permission_relay: { enabled: true, allowed_user_ids: [1], bash_only_proof: true },
   commands: { help: true, status: true, stop: true, reset: true },
@@ -129,16 +130,16 @@ describe('renderMediaDescriptor', () => {
     )
   })
 
-  test('builds voice tag with transcription_status=missing_key when no key', () => {
+  test('builds voice tag with transcription_status=unavailable when no service', () => {
     const md: MediaDescriptor = {
       kind: 'voice',
       fileId: 'voiceF2',
       durationSec: 5,
-      transcriptionStatus: 'missing_key',
+      transcriptionStatus: 'unavailable',
     }
     const out = renderMediaDescriptor(md)
     expect(out).toBe(
-      '<media kind="voice" file_id="voiceF2" duration_sec="5" transcription_status="missing_key" />',
+      '<media kind="voice" file_id="voiceF2" duration_sec="5" transcription_status="unavailable" note="голосовое сообщение: расшифровка недоступна" />',
     )
     // No phantom transcript attribute.
     expect(out).not.toContain('transcript=')
@@ -220,22 +221,33 @@ describe('renderMediaDescriptor', () => {
 // ─────────────────────────────────────────────────────────────────────
 
 describe('maybeTranscribeVoice', () => {
-  test('returns missing_key when GROQ_API_KEY absent', async () => {
+  const ENV = { VOICE_TRANSCRIBER_TOKEN: 'tok_test_123' }
+  const okInput = {
+    fileId: 'v',
+    size: 1000,
+    mime: 'audio/ogg',
+    downloadFile: async () => ({ path: '/tmp/voice.oga', size: 1000, mime: 'audio/ogg' }),
+    readFile: async () => new Uint8Array([1, 2, 3, 4]),
+  }
+  const jsonResponse = (body: unknown, status = 200): Response =>
+    new Response(JSON.stringify(body), { status })
+
+  test('returns unavailable when token absent', async () => {
     const r = await maybeTranscribeVoice(
       {
         fileId: 'v1',
         downloadFile: async () => {
-          throw new Error('should not be called when key missing')
+          throw new Error('should not be called when token missing')
         },
       },
       voiceConfig,
       {},
     )
-    expect(r.status).toBe('missing_key')
+    expect(r.status).toBe('unavailable')
     expect(r.transcript).toBeUndefined()
   })
 
-  test('returns skipped when file size exceeds 25MB', async () => {
+  test('returns skipped when file size exceeds 20MB', async () => {
     const r = await maybeTranscribeVoice(
       {
         fileId: 'big',
@@ -245,140 +257,136 @@ describe('maybeTranscribeVoice', () => {
         },
       },
       voiceConfig,
-      { GROQ_API_KEY: 'gsk_test_key' },
+      ENV,
     )
     expect(r.status).toBe('skipped')
-    expect(r.errorMessage).toContain('file too large')
+    expect(r.errorMessage).toContain('too large')
   })
 
-  test('returns ok with stubbed groq fetch returning text', async () => {
+  test('posts raw audio to the local service and returns trimmed text', async () => {
     let fetchedUrl = ''
-    let authHeader = ''
+    let headers: Record<string, string> = {}
+    let sent = 0
     const r = await maybeTranscribeVoice(
       {
-        fileId: 'v',
-        size: 1000,
-        mime: 'audio/ogg',
-        downloadFile: async () => ({ path: '/tmp/voice.ogg', size: 1000, mime: 'audio/ogg' }),
-        readFile: async () => new Uint8Array([1, 2, 3, 4]),
+        ...okInput,
         fetchImpl: (async (url: string | URL, init?: RequestInit) => {
           fetchedUrl = String(url)
-          const headers = (init?.headers ?? {}) as Record<string, string>
-          authHeader = headers.Authorization ?? ''
-          return new Response('  hello world  ', { status: 200 })
+          headers = (init?.headers ?? {}) as Record<string, string>
+          sent = (init?.body as Blob).size
+          return jsonResponse({ text: '  привет мир  ', language: 'ru', duration_sec: 2 })
         }) as unknown as typeof fetch,
       },
       voiceConfig,
-      { GROQ_API_KEY: 'gsk_test_key_123' },
+      ENV,
     )
     expect(r.status).toBe('ok')
-    expect(r.transcript).toBe('hello world')
-    expect(fetchedUrl).toContain('api.groq.com')
-    expect(authHeader).toContain('Bearer ')
+    expect(r.transcript).toBe('привет мир')
+    expect(fetchedUrl).toBe('http://127.0.0.1:8310/transcribe?language=ru')
+    expect(headers.Authorization).toBe('Bearer tok_test_123')
+    expect(headers['Content-Type']).toBe('audio/ogg')
+    expect(sent).toBe(4)
   })
 
-  test('normalizes .oga filename to .ogg before upload (Groq rejects .oga)', async () => {
-    let observedFilename = ''
-    const r = await maybeTranscribeVoice(
+  test('uses VOICE_TRANSCRIBER_URL when it is loopback', async () => {
+    let fetchedUrl = ''
+    await maybeTranscribeVoice(
       {
-        fileId: 'v',
-        size: 1000,
-        mime: 'audio/ogg',
-        downloadFile: async () => ({
-          path: '/tmp/1778868174636-AgADD5kAAr_COEg.oga',
-          size: 1000,
-          mime: 'audio/ogg',
-        }),
-        readFile: async () => new Uint8Array([1, 2, 3, 4]),
-        fetchImpl: (async (_url: string | URL, init?: RequestInit) => {
-          const body = init?.body as FormData
-          const file = body.get('file') as File
-          observedFilename = file.name
-          return new Response('ok transcript', { status: 200 })
+        ...okInput,
+        fetchImpl: (async (url: string | URL) => {
+          fetchedUrl = String(url)
+          return jsonResponse({ text: 'x' })
         }) as unknown as typeof fetch,
       },
       voiceConfig,
-      { GROQ_API_KEY: 'gsk_test_key' },
+      { ...ENV, VOICE_TRANSCRIBER_URL: 'http://localhost:9999/' },
     )
-    expect(r.status).toBe('ok')
-    expect(observedFilename).toMatch(/\.ogg$/)
-    expect(observedFilename).not.toMatch(/\.oga$/)
+    expect(fetchedUrl).toStartWith('http://localhost:9999/transcribe?')
   })
 
-  test('returns failed on stubbed fetch error', async () => {
+  test('refuses a non-loopback URL and never reads or sends audio', async () => {
+    let touched = false
     const r = await maybeTranscribeVoice(
       {
         fileId: 'v',
-        size: 1000,
-        downloadFile: async () => ({ path: '/tmp/voice.ogg', size: 1000 }),
-        readFile: async () => new Uint8Array([0]),
+        downloadFile: async () => {
+          touched = true
+          return { path: '/tmp/x.oga' }
+        },
         fetchImpl: (async () => {
-          throw new Error('network down')
+          touched = true
+          return jsonResponse({ text: 'x' })
         }) as unknown as typeof fetch,
       },
       voiceConfig,
-      { GROQ_API_KEY: 'gsk_test_key' },
+      { ...ENV, VOICE_TRANSCRIBER_URL: 'https://api.example.com' },
+    )
+    expect(r.status).toBe('unavailable')
+    expect(touched).toBe(false)
+  })
+
+  test('empty transcript is ok, not a failure', async () => {
+    const r = await maybeTranscribeVoice(
+      { ...okInput, fetchImpl: (async () => jsonResponse({ text: '' })) as unknown as typeof fetch },
+      voiceConfig,
+      ENV,
+    )
+    expect(r).toEqual({ transcript: '', status: 'ok' })
+  })
+
+  test('returns failed on stubbed fetch error (service down)', async () => {
+    const r = await maybeTranscribeVoice(
+      {
+        ...okInput,
+        fetchImpl: (async () => {
+          throw new Error('connect ECONNREFUSED 127.0.0.1:8310')
+        }) as unknown as typeof fetch,
+      },
+      voiceConfig,
+      ENV,
     )
     expect(r.status).toBe('failed')
-    expect(r.errorMessage).toContain('network down')
+    expect(r.errorMessage).toContain('ECONNREFUSED')
   })
 
-  test('returns failed with HTTP status on non-2xx response', async () => {
+  test('returns failed with HTTP status on non-2xx response (503 busy)', async () => {
     const r = await maybeTranscribeVoice(
       {
-        fileId: 'v',
-        size: 1000,
-        downloadFile: async () => ({ path: '/tmp/voice.ogg', size: 1000 }),
-        readFile: async () => new Uint8Array([0]),
+        ...okInput,
         fetchImpl: (async () =>
-          new Response('rate limited', { status: 429 })) as unknown as typeof fetch,
+          jsonResponse({ detail: 'service is busy' }, 503)) as unknown as typeof fetch,
       },
       voiceConfig,
-      { GROQ_API_KEY: 'gsk_test_key' },
+      ENV,
     )
     expect(r.status).toBe('failed')
-    expect(r.errorMessage).toContain('429')
+    expect(r.errorMessage).toContain('503')
   })
 
-  test('redacts GROQ_API_KEY in failure message', async () => {
-    const secret = 'gsk_super_secret_token_AAAA1111'
+  test('returns failed on a malformed response body', async () => {
+    const r = await maybeTranscribeVoice(
+      { ...okInput, fetchImpl: (async () => jsonResponse({ nope: 1 })) as unknown as typeof fetch },
+      voiceConfig,
+      ENV,
+    )
+    expect(r.status).toBe('failed')
+  })
+
+  test('redacts the token in failure message', async () => {
+    const secret = 'tok_super_secret_AAAA1111'
     const r = await maybeTranscribeVoice(
       {
-        fileId: 'v',
-        size: 1000,
-        downloadFile: async () => ({ path: '/tmp/voice.ogg', size: 1000 }),
-        readFile: async () => new Uint8Array([0]),
+        ...okInput,
         fetchImpl: (async () => {
-          // Simulate a transport that echoes the auth header into the error
-          // — exactly the leak class we are guarding against.
           throw new Error(`upstream rejected Bearer ${secret} at line 7`)
         }) as unknown as typeof fetch,
       },
       voiceConfig,
-      { GROQ_API_KEY: secret },
+      { VOICE_TRANSCRIBER_TOKEN: secret },
     )
     expect(r.status).toBe('failed')
-    expect(r.errorMessage).toBeDefined()
     expect(r.errorMessage).not.toContain(secret)
     expect(r.errorMessage).toContain('[REDACTED]')
-  })
-
-  test('redacts GROQ_API_KEY from non-OK response body', async () => {
-    const secret = 'gsk_echo_back_BBBB2222'
-    const r = await maybeTranscribeVoice(
-      {
-        fileId: 'v',
-        size: 1000,
-        downloadFile: async () => ({ path: '/tmp/voice.ogg', size: 1000 }),
-        readFile: async () => new Uint8Array([0]),
-        fetchImpl: (async () =>
-          new Response(`bad auth header: Bearer ${secret}`, { status: 401 })) as unknown as typeof fetch,
-      },
-      voiceConfig,
-      { GROQ_API_KEY: secret },
-    )
-    expect(r.status).toBe('failed')
-    expect(r.errorMessage).not.toContain(secret)
   })
 
   test('returns skipped when voice provider disabled in config', async () => {
@@ -391,8 +399,31 @@ describe('maybeTranscribeVoice', () => {
         },
       },
       cfg,
-      { GROQ_API_KEY: 'gsk_test_key' },
+      ENV,
     )
     expect(r.status).toBe('skipped')
+  })
+})
+
+describe('renderMediaDescriptor voice note', () => {
+  test('adds the unavailable note when there is no transcript', () => {
+    const out = renderMediaDescriptor({
+      kind: 'voice',
+      fileId: 'v',
+      transcriptionStatus: 'failed',
+    })
+    expect(out).toContain('transcription_status="failed"')
+    expect(out).toContain(`note="${VOICE_UNAVAILABLE_NOTE}"`)
+    expect(VOICE_UNAVAILABLE_NOTE).toBe('голосовое сообщение: расшифровка недоступна')
+  })
+
+  test('has no note when transcription succeeded', () => {
+    const out = renderMediaDescriptor({
+      kind: 'voice',
+      fileId: 'v',
+      transcript: 'привет',
+      transcriptionStatus: 'ok',
+    })
+    expect(out).not.toContain('note=')
   })
 })

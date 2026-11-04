@@ -38,7 +38,7 @@ describe('loadConfig', () => {
     expect(cfg.dm_only).toBe(true)
     expect(cfg.status.interval_ms).toBe(700)
     expect(cfg.album.flush_ms).toBe(2000)
-    expect(cfg.voice.provider).toBe('groq')
+    expect(cfg.voice.provider).toBe('local')
     expect(cfg.webhook.enabled).toBe(false)
     expect(cfg.permission_relay.bash_only_proof).toBe(true)
   })

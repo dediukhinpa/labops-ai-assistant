@@ -11,11 +11,12 @@
 // trivially parseable and never confused with a sentence the user actually
 // typed.
 //
-// Voice transcription is OPTIONAL: missing GROQ_API_KEY does NOT crash the
-// handler — we emit a `transcription_status="missing_key"` descriptor and
-// let Claude decide whether to ask the user to enable it.
+// Voice transcription is OPTIONAL: a missing or unreachable local transcriber
+// does NOT crash the handler — we emit `transcription_status="unavailable"`
+// (or "failed") plus a short note, and let Claude tell the user.
 
 import { escapeHtmlAttr } from '../format/html.js'
+import { z } from 'zod'
 import type { AppConfig } from '../config.js'
 
 // ─────────────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ export type MediaDescriptor =
       size?: number
       durationSec?: number
       transcript?: string
-      transcriptionStatus: 'ok' | 'missing_key' | 'failed' | 'skipped'
+      transcriptionStatus: VoiceTranscriptionStatus
     }
   | {
       kind: 'audio'
@@ -148,10 +149,13 @@ export function renderMediaDescriptor(media: MediaDescriptor): string {
       parts.push(attr('size', media.size))
       parts.push(attr('duration_sec', media.durationSec))
       // Transcript is potentially long — escapeHtmlAttr handles quotes/<>.
-      // Status is always emitted so Claude can act on missing_key / failed
+      // Status is always emitted so Claude can act on unavailable / failed
       // without inferring it from the absence of `transcript`.
       parts.push(attr('transcript', media.transcript))
       parts.push(attr('transcription_status', media.transcriptionStatus))
+      if (media.transcriptionStatus !== 'ok') {
+        parts.push(attr('note', VOICE_UNAVAILABLE_NOTE))
+      }
       break
     }
     case 'audio': {
@@ -190,22 +194,44 @@ export function renderMediaDescriptor(media: MediaDescriptor): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Voice transcription (Groq Whisper).
+// Voice transcription (local voice-transcriber, faster-whisper on this host).
 //
-// Ports gateway.py:904-931. Key differences from the Python version:
-//   - We never write API key into log or error message (gateway.py:927
-//     truncates response body which could include the key on certain
-//     misroutes — we mask it explicitly).
-//   - 25MB hard cap before we even download (Groq's documented limit is
-//     25MB; downloading a 100MB file to discover it cannot be transcribed
-//     wastes bandwidth and disk on the bot host).
+// Audio goes ONLY to the local service. No external provider exists as a
+// fallback: voice may carry personal data, and the owner's decision is that
+// it never leaves the host. If the service is down or not configured, the
+// descriptor carries a short "transcription unavailable" note instead.
+//
+//   - The service token is never written to log or error messages.
+//   - The service URL must be a loopback address; anything else is refused
+//     before a single byte of audio is read.
 //   - Returns a discriminated result, never `null` — the descriptor
 //     ALWAYS includes a transcription_status attribute so Claude does
 //     not need to guess "is empty transcript a bug or a silent file?".
 // ─────────────────────────────────────────────────────────────────────
 
-// 25MB Groq Whisper limit. Conservative: include HTTP overhead margin.
-const GROQ_MAX_BYTES = 25 * 1024 * 1024
+// Telegram Bot API serves files up to 20MB; the service enforces the same cap.
+const VOICE_MAX_BYTES = 20 * 1024 * 1024
+
+// Default address of the service (deploy/voice-transcriber.env.example).
+const DEFAULT_TRANSCRIBER_URL = 'http://127.0.0.1:8310'
+
+// Upper bound for one request: queue wait (20s) + a long voice message on CPU.
+const TRANSCRIBE_TIMEOUT_MS = 180_000
+
+// Hosts the audio may be sent to. Anything else is treated as misconfiguration.
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+// Short note for the model when there is no transcript (kept as a constant so
+// tests and the prompt renderer agree on the exact wording).
+export const VOICE_UNAVAILABLE_NOTE = 'голосовое сообщение: расшифровка недоступна'
+
+const TranscribeResponseSchema = z.object({
+  text: z.string(),
+  language: z.string().optional(),
+  duration_sec: z.number().optional(),
+})
+
+export type VoiceTranscriptionStatus = 'ok' | 'unavailable' | 'failed' | 'skipped'
 
 export interface VoiceTranscriptionInput {
   fileId: string
@@ -224,29 +250,47 @@ export interface VoiceTranscriptionInput {
 
 export interface VoiceTranscriptionResult {
   transcript?: string
-  status: 'ok' | 'missing_key' | 'failed' | 'skipped'
+  status: VoiceTranscriptionStatus
   errorMessage?: string
 }
 
-// Redact any occurrence of the API key from a string, even partial
-// matches. We compare on the full key and also on a "Bearer <key>" form
-// in case an HTTP client embeds it verbatim into an error.
-function redactGroqKey(message: string, key: string): string {
-  if (!key) return message
-  // Escape regex metachars in the key so we can build a global pattern.
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re = new RegExp(escaped, 'g')
-  return message.replace(re, '[REDACTED]')
+/** Environment of the local transcriber client: address (optional) and Bearer token. */
+export interface VoiceTranscriberEnv {
+  VOICE_TRANSCRIBER_URL?: string
+  VOICE_TRANSCRIBER_TOKEN?: string
 }
 
+// Remove any occurrence of the token from a string. We compare on the full
+// token in case an HTTP client embeds it verbatim into an error.
+function redactToken(message: string, token: string): string {
+  if (!token) return message
+  return message.split(token).join('[REDACTED]')
+}
+
+/** True when the URL points to this host, so audio cannot leave it. */
+function isLoopbackUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Transcribe one Telegram voice message via the local voice-transcriber.
+ *
+ * Never throws: every failure becomes a `failed`/`skipped`/`unavailable`
+ * status so the inbound handler keeps working without a transcript.
+ */
 export async function maybeTranscribeVoice(
   input: VoiceTranscriptionInput,
   config: AppConfig,
-  env: { GROQ_API_KEY?: string },
+  env: VoiceTranscriberEnv,
 ): Promise<VoiceTranscriptionResult> {
-  const key = env.GROQ_API_KEY
-  if (!key) {
-    return { status: 'missing_key' }
+  const token = env.VOICE_TRANSCRIBER_TOKEN
+  if (!token) {
+    return { status: 'unavailable', errorMessage: 'VOICE_TRANSCRIBER_TOKEN is not set' }
   }
 
   // Voice provider can be disabled in config.json (provider: 'none').
@@ -254,12 +298,17 @@ export async function maybeTranscribeVoice(
     return { status: 'skipped', errorMessage: 'voice provider disabled in config' }
   }
 
+  const baseUrl = (env.VOICE_TRANSCRIBER_URL ?? DEFAULT_TRANSCRIBER_URL).replace(/\/+$/, '')
+  if (!isLoopbackUrl(baseUrl)) {
+    return { status: 'unavailable', errorMessage: 'VOICE_TRANSCRIBER_URL must be a loopback http URL' }
+  }
+
   // Size guard BEFORE download. `input.size` is the Telegram-reported
   // file size and is reliable for voice/audio attachments.
-  if (input.size !== undefined && input.size > GROQ_MAX_BYTES) {
+  if (input.size !== undefined && input.size > VOICE_MAX_BYTES) {
     return {
       status: 'skipped',
-      errorMessage: `file too large for whisper (${input.size} > ${GROQ_MAX_BYTES} bytes)`,
+      errorMessage: `voice file too large (${input.size} > ${VOICE_MAX_BYTES} bytes)`,
     }
   }
 
@@ -269,10 +318,10 @@ export async function maybeTranscribeVoice(
     const downloaded = await input.downloadFile(input.fileId)
 
     // Re-check actual size after download — Telegram metadata can lag.
-    if (downloaded.size !== undefined && downloaded.size > GROQ_MAX_BYTES) {
+    if (downloaded.size !== undefined && downloaded.size > VOICE_MAX_BYTES) {
       return {
         status: 'skipped',
-        errorMessage: `file too large for whisper (${downloaded.size} > ${GROQ_MAX_BYTES} bytes)`,
+        errorMessage: `voice file too large (${downloaded.size} > ${VOICE_MAX_BYTES} bytes)`,
       }
     }
 
@@ -287,52 +336,33 @@ export async function maybeTranscribeVoice(
       bytes = await fs.readFile(downloaded.path)
     }
 
-    const form = new FormData()
-    // Groq Whisper validates by FILENAME extension and rejects `.oga` even
-    // though the bytes are valid Ogg/Opus. Telegram voice messages always
-    // arrive with the `.oga` extension. Normalize to `.ogg` so the server
-    // multipart parser accepts the file.
-    const rawName = downloaded.path.split('/').pop() ?? 'voice.ogg'
-    const filename = rawName.replace(/\.oga$/i, '.ogg')
     const mime = downloaded.mime ?? input.mime ?? 'audio/ogg'
-    form.append('file', new Blob([new Uint8Array(bytes)], { type: mime }), filename)
-    form.append('model', config.voice.model)
-    form.append('language', config.voice.language)
-    form.append('response_format', 'text')
-
-    const res = await fetchFn('https://api.groq.com/openai/v1/audio/transcriptions', {
+    const query = new URLSearchParams({ language: config.voice.language })
+    const res = await fetchFn(`${baseUrl}/transcribe?${query.toString()}`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${key}` },
-      body: form,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': mime },
+      body: new Blob([new Uint8Array(bytes)], { type: mime }),
+      signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT_MS),
     })
 
     if (!res.ok) {
-      // Read body for diagnostic but redact the key just in case the
-      // server echoes the Authorization header (some misconfigured proxies
-      // do). Truncate to 200 chars like gateway.py:927.
-      const rawBody = await res.text().catch(() => '')
-      const safeBody = redactGroqKey(rawBody, key).slice(0, 200)
-      return {
-        status: 'failed',
-        errorMessage: `groq HTTP ${res.status}: ${safeBody}`,
-      }
+      // Only the status code is reported: the response body of the service
+      // is an error detail we do not need, and it never carries the transcript.
+      return { status: 'failed', errorMessage: `voice-transcriber HTTP ${res.status}` }
     }
 
-    const text = (await res.text()).trim()
-    if (text.length === 0) {
-      // Empty transcript = the audio was silent or unintelligible. Not
-      // a failure of the pipeline — surface it as status=ok with empty
-      // transcript so Claude can mention "I couldn't make out the audio"
-      // instead of pretending the user typed nothing.
-      return { transcript: '', status: 'ok' }
+    const parsed = TranscribeResponseSchema.safeParse(await res.json())
+    if (!parsed.success) {
+      return { status: 'failed', errorMessage: 'voice-transcriber returned an unexpected body' }
     }
-    return { transcript: text, status: 'ok' }
+    // Empty transcript = the audio was silent or unintelligible. Not a
+    // failure of the pipeline — surface it as status=ok with empty
+    // transcript so Claude can mention "I couldn't make out the audio"
+    // instead of pretending the user typed nothing.
+    return { transcript: parsed.data.text.trim(), status: 'ok' }
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err)
-    return {
-      status: 'failed',
-      errorMessage: redactGroqKey(raw, key),
-    }
+    return { status: 'failed', errorMessage: redactToken(raw, token) }
   }
 }
 

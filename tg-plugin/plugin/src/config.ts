@@ -74,9 +74,10 @@ export const AppConfigSchema = z.object({
     flush_ms: z.number().int().positive().default(2000),
   }).default({}),
   voice: z.object({
-    provider: z.enum(['groq', 'none']).default('groq'),
+    // 'local' -- локальный сервис voice-transcriber (faster-whisper на этом же хосте).
+    // Внешних провайдеров расшифровки нет: голос с ПДн за рубеж не уходит.
+    provider: z.enum(['local', 'none']).default('local'),
     language: z.string().default('ru'),
-    model: z.string().default('whisper-large-v3-turbo'),
   }).default({}),
   webhook: z.object({
     enabled: z.boolean().default(false),
@@ -296,7 +297,9 @@ export const RuntimeEnvSchema = z.object({
   TELEGRAM_WORKSPACE_ROOT: z.string().optional(),
   TELEGRAM_STATUS_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   TELEGRAM_ALBUM_FLUSH_MS: z.coerce.number().int().positive().optional(),
-  GROQ_API_KEY: z.string().optional(),
+  // Локальный сервис расшифровки голоса (voice-transcriber): адрес и Bearer-токен.
+  VOICE_TRANSCRIBER_URL: z.string().optional(),
+  VOICE_TRANSCRIBER_TOKEN: z.string().optional(),
   TELEGRAM_WEBHOOK_HOST: z.string().optional(),
   TELEGRAM_WEBHOOK_PORT: z.coerce.number().int().min(0).optional(),
   TELEGRAM_WEBHOOK_TOKEN: z.string().optional(),

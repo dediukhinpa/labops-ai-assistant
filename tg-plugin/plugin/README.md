@@ -102,7 +102,8 @@ bash plugin/scripts/install-hooks.sh \
 | `TELEGRAM_READ_RECEIPT_STATE` | Явный путь до дедуп-лога (single-writer). По умолчанию — пер-сессионный `<state>/read-receipts/<session_id>.log` в `TELEGRAM_STATE_DIR` (или `MULTICHAT_STATE_DIR`). |
 | `TELEGRAM_MEMORY_*` | Memory hook config (см. секцию ниже). |
 | `TELEGRAM_MULTICHAT_*` | Multichat router config (см. секцию ниже). |
-| `GROQ_API_KEY` | Whisper transcription для голосовых (опционально). |
+| `VOICE_TRANSCRIBER_TOKEN` | Bearer-токен локального сервиса расшифровки голосовых (опционально; без него — пометка «расшифровка недоступна»). |
+| `VOICE_TRANSCRIBER_URL` | Адрес сервиса, только loopback; по умолчанию `http://127.0.0.1:8310`. |
 
 ## Memory hooks (опционально)
 
