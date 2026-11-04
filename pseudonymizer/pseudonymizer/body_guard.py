@@ -39,6 +39,8 @@ class BodyGuardMiddleware:
             токена; None - токен не проверяется (сервис без аутентификации).
         guarded_paths: Пути POST-запросов, для которых проверяются токен и размер; остальные
             запросы (health, чужие методы) проходят как есть.
+        guarded_delete_prefixes: Префиксы путей DELETE-запросов (например, "/threads/"):
+            для них проверяется токен, тела у такого запроса нет.
     """
 
     def __init__(
@@ -48,18 +50,28 @@ class BodyGuardMiddleware:
         max_body_bytes: int,
         authorize: Callable[[str], bool] | None,
         guarded_paths: Iterable[str],
+        guarded_delete_prefixes: Iterable[str] = (),
     ) -> None:
         self._app = app
         self._max_body_bytes = max_body_bytes
         self._authorize = authorize
         self._guarded_paths = frozenset(guarded_paths)
+        self._delete_prefixes = tuple(guarded_delete_prefixes)
+
+    def _is_guarded(self, scope: Scope) -> bool:
+        """Запрос попадает под проверку: POST по списку путей или DELETE по префиксу."""
+        if scope["type"] != "http":
+            return False
+        if scope["method"] == "POST":
+            return scope["path"] in self._guarded_paths
+        if scope["method"] == "DELETE":
+            return bool(self._delete_prefixes) and scope["path"].startswith(
+                self._delete_prefixes
+            )
+        return False
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if (
-            scope["type"] != "http"
-            or scope["method"] != "POST"
-            or scope["path"] not in self._guarded_paths
-        ):
+        if not self._is_guarded(scope):
             await self._app(scope, receive, send)
             return
         headers = {name: value for name, value in scope["headers"]}

@@ -13,7 +13,8 @@ LETTER = "Позвони Петрову, +7 (902) 123-45-67, почта petrov@f
 
 
 def test_health(client: TestClient) -> None:
-    assert client.get("/health").json() == {"status": "ok"}
+    body = client.get("/health").json()
+    assert body["status"] == "ok" and set(body) == {"status", "boot_id"}
 
 
 def test_pseudonymize_response_has_no_originals(client: TestClient) -> None:

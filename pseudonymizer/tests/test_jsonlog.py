@@ -436,3 +436,17 @@ def test_formatted_message_has_args_and_thread_hash(sink: LogSink) -> None:
     (record,) = sink.records()
     assert record["msg"] == f"pseudonymize: thread={jsonlog.thread_hash(thread)} найдено=3"
     assert "%s" not in record["msg"] and thread not in sink.raw
+
+
+def test_delete_thread_logs_route_template_not_thread_id(
+    detector: object, monkeypatch: pytest.MonkeyPatch, sink: LogSink
+) -> None:
+    """DELETE: в журнале шаблон маршрута, идентификатор треда не пишется; 401 без токена."""
+    client = make_client(detector, monkeypatch)
+    assert client.delete("/threads/secret-session-id").status_code == 204
+    event = sink.events("http_request")[-1]
+    assert (event["route"], event["status"]) == ("/threads/{thread_id}", 204)
+    anon = make_client(detector, monkeypatch, headers=None)
+    assert anon.delete("/threads/secret-session-id").status_code == 401
+    assert sink.events("http_request_rejected")[-1]["status"] == 401
+    assert "secret-session-id" not in sink.raw

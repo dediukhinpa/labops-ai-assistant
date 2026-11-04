@@ -6,10 +6,11 @@ import hmac
 import logging
 import threading
 import time
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from pseudonymizer.body_guard import BodyGuardMiddleware
@@ -40,6 +41,7 @@ from pseudonymizer.store import (
 logger = logging.getLogger(__name__)
 
 HTTP_UNAUTHORIZED = 401
+HTTP_NO_CONTENT = 204
 # Пачка /pseudonymize_batch сверх пределов (число текстов или их суммарная длина): клиент
 # может разрезать её мельче или перейти на одиночные вызовы. Отдельно от 422, который
 # значит «этот текст слишком длинный» и одиночным вызовом тоже не пройдёт.
@@ -49,6 +51,11 @@ HTTP_BUSY = 503
 BEARER_SCHEME = "bearer"
 # Пути с телом JSON: токен и размер тела проверяются в BodyGuardMiddleware до его чтения
 GUARDED_PATHS = ("/pseudonymize", "/pseudonymize_batch", "/restore", "/check")
+# DELETE-маршруты с токеном (тела нет): очистка треда по концу сессии клиента
+GUARDED_DELETE_PREFIXES = ("/threads/",)
+# Номер запуска процесса: клиент по его смене узнаёт, что таблица замен в памяти потеряна.
+# Не секрет, но и не предсказуем; новый на каждый запуск.
+BOOT_ID = str(uuid.uuid4())
 # Как часто проверять ретенцию таблицы замен во время работы (при старте проверяется всегда).
 # SQLite: срок задан в часах, проверка не реже раза в час. Память: тред дешёвый для обхода,
 # поэтому проверяем чаще, чтобы оригиналы не жили сверх срока.
@@ -242,6 +249,7 @@ def create_app(
         max_body_bytes=max_body_bytes(settings.max_text_chars, settings.max_batch_items),
         authorize=token_valid,
         guarded_paths=GUARDED_PATHS,
+        guarded_delete_prefixes=GUARDED_DELETE_PREFIXES,
     )
     # Добавлен последним, значит внешний: логирует и отказы BodyGuard (401/413)
     app.add_middleware(JsonLogMiddleware, failure_events={RESTORE_ROUTE: EVENT_RESTORE_FAILED})
@@ -337,8 +345,19 @@ def create_app(
         types = service.check(req.text, req.thread_id)
         return CheckResponse(has_pii=bool(types), types=types)
 
+    @app.delete(
+        "/threads/{thread_id}",
+        dependencies=[Depends(require_token)],
+        status_code=HTTP_NO_CONTENT,
+        response_class=Response,
+    )
+    def delete_thread(thread_id: str) -> Response:
+        """Удаляет все замены треда; 204 и когда треда не было (идемпотентно)."""
+        store.delete_thread(thread_id)
+        return Response(status_code=HTTP_NO_CONTENT)
+
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "boot_id": BOOT_ID}
 
     return app
