@@ -79,6 +79,12 @@ class PseudonymizeRequest(BaseModel):
     text: str
 
 
+class MaskRequest(PseudonymizeRequest):
+    """Запрос /pseudonymize: необязательные падежные метки у ФИО в косвенном падеже."""
+
+    case_labels: bool = False
+
+
 class EntityOut(BaseModel):
     """Сущность в ответе (без оригинала)."""
 
@@ -98,6 +104,7 @@ class PseudonymizeBatchRequest(BaseModel):
 
     thread_id: str = Field(min_length=1)
     texts: list[str]
+    case_labels: bool = False
 
 
 class PseudonymizeBatchResponse(BaseModel):
@@ -298,10 +305,12 @@ def create_app(
         dependencies=guarded,
         response_model=PseudonymizeResponse,
     )
-    def pseudonymize(req: PseudonymizeRequest) -> PseudonymizeResponse:
+    def pseudonymize(req: MaskRequest) -> PseudonymizeResponse:
         ensure_size(req.text)
         retention.run_if_due()
-        text, entities = service.pseudonymize(req.thread_id, req.text)
+        text, entities = service.pseudonymize(
+            req.thread_id, req.text, req.case_labels
+        )
         return PseudonymizeResponse(
             text=text, entities=[EntityOut(type=e.type, token=e.token) for e in entities]
         )
@@ -317,7 +326,9 @@ def create_app(
         # HTTP-запрос и один слот конкуренции (R9-A2-04).
         ensure_batch_size(req.texts)
         retention.run_if_due()
-        results = service.pseudonymize_batch(req.thread_id, req.texts)
+        results = service.pseudonymize_batch(
+            req.thread_id, req.texts, req.case_labels
+        )
         return PseudonymizeBatchResponse(
             items=[
                 PseudonymizeResponse(
