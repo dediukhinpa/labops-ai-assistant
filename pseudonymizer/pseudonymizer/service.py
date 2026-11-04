@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pseudonymizer.config import DEFAULT_MAX_RESTORE_TOKENS
 from pseudonymizer.detector import Detection, PiiDetector, PiiType
 from pseudonymizer.jsonlog import log_info_formatted, thread_hash
-from pseudonymizer.morph import keys_compatible, split_key
+from pseudonymizer.morph import inflect_person, keys_compatible, split_key
 from pseudonymizer.store import ReplacementStore
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,13 @@ TOKEN_RE = re.compile(r"\[([A-Z]+)_(\d+)\]")
 # символ, и restore её не принимает за токен (R3-ALG-30). При восстановлении экранирование
 # снимается, так что итоговый текст совпадает с исходным.
 ESCAPE_MARK = "\u200b"
-SEEN_OR_ESCAPED_RE = re.compile(rf"\[({ESCAPE_MARK})?([A-Z]+)_(\d+)\]")
+# Падежная метка «[PERSON_1|datv]» (грамматика согласована с клиентом сервиса): её пишет только
+# модель в ответе, поэтому в /restore она склоняет ФИО, а во входе /pseudonymize всегда буквальна.
+CASE_CODES = "nomn|gent|datv|accs|ablt|loct"
+LABEL_RE = re.compile(rf"\[([A-Z]+)_(\d+)(?:\|({CASE_CODES}))?\]")
+SEEN_OR_ESCAPED_RE = re.compile(rf"\[({ESCAPE_MARK})?([A-Z]+)_(\d+)(?:\|({CASE_CODES}))?\]")
+# Только у ФИО метка меняет текст; у остальных типов она игнорируется.
+INFLECTABLE_TYPE = PiiType.PERSON.value
 # Тип записи-псевдонима: ключ, который разрешился в существующий токен нечётким сопоставлением
 # ФИО. Запись хранится отдельным типом (в счёт токенов и в индекс ФИО не попадает), её
 # «оригинал» — настоящий токен. Так одно и то же написание получает один и тот же токен
@@ -158,12 +164,19 @@ def _full_words(key: str) -> frozenset[str]:
 
 
 def _escape_literal_tokens(text: str, foreign: set[str]) -> str:
-    """Экранирует в тексте буквальные метки «[TYPE_N]» из набора foreign (restore их не тронет)."""
-    return TOKEN_RE.sub(
-        lambda m: f"[{ESCAPE_MARK}{m.group(1)}_{m.group(2)}]" if m.group(0) in foreign
-        else m.group(0),
-        text,
-    )
+    """Экранирует буквальные метки: «[TYPE_N]» из набора foreign и любые «[TYPE_N|падеж]».
+
+    Падежные метки пишет только модель в ответе, поэтому во входе они всегда буквальны и
+    экранируются безусловно (restore их не тронет).
+    """
+    def escape(match: re.Match[str]) -> str:
+        """Ставит невидимый символ после «[» у метки, которую restore трогать нельзя."""
+        simple = f"[{match.group(1)}_{match.group(2)}]"
+        if match.group(3) is None and simple not in foreign:
+            return match.group(0)
+        return f"[{ESCAPE_MARK}{match.group(0)[1:]}"
+
+    return LABEL_RE.sub(escape, text)
 
 
 class Pseudonymizer:
@@ -273,8 +286,11 @@ class Pseudonymizer:
         Raises:
             TooManyTokensError: Разных токенов в тексте больше предела.
         """
+        # Метки одного токена с разными падежами считаются одним токеном.
         tokens = {
-            m.group(0) for m in SEEN_OR_ESCAPED_RE.finditer(text) if m.group(1) is None
+            f"[{m.group(2)}_{m.group(3)}]"
+            for m in SEEN_OR_ESCAPED_RE.finditer(text)
+            if m.group(1) is None
         }
         if not tokens and ESCAPE_MARK not in text:
             return text
@@ -283,10 +299,16 @@ class Pseudonymizer:
         originals = self._store.get_originals(thread_id, tokens) if tokens else {}
 
         def substitute(match: re.Match[str]) -> str:
-            """Токен -> оригинал; экранированная метка -> буквальная; чужой токен как есть."""
+            """Токен -> оригинал (с падежом у ФИО); экранированная метка -> буквальная."""
             if match.group(1) is not None:
-                return f"[{match.group(2)}_{match.group(3)}]"
-            return originals.get(match.group(0), match.group(0))
+                return match.group(0).replace(ESCAPE_MARK, "", 1)
+            original = originals.get(f"[{match.group(2)}_{match.group(3)}]")
+            if original is None:  # чужой токен или номер вне треда: фрагмент как есть
+                return match.group(0)
+            case = match.group(4)
+            if case is None or match.group(2) != INFLECTABLE_TYPE:
+                return original
+            return inflect_person(original, case)
 
         return SEEN_OR_ESCAPED_RE.sub(substitute, text)
 
