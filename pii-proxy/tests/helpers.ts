@@ -19,7 +19,9 @@ export interface FakeService {
     checkOnly: string[];
     /** Вызовы: метод путь. */
     calls: string[];
-    batches: { threadId: string; texts: string[] }[];
+    batches: { threadId: string; texts: string[]; caseLabels: unknown }[];
+    /** Тела /pseudonymize_batch как пришли (проверка набора полей). */
+    batchBodies: Record<string, unknown>[];
     deleted: string[];
     restoreFailAfter: number;
     restoreCount: number;
@@ -32,7 +34,8 @@ export interface FakeService {
 /** Запустить фейковый сервис на свободном порту. */
 export function startFakeService(dict: Record<string, string> = {}): FakeService {
   const state: FakeService['state'] = {
-    mode: 'ok', bootId: 'boot-1', dict, checkOnly: [], calls: [], batches: [], deleted: [],
+    mode: 'ok', bootId: 'boot-1', dict, checkOnly: [], calls: [], batches: [], batchBodies: [],
+    deleted: [],
     restoreFailAfter: Number.POSITIVE_INFINITY, restoreCount: 0, bootAfterBatch: [],
   };
   const mask = (t: string): string => {
@@ -64,11 +67,16 @@ export function startFakeService(dict: Record<string, string> = {}): FakeService
         state.deleted.push(decodeURIComponent(path.replace('/threads/', '')));
         return new Response(null, { status: 204 });
       }
-      const body = (await req.json()) as { thread_id?: string; text?: string; texts?: string[] };
+      const body = (await req.json()) as {
+        thread_id?: string; text?: string; texts?: string[]; case_labels?: unknown;
+      };
       if (path === '/pseudonymize_batch') {
         const nextBoot = state.bootAfterBatch.shift();
         if (nextBoot !== undefined) state.bootId = nextBoot;
-        state.batches.push({ threadId: body.thread_id ?? '', texts: body.texts ?? [] });
+        state.batches.push({
+          threadId: body.thread_id ?? '', texts: body.texts ?? [], caseLabels: body.case_labels,
+        });
+        state.batchBodies.push(body);
         return Response.json({ items: (body.texts ?? []).map((t) => ({ text: mask(t) })) });
       }
       if (path === '/restore') {
@@ -164,7 +172,8 @@ export function memoryLogger(): Logger & { lines: { event: string; fields: LogFi
 export function testConfig(over: Partial<ProxyConfig>): ProxyConfig {
   return {
     port: 0, host: '127.0.0.1', upstream: '', agentId: 'dev', pseudonymizerUrl: '',
-    pseudonymizerToken: TEST_TOKEN, timeoutMs: 1_000, imagePolicy: 'strip', ...over,
+    pseudonymizerToken: TEST_TOKEN, timeoutMs: 1_000, imagePolicy: 'strip', caseLabels: false,
+    ...over,
   };
 }
 
