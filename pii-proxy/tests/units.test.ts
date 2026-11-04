@@ -12,7 +12,7 @@ describe('конфиг', () => {
     const c = loadConfig(base);
     expect(c.host).toBe('127.0.0.1');
     expect(c.upstream).toBe('https://api.anthropic.com');
-    expect(c.imagePolicy).toBe('strip');
+    expect(c.imagePolicy).toBe('passthrough');
     expect(c.timeoutMs).toBe(10_000);
   });
   test('нет обязательных - ошибка без значений', () => {

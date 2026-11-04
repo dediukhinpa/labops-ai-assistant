@@ -3,6 +3,7 @@ import {
   MASK_BOOT_ATTEMPTS,
   CHECK_OVERLAP_CHARS,
   MASK_CACHE_MAX_CHARS,
+  REMEMBER_CACHE_MAX_CHARS,
   MAX_TEXT_CHARS,
   STATUS_PII_FOUND,
   SERVICE_CONCURRENCY,
@@ -24,11 +25,17 @@ export interface MaskStats {
   readonly leaves: number;
   readonly cacheHits: number;
   readonly strippedAttachments: number;
+  /** Листьев взято из памяти восстановлений (без обращения к сервису). */
+  readonly rememberedLeaves: number;
+  /** boot_id сервиса, при котором замаскирован запрос (ключ памяти восстановлений). */
+  readonly bootId: string;
 }
 
 /** Маскирует тело запроса к модели и проверяет результат второй линией (/check). */
 export class RequestMasker {
   private readonly maskCache = new BoundedCache(MASK_CACHE_MAX_CHARS);
+  /** Память восстановлений: восстановленная строка -> исходная строка модели. */
+  private readonly rememberCache = new BoundedCache(REMEMBER_CACHE_MAX_CHARS);
   private readonly cleanCache = new BoundedCache(CLEAN_CACHE_MAX_ENTRIES * CLEAN_COST, () => 0);
   private readonly boot: BootTracker;
 
@@ -36,12 +43,29 @@ export class RequestMasker {
     private readonly service: Pseudonymizer,
     private readonly imagePolicy: ImagePolicy,
   ) {
-    this.boot = new BootTracker(service, () => this.maskCache.clear());
+    // Таблица замен сервиса потеряна: память восстановлений теряет смысл так же, как кэш.
+    this.boot = new BootTracker(service, () => {
+      this.maskCache.clear();
+      this.rememberCache.clear();
+    });
   }
 
   /** Размер кэша маскирования в символах (для тестов и метрик). */
   get cacheChars(): number {
     return this.maskCache.cost;
+  }
+
+  /** Размер памяти восстановлений в символах (для тестов и метрик). */
+  get rememberedChars(): number {
+    return this.rememberCache.cost;
+  }
+
+  /**
+   * Запомнить, что восстановленная строка в истории - это ответ модели в исходном виде.
+   * Ключ совпадает с ключом кэша маскирования: тред, boot_id и строка листа.
+   */
+  remember(threadId: string, bootId: string, restored: string, original: string): void {
+    this.rememberCache.set(maskCacheKey(threadId, bootId, restored), original);
   }
 
   /**
@@ -75,14 +99,21 @@ export class RequestMasker {
     const keys = walker.leaves.map((l) => maskCacheKey(threadId, bootId, l.text));
     // Уже известные маски снимаем сразу: запись кэша может быть вытеснена новыми.
     const resolved = new Map<string, string>();
+    let rememberedLeaves = 0;
     // Новые листья: уникальные, в порядке первого появления.
     const missing: { key: string; text: string }[] = [];
     const seen = new Set<string>();
     let cacheHits = 0;
     walker.leaves.forEach((leaf, i) => {
       const key = keys[i] as string;
-      const cached = this.maskCache.get(key);
-      if (cached !== undefined) {
+      // Свой прошлый ответ модели возвращается ей как написан (с метками падежа), мимо сервиса.
+      // Результат всё равно идёт во вторую линию, как и любой замаскированный лист.
+      const remembered = this.rememberCache.get(key);
+      const cached = remembered ?? this.maskCache.get(key);
+      if (remembered !== undefined) {
+        resolved.set(key, remembered);
+        rememberedLeaves++;
+      } else if (cached !== undefined) {
         resolved.set(key, cached);
         cacheHits++;
       } else if (!seen.has(key)) {
@@ -105,6 +136,8 @@ export class RequestMasker {
         leaves: walker.leaves.length,
         cacheHits,
         strippedAttachments: walker.strippedAttachments,
+        rememberedLeaves,
+        bootId,
       },
       maskedTexts,
     };

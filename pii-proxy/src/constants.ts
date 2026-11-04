@@ -17,6 +17,11 @@ export const SERVICE_CONCURRENCY = 6;
 export const HEALTH_POLL_MS = 5_000;
 /** Бюджет кэша маскирования, символов (ключи плюс значения), как MASK_CACHE_MAX_CHARS. */
 export const MASK_CACHE_MAX_CHARS = 4_000_000;
+/**
+ * Бюджет памяти восстановлений, символов (ключи плюс исходные строки модели): пары
+ * «восстановленная строка -> как написала модель» для листьев, что вернутся в историю запроса.
+ */
+export const REMEMBER_CACHE_MAX_CHARS = 4_000_000;
 /** Длина шестнадцатеричного ключа кэша (sha256). */
 export const CACHE_KEY_CHARS = 64;
 

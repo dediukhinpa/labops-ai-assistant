@@ -14,10 +14,23 @@ export async function restoreMessageJson(
   for (const block of content) {
     if (!isObject(block)) continue;
     if (block.type === 'text' && typeof block.text === 'string') {
-      block.text = await restorer.text(block.text);
+      const original: string = block.text;
+      const restored = await restorer.text(original);
+      block.text = restored;
+      rememberTextBlock(restorer, restored, original);
     } else if (typeof block.type === 'string' && block.type.endsWith('tool_use')) {
       await restorer.leaves(block.input);
     }
   }
   return body;
+}
+
+/**
+ * Запомнить целый text-блок. CLI может хранить текст блока без крайних пробелов, поэтому
+ * запоминается и обрезанный вариант пары.
+ */
+export function rememberTextBlock(restorer: Restorer, restored: string, original: string): void {
+  restorer.remember(restored, original);
+  const trimmed = restored.trim();
+  if (trimmed !== restored) restorer.remember(trimmed, original.trim());
 }

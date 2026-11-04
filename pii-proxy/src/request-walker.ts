@@ -14,6 +14,9 @@ const PASSTHROUGH_BLOCKS: ReadonlySet<string> = new Set([
   // Определение инструмента, подгруженное по ходу сессии (сообщение роли system): то же, что
   // массив tools, который не маскируется; ПДн в описаниях инструментов не бывает.
   'tool_addition',
+  // Ссылка на найденный инструмент внутри tool_result поиска инструментов: только имя
+  // инструмента, ПДн нет. Живой CLI 2.1.318 шлёт её после поиска отложенных инструментов.
+  'tool_reference',
 ]);
 /** Блоки с аргументами инструмента: маскируются все строковые листья input. */
 const TOOL_INPUT_BLOCKS: ReadonlySet<string> = new Set([
@@ -33,6 +36,8 @@ export class RequestWalker {
   readonly leaves: Leaf[] = [];
   /** Сколько вложений заменено заглушкой. */
   strippedAttachments = 0;
+  /** Сколько вложений ушло как есть (политика passthrough). */
+  passedAttachments = 0;
 
   constructor(private readonly imagePolicy: ImagePolicy) {}
 
@@ -99,15 +104,22 @@ export class RequestWalker {
       this.addString(source, 'data', source.data);
     } else if (isObject(source) && kind === 'content') {
       this.walkContent(source);
-    } else {
-      this.attachment(parent, index, block);
-      return;
+    } else if (!this.attachment(parent, index, block)) {
+      return; // заглушка вместо документа: подписи заменены вместе с ним
     }
     if (typeof block.title === 'string') this.addString(block, 'title', block.title);
     if (typeof block.context === 'string') this.addString(block, 'context', block.context);
   }
 
-  private attachment(parent: unknown[], index: number, block: JsonObject): void {
+  /**
+   * Вложение без текста (изображение, PDF) по политике.
+   * @returns true, если блок остался на месте (passthrough) и его подписи надо маскировать.
+   */
+  private attachment(parent: unknown[], index: number, block: JsonObject): boolean {
+    if (this.imagePolicy === 'passthrough') {
+      this.passedAttachments++;
+      return true;
+    }
     if (this.imagePolicy === 'reject') {
       throw new RequestRejectedError(
         STATUS_PII_FOUND,
@@ -119,6 +131,7 @@ export class RequestWalker {
     if (block.cache_control !== undefined) stub.cache_control = block.cache_control;
     parent[index] = stub;
     this.strippedAttachments++;
+    return false;
   }
 }
 

@@ -1,6 +1,7 @@
 import { PENDING_FLUSH_MS, RESTORE_MAX_CHARS, RESTORE_WINDOW_MS } from './constants';
 import { errorBody } from './errors';
 import { isObject, type JsonObject } from './json-leaves';
+import { rememberTextBlock } from './json-restore';
 import type { Restorer } from './restorer';
 import type { SseEvent } from './sse';
 import { TokenBoundaryBuffer } from './token-boundary-buffer';
@@ -20,6 +21,10 @@ export interface StreamOptions {
 interface TextState {
   readonly buffer: TokenBoundaryBuffer;
   held: string;
+  /** Текст блока как прислала модель. */
+  raw: string;
+  /** Текст блока как отдан клиенту. */
+  out: string;
   heldSince: number;
   tailSince: number;
 }
@@ -87,6 +92,7 @@ export async function* restoreSse(
   async function* emit(index: number, s: TextState, text: string, force: boolean) {
     if (text !== '') {
       if (s.held === '' && !text.includes(']')) {
+        s.out += text;
         yield textDelta(index, text);
       } else {
         if (s.held === '') s.heldSince = now();
@@ -96,6 +102,7 @@ export async function* restoreSse(
     if (s.held !== '' && (force || due(s))) {
       const out = await restorer.text(s.held);
       s.held = '';
+      s.out += out;
       yield textDelta(index, out);
     }
   }
@@ -138,6 +145,7 @@ export async function* restoreSse(
       && typeof delta.text === 'string') {
       const s = texts.get(index);
       if (s !== undefined) {
+        s.raw += delta.text;
         const ready = s.buffer.push(delta.text);
         if (s.buffer.hasPending) s.tailSince = now();
         yield* emit(index, s, ready, false);
@@ -155,12 +163,15 @@ export async function* restoreSse(
       const cb = j.content_block;
       if (cb.type === 'text') {
         texts.set(index, {
-          buffer: new TokenBoundaryBuffer(), held: '', heldSince: 0, tailSince: 0,
+          buffer: new TokenBoundaryBuffer(), held: '', raw: '', out: '', heldSince: 0, tailSince: 0,
         });
       } else if (typeof cb.type === 'string' && cb.type.endsWith('tool_use')) {
         tools.set(index, '');
       }
     } else if (type === 'content_block_stop') {
+      // Блок закрыт целиком (оборванный поток сюда не доходит): пара идёт в память.
+      const closed = texts.get(index);
+      if (closed !== undefined) rememberTextBlock(restorer, closed.out, closed.raw);
       texts.delete(index);
       const json = tools.get(index);
       if (json !== undefined) {

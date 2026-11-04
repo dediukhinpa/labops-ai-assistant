@@ -72,6 +72,23 @@ describe('маскирование запроса', () => {
     expect(rig.upstream.hits[0]?.body).not.toContain('Иван Петров');
   });
 
+  test('image и pdf: passthrough отправляет как есть, подписи документа маскируются',
+    async () => {
+      rig = startRig(DICT, textStream(['ок']), { imagePolicy: 'passthrough' });
+      const image = { type: 'image', source: { type: 'base64', media_type: 'image/png',
+        data: 'AAAA' } };
+      const pdf = { type: 'document', title: 'Иван Петров', source: { type: 'base64',
+        media_type: 'application/pdf', data: 'BBBB' } };
+      const res = await post(rig.base, '/v1/messages', { messages: [{ role: 'user', content: [
+        image, pdf, { type: 'text', text: 'Иван Петров' }] }] });
+      expect(res.status).toBe(200);
+      const c = upstreamBody(rig).messages[0].content;
+      expect(c[0]).toEqual(image);
+      expect(c[1].source).toEqual(pdf.source);
+      expect(c[1].title).not.toContain('Иван Петров');
+      expect(c[2].text).not.toContain('Иван Петров');
+    });
+
   test('image и pdf: strip заменяет заглушкой', async () => {
     rig = startRig(DICT, textStream(['ок']));
     await post(rig.base, '/v1/messages', { messages: [{ role: 'user', content: [
@@ -110,6 +127,15 @@ describe('маскирование запроса', () => {
       const sent = JSON.parse(rig.upstream.hits[0]?.body ?? '{}') as any;
       expect(sent.messages[1].content[0]).toEqual(addition);
     });
+
+  test('tool_reference в результате поиска инструментов пропускается как есть', async () => {
+    rig = startRig(DICT, textStream(['ок']));
+    const ref = { type: 'tool_reference', tool_name: 'mcp__x__y' };
+    const res = await post(rig.base, '/v1/messages', { messages: [{ role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 't1', content: [ref] }] }] });
+    expect(res.status).toBe(200);
+    expect(upstreamBody(rig).messages[0].content[0].content[0]).toEqual(ref);
+  });
 
   test('неизвестный тип блока: 422, upstream не вызван', async () => {
     rig = startRig(DICT, textStream(['ок']));

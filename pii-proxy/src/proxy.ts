@@ -130,17 +130,24 @@ export class PiiProxy {
     const masked = req.method === 'POST' && MASKED_ROUTES.has(url.pathname);
     let outBody = body;
     let stats: LogFields = {};
+    let remember: ((restored: string, original: string) => void) | undefined;
     if (masked && body !== undefined) {
       const parsed = parseJsonBody(body);
       ctx.used = true;
       const s = await this.masker.mask(parsed, ctx.threadId);
-      stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits };
+      stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits,
+        remembered_leaves: s.rememberedLeaves };
+      // Эфемерный тред живёт один запрос: его историю никто не вернёт, помнить нечего.
+      if (!ctx.ephemeral) {
+        remember = (restored, original): void =>
+          this.masker.remember(ctx.threadId, s.bootId, restored, original);
+      }
       outBody = JSON.stringify(parsed);
     } else if (body !== undefined && body !== '') {
       await this.checkRaw(body);
     }
     const upstream = await this.callUpstream(req, url, outBody);
-    const restorer = new Restorer(this.service, ctx.threadId);
+    const restorer = new Restorer(this.service, ctx.threadId, remember);
     const type = upstream.headers.get('content-type') ?? '';
     const headers = new Headers(upstream.headers);
     DROP_RESPONSE_HEADERS.forEach((h) => headers.delete(h));
