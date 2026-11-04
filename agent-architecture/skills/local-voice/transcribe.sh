@@ -1,47 +1,64 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-# Groq Whisper API voice transcription
-# Usage: transcribe.sh /path/to/file.ogg
+# Локальная расшифровка голоса: сервис voice-transcriber (faster-whisper) на этом же хосте.
+# Аудио уходит ТОЛЬКО на loopback-адрес; внешних провайдеров нет.
+# Использование: transcribe.sh /path/to/file.ogg [язык|auto]
+
+DEFAULT_URL="http://127.0.0.1:8310"
+MAX_TIME_SEC=180
 
 FILE_PATH="${1:-}"
+LANGUAGE="${2:-ru}"
 
 if [ -z "$FILE_PATH" ]; then
-  echo "ERROR: No file path provided"
-  echo "Usage: transcribe.sh /path/to/file.ogg"
+  echo "ERROR: не указан путь к файлу" >&2
+  echo "Usage: transcribe.sh /path/to/file.ogg [язык|auto]" >&2
   exit 1
 fi
-
 if [ ! -f "$FILE_PATH" ]; then
-  echo "ERROR: File not found: $FILE_PATH"
+  echo "ERROR: файл не найден: $FILE_PATH" >&2
   exit 1
 fi
+case "$LANGUAGE" in
+  auto|[a-z][a-z]|[a-z][a-z][a-z]) ;;
+  *) echo "ERROR: язык — код вроде ru или auto" >&2; exit 1 ;;
+esac
 
-# Read Groq API key from env or ~/.claude-lab/<your-agent>/secrets/groq-api-key
-if [ -n "${GROQ_API_KEY:-}" ]; then
-  GROQ_KEY="$GROQ_API_KEY"
-elif [ -f "${SHARED_SECRETS:-$HOME/.claude-lab/shared/secrets}/groq-api-key" ]; then
-  GROQ_KEY="$(cat "${SHARED_SECRETS:-$HOME/.claude-lab/shared/secrets}/groq-api-key")"
+URL="${VOICE_TRANSCRIBER_URL:-$DEFAULT_URL}"
+URL="${URL%/}"
+# Адрес обязан вести на этот же хост, иначе аудио ушло бы наружу
+case "$URL" in
+  http://127.0.0.1|http://127.0.0.1:*) ;;
+  http://localhost|http://localhost:*) ;;
+  "http://[::1]"|"http://[::1]:"*) ;;
+  *) echo "ERROR: VOICE_TRANSCRIBER_URL должен быть loopback-адресом (http://127.0.0.1:порт)" >&2; exit 1 ;;
+esac
+
+# Токен: из окружения (его кладёт agent-env.sh) или из общего файла секретов
+SECRETS_DIR="${SHARED_SECRETS:-$HOME/.claude-lab/shared/secrets}"
+if [ -n "${VOICE_TRANSCRIBER_TOKEN:-}" ]; then
+  TOKEN="$VOICE_TRANSCRIBER_TOKEN"
+elif [ -f "$SECRETS_DIR/voice-transcriber-token" ]; then
+  TOKEN="$(cat "$SECRETS_DIR/voice-transcriber-token")"
 else
-  echo "ERROR: Groq API key not found. Set GROQ_API_KEY env or write key to ~/.claude-lab/shared/secrets/groq-api-key" >&2
+  echo "ERROR: нет токена. Задайте VOICE_TRANSCRIBER_TOKEN или положите его в $SECRETS_DIR/voice-transcriber-token" >&2
   exit 1
 fi
 
-RESPONSE=$(curl -s -w "\n%{http_code}" \
-  --max-time 30 \
-  "https://api.groq.com/openai/v1/audio/transcriptions" \
-  -H "Authorization: Bearer $GROQ_KEY" \
-  -F "file=@$FILE_PATH" \
-  -F "model=whisper-large-v3-turbo" \
-  -F "response_format=text")
+RESPONSE_FILE="$(mktemp)"
+trap 'rm -f "$RESPONSE_FILE"' EXIT
 
-HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | sed '$d')
+# Заголовок с токеном передаётся через stdin, чтобы токен не светился в `ps`
+HTTP_CODE="$(printf 'Authorization: Bearer %s\n' "$TOKEN" | curl -s -o "$RESPONSE_FILE" \
+  -w '%{http_code}' --max-time "$MAX_TIME_SEC" \
+  -X POST "$URL/transcribe?language=$LANGUAGE" \
+  -H @- -H 'Content-Type: application/octet-stream' \
+  --data-binary "@$FILE_PATH")" || HTTP_CODE="000"
 
 if [ "$HTTP_CODE" = "200" ]; then
-  echo "Transcript: $BODY"
+  python3 -c 'import json,sys; print("Transcript: " + json.load(open(sys.argv[1]))["text"])' "$RESPONSE_FILE"
 else
-  echo "ERROR: Groq API returned HTTP $HTTP_CODE"
-  echo "$BODY"
+  echo "ERROR: voice-transcriber вернул HTTP $HTTP_CODE (000 — сервис не отвечает)" >&2
   exit 1
 fi

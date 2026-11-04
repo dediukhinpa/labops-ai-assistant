@@ -9,7 +9,7 @@
 # Утечка была не мгновенной, а постоянной: tmux-сервер живёт с cmdline той
 # команды, которая его подняла, то есть до перезапуска всего роя. Замер на живом
 # хосте 08.09.2026 — в cmdline tmux-сервера открытым текстом лежали
-# AGENT_BEARER, TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_TOKEN и GROQ_API_KEY,
+# AGENT_BEARER, TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_TOKEN и ключ сервиса голоса,
 # при выключенном hidepid у /proc.
 #
 # Теперь окружение собирает session-exec.sh уже ВНУТРИ панели, вызывая
@@ -49,7 +49,7 @@ agent_env_webhook_port() {   # <agent>
 # resolve_agent_env <agent> — экспортирует всё, что нужно сессии claude.
 #
 # Порядок источников тот же, что был в start-agent.sh: channel.env → per-agent
-# .claude/secrets/ → shared/secrets/ (GROQ обычно один на рой). Возвращает 1 и
+# .claude/secrets/ → shared/secrets/ (токен локального voice-transcriber обычно один на рой). Возвращает 1 и
 # пишет причину в stderr, если бот-токена нет нигде.
 resolve_agent_env() {   # <agent>
   local agent="${1:?agent required}"
@@ -67,8 +67,11 @@ resolve_agent_env() {   # <agent>
 
   TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$(_read_secret_opt telegram-bot-token)}"
   TELEGRAM_WEBHOOK_TOKEN="${TELEGRAM_WEBHOOK_TOKEN:-$(_read_secret_opt telegram-webhook-token)}"
-  GROQ_API_KEY="${GROQ_API_KEY:-$(_read_secret_opt groq-api-key)}"
-  GROQ_API_KEY="${GROQ_API_KEY:-$(_read_shared_secret_opt groq-api-key)}"
+  # Токен локального сервиса расшифровки голоса (voice-transcriber, 127.0.0.1). Внешних
+  # провайдеров голоса нет: аудио с ПДн не должно покидать хост.
+  VOICE_TRANSCRIBER_TOKEN="${VOICE_TRANSCRIBER_TOKEN:-$(_read_secret_opt voice-transcriber-token)}"
+  VOICE_TRANSCRIBER_TOKEN="${VOICE_TRANSCRIBER_TOKEN:-$(_read_shared_secret_opt voice-transcriber-token)}"
+  VOICE_TRANSCRIBER_URL="${VOICE_TRANSCRIBER_URL:-http://127.0.0.1:8310}"
 
   if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
     echo "no TELEGRAM_BOT_TOKEN for '$agent' — искал в channel.env и $secrets/telegram-bot-token" >&2
@@ -97,7 +100,8 @@ resolve_agent_env() {   # <agent>
 
   export AGENT_ID AGENT_WORKSPACE TELEGRAM_BOT_TOKEN TELEGRAM_STATE_DIR \
          TELEGRAM_ALLOWED_USER_IDS TELEGRAM_WORKSPACE_ROOT TELEGRAM_WEBHOOK_PORT \
-         TELEGRAM_WEBHOOK_TOKEN GROQ_API_KEY TELEGRAM_EXPECTED_BOT_ID \
+         TELEGRAM_WEBHOOK_TOKEN VOICE_TRANSCRIBER_TOKEN VOICE_TRANSCRIBER_URL \
+         TELEGRAM_EXPECTED_BOT_ID \
          TELEGRAM_ALLOWED_CHAT_IDS TELEGRAM_WEBHOOK_HOST TELEGRAM_MEMORY_ENABLED \
          TELEGRAM_MEMORY_WORKSPACE TELEGRAM_MEMORY_AGENT_LABEL TELEGRAM_MEMORY_SOURCE_TAG
 

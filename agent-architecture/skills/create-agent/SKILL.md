@@ -36,7 +36,7 @@ description: Use when the operator wants to create/add a NEW agent (a new Telegr
    `/newbot` → имя и username → скопировать **токен** вида `1234:AA...`. Объясни, что токен —
    секрет, мы положим его в `channel.env` с `chmod 600`, в git он не попадёт.
 4. **Его Telegram user_id** (для allowlist) — узнать у [@userinfobot](https://t.me/userinfobot).
-5. **Голос** — нужен ли (по умолчанию да, если в системе есть `GROQ_API_KEY`).
+5. **Голос** — нужен ли (по умолчанию да, если у системы есть токен локального `voice-transcriber`).
 
 ## Ключевые документы — объясни и помоги заполнить
 Скаффолдер создаёт воркспейс `~/.claude-lab/<agent-id>/.claude/`. Главные файлы, по которым
@@ -62,7 +62,7 @@ bash ~/.claude-lab/shared/skills/create-agent/new-agent.sh
 
 Скрипт по шагам: соберёт параметры → выдаст агенту токен во втором мозге → скаффолдит
 воркспейс (`agent-template`, неинтерактивно) → заведёт Telegram-канал из `labops-ai-assistant/tg-plugin`
-(`channel.env`, привязка плагина) → подключит голос (`groq-voice`) → поставит автостарт
+(`channel.env`, привязка плагина) → подключит голос (`local-voice`) → поставит автостарт
 (`systemd` + `watchdog`) → smoke.
 
 Smoke проверяет семь вещей: общий мозг отвечает **и токен рабочий** (реальный вызов

@@ -23,7 +23,7 @@ mkdir -p "$WS/secrets" "$CLAUDE_LAB/shared/secrets" "$CLAUDE_LAB/shared/state/$A
 TOK="111111:AAtest-bot-token-value"
 BEARER="test-bearer-value"
 WHTOK="test-webhook-token-value"
-GROQ="gsk_test-groq-key-value"
+VOICE="test-voice-transcriber-token"
 
 cat > "$CLAUDE_LAB/shared/state/$AGENT/telegram/channel.env" <<EOF
 TELEGRAM_BOT_TOKEN=$TOK
@@ -32,7 +32,7 @@ TELEGRAM_ALLOWED_USER_IDS=42
 TELEGRAM_WEBHOOK_PORT=6099
 EOF
 chmod 600 "$CLAUDE_LAB/shared/state/$AGENT/telegram/channel.env"
-printf '%s' "$GROQ" > "$CLAUDE_LAB/shared/secrets/groq-api-key"
+printf '%s' "$VOICE" > "$CLAUDE_LAB/shared/secrets/voice-transcriber-token"
 
 write_agent_env() {   # <bearer>
   cat > "$WS/agent.env" <<EOF
@@ -53,7 +53,7 @@ source "$HERE/agent-env.sh"
   [ "$TELEGRAM_BOT_TOKEN" = "$TOK" ]        || exit 1
   [ "$TELEGRAM_WEBHOOK_TOKEN" = "$WHTOK" ]  || exit 2
   [ "$AGENT_BEARER" = "$BEARER" ]           || exit 3
-  [ "$GROQ_API_KEY" = "$GROQ" ]             || exit 4   # подхват из shared/secrets
+  [ "$VOICE_TRANSCRIBER_TOKEN" = "$VOICE" ]   || exit 4   # подхват из shared/secrets
   [ "$TELEGRAM_WEBHOOK_PORT" = "6099" ]     || exit 5
   [ "$TELEGRAM_EXPECTED_BOT_ID" = "111111" ] || exit 6  # выводится из токена
   [ "$TELEGRAM_ALLOWED_CHAT_IDS" = "42" ]   || exit 7   # падает на user_ids
@@ -92,7 +92,7 @@ echo "CMDLINE:$(tr '\0' ' ' < /proc/$$/cmdline)"
 echo "PARENT:$(tr '\0' ' ' < "/proc/$PPID/cmdline")"
 echo "ENV_TOKEN:${TELEGRAM_BOT_TOKEN:-}"
 echo "ENV_BEARER:${AGENT_BEARER:-}"
-echo "ENV_GROQ:${GROQ_API_KEY:-}"
+echo "ENV_VOICE:${VOICE_TRANSCRIBER_TOKEN:-}"
 echo "ENV_WHTOK:${TELEGRAM_WEBHOOK_TOKEN:-}"
 EOF
 chmod +x "$HOME/.local/bin/claude"
@@ -102,12 +102,12 @@ OUT="$(bash "$ORCH/session-exec.sh" "$AGENT" 2>/dev/null)"
 # 5. Окружение доехало полностью.
 printf '%s' "$OUT" | grep -q "ENV_TOKEN:$TOK"     || fail "бот-токен не доехал до процесса через окружение"
 printf '%s' "$OUT" | grep -q "ENV_BEARER:$BEARER" || fail "bearer не доехал до процесса через окружение"
-printf '%s' "$OUT" | grep -q "ENV_GROQ:$GROQ"     || fail "ключ groq не доехал до процесса через окружение"
+printf '%s' "$OUT" | grep -q "ENV_VOICE:$VOICE"   || fail "токен voice-transcriber не доехал до процесса через окружение"
 printf '%s' "$OUT" | grep -q "ENV_WHTOK:$WHTOK"   || fail "webhook-токен не доехал до процесса через окружение"
 
 # 6. И ни одного из них нет в командной строке — ради этого всё и затевалось.
 CMDLINE="$(printf '%s' "$OUT" | grep '^CMDLINE:')"
-for secret in "$TOK" "$BEARER" "$GROQ" "$WHTOK"; do
+for secret in "$TOK" "$BEARER" "$VOICE" "$WHTOK"; do
   case "$CMDLINE" in
     *"$secret"*) fail "секрет виден в командной строке процесса: $CMDLINE" ;;
   esac

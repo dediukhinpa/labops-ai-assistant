@@ -3,7 +3,7 @@
 # new-agent.sh — end-to-end создание нового labops-агента.
 #
 # Доводит до РАБОЧЕГО агента: воркспейс (agent-template) + второй мозг (токен)
-# + Telegram-канал (бот) + голос (groq) + автостарт (systemd/watchdog) + smoke.
+# + Telegram-канал (бот) + голос (локальный voice-transcriber) + автостарт (systemd/watchdog) + smoke.
 #
 # Используется скиллом create-agent (см. SKILL.md). Можно запускать и напрямую.
 #
@@ -569,24 +569,26 @@ else
   DEGRADED+=("labops-tg-plugin не установлен — у агента НЕТ Telegram-чата; поставьте репозиторий и перезапустите этот шаг")
 fi
 
-# ── 5. Голос (groq-voice) ───────────────────────────────────────
+# ── 5. Голос (local-voice) ──────────────────────────────────────
+# Расшифровка идёт ЛОКАЛЬНО (сервис voice-transcriber на 127.0.0.1): голос может
+# содержать ПДн, во внешние сервисы он не уходит. Здесь только токен сервиса.
 say "5. Голос"
 ENABLE_VOICE="${ENABLE_VOICE:-1}"
 if [ "$ENABLE_VOICE" = "1" ]; then
-  GROQ_FILE="$LAB_DIR/shared/secrets/groq-api-key"
-  if [ -f "$GROQ_FILE" ] || [ -n "${GROQ_API_KEY:-}" ]; then
-    ok "groq-voice: ключ найден — голосовые будут транскрибироваться"
+  VOICE_FILE="$LAB_DIR/shared/secrets/voice-transcriber-token"
+  if [ -f "$VOICE_FILE" ] || [ -n "${VOICE_TRANSCRIBER_TOKEN:-}" ]; then
+    ok "local-voice: токен найден — голосовые будут расшифровываться локально"
   else
-    ask GROQ_API_KEY "Groq API key для голосовых (console.groq.com/keys, пусто — пропустить)" ""
-    if [ -n "${GROQ_API_KEY:-}" ]; then
-      mkdir -p "$(dirname "$GROQ_FILE")"
+    ask VOICE_TRANSCRIBER_TOKEN "Токен сервиса voice-transcriber (см. voice-transcriber/README, пусто — пропустить)" ""
+    if [ -n "${VOICE_TRANSCRIBER_TOKEN:-}" ]; then
+      mkdir -p "$(dirname "$VOICE_FILE")"
       umask 077
-      printf '%s' "$GROQ_API_KEY" > "$GROQ_FILE"
-      chmod 600 "$GROQ_FILE"
-      ok "groq-voice: ключ сохранён в $GROQ_FILE — голосовые будут транскрибироваться"
+      printf '%s' "$VOICE_TRANSCRIBER_TOKEN" > "$VOICE_FILE"
+      chmod 600 "$VOICE_FILE"
+      ok "local-voice: токен сохранён в $VOICE_FILE — голосовые будут расшифровываться локально"
     else
-      warn "нет GROQ_API_KEY — голос подключится позже, текст работает сразу"
-      DEGRADED+=("голос выключен (нет GROQ_API_KEY) — голосовые не транскрибируются, текст работает; положите ключ в $GROQ_FILE позже")
+      warn "нет VOICE_TRANSCRIBER_TOKEN — голос подключится позже, текст работает сразу"
+      DEGRADED+=("голос выключен (нет VOICE_TRANSCRIBER_TOKEN) — голосовые не расшифровываются, текст работает; положите токен в $VOICE_FILE позже")
     fi
   fi
 fi
