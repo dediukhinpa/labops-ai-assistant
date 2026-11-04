@@ -54,9 +54,20 @@ export class BoundedCache {
   }
 }
 
-/** Ключ кэша маскирования: тред, запуск сервиса и исходный лист. */
-export function maskCacheKey(threadId: string, bootId: string, text: string): string {
-  return createHash('sha256').update(`${threadId}\u0000${bootId}\u0000${text}`).digest('hex');
+/**
+ * Ключ кэша маскирования: тред, запуск сервиса, режим падежных меток и исходный лист.
+ * Режим в ключе: маска с метками и без них - разные строки, смена флага не отдаёт старую.
+ * При выключенных метках ключ прежний (суффикс не добавляется).
+ */
+export function maskCacheKey(
+  threadId: string,
+  bootId: string,
+  text: string,
+  caseLabels = false,
+): string {
+  const mode = caseLabels ? '\u0000case_labels' : '';
+  const material = `${threadId}\u0000${bootId}${mode}\u0000${text}`;
+  return createHash('sha256').update(material).digest('hex');
 }
 
 /** sha256 текста (ключ кэша «чисто» для второй линии). */
