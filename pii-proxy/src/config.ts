@@ -1,7 +1,12 @@
 import { z } from 'zod';
 
 /** Политика для вложений (image, PDF), пока маскирование картинок не готово. */
-export type ImagePolicy = 'strip' | 'reject';
+/**
+ * Что делать с фото и PDF (base64/url) в запросе: passthrough - отправить как есть (решение
+ * владельца 04.11.2026: маскирование изображений отложено, ПДн на картинках - осознанное
+ * исключение), strip - заменить заглушкой, reject - отказать (422).
+ */
+export type ImagePolicy = 'passthrough' | 'strip' | 'reject';
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_UPSTREAM = 'https://api.anthropic.com';
@@ -17,7 +22,7 @@ const envSchema = z.object({
   PSEUDONYMIZER_URL: z.string().url().default(DEFAULT_PSEUDONYMIZER_URL),
   PSEUDONYMIZER_API_TOKEN: z.string().min(1),
   PSEUDONYMIZER_TIMEOUT_MS: z.coerce.number().int().positive().default(DEFAULT_TIMEOUT_MS),
-  PII_PROXY_IMAGE_POLICY: z.enum(['strip', 'reject']).default('strip'),
+  PII_PROXY_IMAGE_POLICY: z.enum(['passthrough', 'strip', 'reject']).default('passthrough'),
 });
 
 /** Настройки прокси. Токен сервиса нельзя выводить в журнал. */
