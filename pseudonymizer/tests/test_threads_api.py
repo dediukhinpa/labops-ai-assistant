@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import pseudonymizer.api as api
 from pseudonymizer.detector import PiiDetector
 from pseudonymizer.store import SECONDS_PER_HOUR, MemoryReplacementStore, ReplacementStore
+from pseudonymizer.service import Pseudonymizer
 from tests.conftest import AUTH_HEADERS, make_client
 
 NO_CONTENT = 204
@@ -95,3 +96,33 @@ def test_retention_zero_keeps_threads(
     client.post("/pseudonymize", json={"thread_id": "x", "text": "привет"})
     assert store.count("t", "PHONE") == 1
     assert client.delete("/threads/t", headers=AUTH_HEADERS).status_code == NO_CONTENT
+
+
+def test_delete_waits_for_running_write_batch(service: Pseudonymizer) -> None:
+    """DELETE ждёт конца чужой пачки записей и не попадает в её откат."""
+    import threading
+
+    service.pseudonymize("agent:b", "позвони Петрову Ивану Сергеевичу")
+    started = threading.Event()
+    release = threading.Event()
+    store = service._store  # noqa: SLF001 - нужен перехват пачки
+    original_add = store.add
+
+    def slow_add(*args: object, **kwargs: object) -> None:
+        started.set()
+        release.wait(timeout=5)
+        original_add(*args, **kwargs)  # type: ignore[arg-type]
+
+    store.add = slow_add  # type: ignore[method-assign]
+    writer = threading.Thread(target=service.pseudonymize, args=("agent:a", "звони Сидорову Олегу"))
+    writer.start()
+    assert started.wait(timeout=5)
+    deleter = threading.Thread(target=service.delete_thread, args=("agent:b",))
+    deleter.start()
+    deleter.join(timeout=0.2)
+    assert deleter.is_alive(), "удаление не должно идти посреди пачки записей"
+    release.set()
+    writer.join(timeout=5)
+    deleter.join(timeout=5)
+    store.add = original_add  # type: ignore[method-assign]
+    assert service.restore("agent:b", "[PERSON_1]") == "[PERSON_1]"

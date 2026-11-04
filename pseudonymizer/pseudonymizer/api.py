@@ -353,7 +353,7 @@ def create_app(
     )
     def delete_thread(thread_id: str) -> Response:
         """Удаляет все замены треда; 204 и когда треда не было (идемпотентно)."""
-        store.delete_thread(thread_id)
+        service.delete_thread(thread_id)
         return Response(status_code=HTTP_NO_CONTENT)
 
     @app.get("/health")

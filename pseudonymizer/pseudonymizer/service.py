@@ -250,6 +250,21 @@ class Pseudonymizer:
             return set()
         return literals - set(self._store.get_originals(thread_id, literals))
 
+    def delete_thread(self, thread_id: str) -> bool:
+        """Удаляет все замены треда под общей блокировкой записи.
+
+        Блокировка обязательна: в SQLite удаление посреди чужой пачки записей вошло бы в её
+        транзакцию и откатилось бы вместе с ней при сбое, тред молча остался бы в таблице.
+
+        Args:
+            thread_id: Идентификатор треда.
+
+        Returns:
+            True, если у треда были замены.
+        """
+        with self._lock:
+            return self._store.delete_thread(thread_id)
+
     def restore(self, thread_id: str, text: str) -> str:
         """Возвращает оригиналы вместо токенов этого треда; чужие токены не трогает.
 
