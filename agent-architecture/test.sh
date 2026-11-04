@@ -746,6 +746,12 @@ unit "без живого ввода недостающие имя и allowlist 
      "agent-inputs: юнит-тест провален (orchestration/lib/agent-inputs.test.sh)" \
      bash orchestration/lib/agent-inputs.test.sh
 
+# 16g. Голос ставит сам install.sh: сервис, веса, токен агентам; повтор не меняет токен
+# (lib/voice-install.sh). Раньше new-agent.sh спрашивал токен, которого у клиента не было.
+unit "install.sh ставит сервис голоса и раздаёт токен, повтор его не меняет — юнит-тест зелёный" \
+     "voice-install: юнит-тест провален (orchestration/lib/voice-install.test.sh)" \
+     bash orchestration/lib/voice-install.test.sh
+
 echo "── 17. Секреты не попадают в командную строку ──"
 
 # 17a. Поведенческий тест: реальный запуск session-exec.sh с подставным claude,
