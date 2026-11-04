@@ -1,0 +1,33 @@
+[Unit]
+Description=LabOps pseudonymizer (PII masking service, 127.0.0.1:8300)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__USER__
+# Каталог подпроекта pseudonymizer/ с готовым .venv (python3.12 -m venv .venv && pip install -e .)
+WorkingDirectory=__INSTALL_DIR__
+# Секреты (API-токен, при store=sqlite ещё ключ) -- файл с правами 600, вне репозитория.
+# Образец: pseudonymizer.env.example
+EnvironmentFile=__ENV_FILE__
+ExecStart=__INSTALL_DIR__/.venv/bin/python -m pseudonymizer
+Restart=on-failure
+RestartSec=5
+# Замер 04.11.2026: после старта RSS ~160 МБ, после запроса на 68 000 символов пик ~306 МБ.
+# 768 МБ -- запас ~2,5x на несколько тредов с большими таблицами замен и два потока обработки.
+MemoryMax=768M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Хранилище в памяти: писать некуда. Для store=sqlite добавить каталог базы:
+# ReadWritePaths=__INSTALL_DIR__/data
+
+[Install]
+WantedBy=multi-user.target
