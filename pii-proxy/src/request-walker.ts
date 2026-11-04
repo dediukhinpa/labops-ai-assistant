@@ -11,6 +11,9 @@ const PASSTHROUGH_BLOCKS: ReadonlySet<string> = new Set([
   'web_fetch_tool_result',
   'code_execution_tool_result',
   'compaction',
+  // Определение инструмента, подгруженное по ходу сессии (сообщение роли system): то же, что
+  // массив tools, который не маскируется; ПДн в описаниях инструментов не бывает.
+  'tool_addition',
 ]);
 /** Блоки с аргументами инструмента: маскируются все строковые листья input. */
 const TOOL_INPUT_BLOCKS: ReadonlySet<string> = new Set([

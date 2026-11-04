@@ -99,6 +99,26 @@ describe('маскирование запроса', () => {
     expect(rig.upstream.hits.length).toBe(0);
   });
 
+  test('tool_addition (инструмент, подгруженный по ходу сессии) пропускается как есть',
+    async () => {
+      rig = startRig(DICT, textStream(['ок']));
+      const addition = { type: 'tool_addition', tool: { type: 'tool_definition',
+        definition: { name: 'x', description: 'd', input_schema: { type: 'object' } } } };
+      const res = await post(rig.base, '/v1/messages', { messages: [
+        { role: 'user', content: 'Иван Петров' }, { role: 'system', content: [addition] }] });
+      expect(res.status).toBe(200);
+      const sent = JSON.parse(rig.upstream.hits[0]?.body ?? '{}') as any;
+      expect(sent.messages[1].content[0]).toEqual(addition);
+    });
+
+  test('неизвестный тип блока: 422, upstream не вызван', async () => {
+    rig = startRig(DICT, textStream(['ок']));
+    const res = await post(rig.base, '/v1/messages', { messages: [
+      { role: 'user', content: [{ type: 'brand_new_block', text: 'Иван Петров' }] }] });
+    expect(res.status).toBe(422);
+    expect(rig.upstream.hits.length).toBe(0);
+  });
+
   test('длинный лист режется по строкам, склеивается по порядку', async () => {
     rig = startRig(DICT, textStream(['ок']));
     const line = 'Иван Петров строка\n';
