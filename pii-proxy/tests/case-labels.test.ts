@@ -7,6 +7,7 @@ import { startFakeService, startRig, post, textStream, TEST_TOKEN, type Rig } fr
 
 const BASE_ENV = {
   PII_PROXY_PORT: '6300', PII_PROXY_AGENT_ID: 'dev', PSEUDONYMIZER_API_TOKEN: 'x',
+  MEDIA_MASKER_API_TOKEN: 'm',
 };
 
 describe('PII_PROXY_CASE_LABELS: конфиг', () => {

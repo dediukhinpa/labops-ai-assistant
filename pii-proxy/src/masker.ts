@@ -12,6 +12,7 @@ import {
 import { PseudonymizerError, RequestRejectedError } from './errors';
 import { isObject, setLeaf, type JsonObject } from './json-leaves';
 import { BoundedCache, BootTracker, maskCacheKey, textKey } from './mask-cache';
+import type { MediaProcessor } from './media';
 import type { Pseudonymizer } from './pseudonymizer-client';
 import { RequestWalker } from './request-walker';
 import { chunkBatches, mapLimited, splitText } from './text-split';
@@ -25,6 +26,8 @@ export interface MaskStats {
   readonly leaves: number;
   readonly cacheHits: number;
   readonly strippedAttachments: number;
+  /** Вложения, обработанные через media-masker. */
+  readonly maskedAttachments: number;
   /** Листьев взято из памяти восстановлений (без обращения к сервису). */
   readonly rememberedLeaves: number;
   /** boot_id сервиса, при котором замаскирован запрос (ключ памяти восстановлений). */
@@ -57,6 +60,7 @@ export class RequestMasker {
     private readonly service: Pseudonymizer,
     private readonly imagePolicy: ImagePolicy,
     private readonly caseLabels = false,
+    private readonly media?: MediaProcessor,
   ) {
     // Таблица замен сервиса потеряна: память восстановлений теряет смысл так же, как кэш.
     this.boot = new BootTracker(service, () => {
@@ -85,11 +89,12 @@ export class RequestMasker {
 
   /**
    * Замаскировать тело на месте: листья, вложения, вставка в system.
-   * @throws PseudonymizerError при сбое сервиса, RequestRejectedError при ПДн после маски.
+   * @throws PseudonymizerError / MediaMaskerError при сбое сервисов,
+   *   RequestRejectedError при ПДн после маски.
    */
   async mask(body: JsonObject, threadId: string): Promise<MaskStats> {
-    const walker = new RequestWalker(this.imagePolicy);
-    walker.walk(body);
+    const walker = new RequestWalker(this.imagePolicy, this.media);
+    await walker.walk(body);
     for (let attempt = 0; attempt < MASK_BOOT_ATTEMPTS; attempt++) {
       // boot_id сверяется до и после маскирования: если сервис перезапустился в середине,
       // кэш хранит маски старой таблицы, и [PERSON_1] из кэша и [PERSON_1] новой таблицы
@@ -172,6 +177,7 @@ export class RequestMasker {
         strippedAttachments: walker.strippedAttachments,
         rememberedLeaves,
         bootId,
+        maskedAttachments: walker.maskedAttachments,
       },
       maskedTexts,
       remembered: rememberedList,

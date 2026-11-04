@@ -12,6 +12,7 @@ export interface LogFields {
   readonly cache_hits?: number;
   readonly remembered_leaves?: number;
   readonly forgotten_leaves?: number;
+  readonly masked_attachments?: number;
   readonly restored_tokens?: number;
   readonly pii_types?: readonly string[];
 }

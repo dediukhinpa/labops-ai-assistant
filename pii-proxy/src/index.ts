@@ -6,6 +6,8 @@ export * from './json-restore';
 export * from './log';
 export * from './mask-cache';
 export * from './masker';
+export * from './media';
+export * from './media-client';
 export * from './proxy';
 export * from './pseudonymizer-client';
 export * from './request-walker';

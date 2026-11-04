@@ -37,3 +37,17 @@ export function errorResponse(status: number, type: string, message: string): Re
     headers: { 'content-type': 'application/json' },
   });
 }
+
+/**
+ * Сбой или отказ media-masker по вложению. `refused` - файл обработать нельзя (запрос
+ * отклоняется 422), `unavailable` - сервис недоступен или ответил неверно (503, fail closed).
+ */
+export class MediaMaskerError extends Error {
+  constructor(
+    readonly kind: 'refused' | 'unavailable',
+    readonly code: string,
+  ) {
+    super(`media-masker: ${kind}: ${code}`);
+    this.name = 'MediaMaskerError';
+  }
+}

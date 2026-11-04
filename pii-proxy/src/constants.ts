@@ -22,6 +22,8 @@ export const MASK_CACHE_MAX_CHARS = 4_000_000;
  * «восстановленная строка -> как написала модель» для листьев, что вернутся в историю запроса.
  */
 export const REMEMBER_CACHE_MAX_CHARS = 4_000_000;
+/** Бюджет кэша результатов media-masker, символов base64 (~64 МБ ОЗУ). */
+export const MEDIA_CACHE_MAX_CHARS = 64 * 1024 * 1024;
 /** Длина шестнадцатеричного ключа кэша (sha256). */
 export const CACHE_KEY_CHARS = 64;
 
@@ -55,6 +57,11 @@ export const SESSION_HEADER = 'x-claude-code-session-id';
 /** Текст замены вложения при политике strip. */
 export const ATTACHMENT_STRIPPED_TEXT =
   '[вложение скрыто: маскирование изображений и PDF ещё не включено]';
+
+/** Текст вместо PDF, в котором не нашлось ни текста, ни страниц. */
+export const EMPTY_DOCUMENT_TEXT = '[документ пуст]';
+/** media_type PDF-документа. */
+export const PDF_MEDIA_TYPE = 'application/pdf';
 
 /** Системная вставка про токены (неизменная строка: иначе ломается кэш промпта). */
 export const SYSTEM_INSERT_TEXT =

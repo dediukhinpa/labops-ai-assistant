@@ -10,10 +10,14 @@ import {
   STATUS_UNAVAILABLE,
   STATUS_UNSUPPORTED_ENCODING,
 } from './constants';
-import { PseudonymizerError, RequestRejectedError, errorResponse } from './errors';
+import {
+  MediaMaskerError, PseudonymizerError, RequestRejectedError, errorResponse,
+} from './errors';
 import { restoreMessageJson } from './json-restore';
 import { isObject, type JsonObject } from './json-leaves';
 import { sessionFingerprint, type LogFields, type Logger } from './log';
+import { MediaProcessor } from './media';
+import { HttpMediaMasker } from './media-client';
 import { RequestMasker } from './masker';
 import { checkWindows } from './masker';
 import { HttpPseudonymizer, type Pseudonymizer } from './pseudonymizer-client';
@@ -65,7 +69,17 @@ export class PiiProxy {
         timeoutMs: config.timeoutMs,
         caseLabels: config.caseLabels,
       });
-    this.masker = new RequestMasker(this.service, config.imagePolicy, config.caseLabels);
+    this.masker = new RequestMasker(
+      this.service, config.imagePolicy, config.caseLabels, this.mediaProcessor());
+  }
+
+  /** Клиент media-masker с кэшем: только при политике mask (конфиг гарантирует токен). */
+  private mediaProcessor(): MediaProcessor | undefined {
+    const { imagePolicy, mediaMaskerUrl, mediaMaskerToken, mediaMaskerTimeoutMs } = this.config;
+    if (imagePolicy !== 'mask' || mediaMaskerToken === undefined) return undefined;
+    return new MediaProcessor(new HttpMediaMasker({
+      baseUrl: mediaMaskerUrl, token: mediaMaskerToken, timeoutMs: mediaMaskerTimeoutMs,
+    }));
   }
 
   /** Запустить HTTP-сервер. */
@@ -137,7 +151,8 @@ export class PiiProxy {
       ctx.used = true;
       const s = await this.masker.mask(parsed, ctx.threadId);
       stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits,
-        remembered_leaves: s.rememberedLeaves, forgotten_leaves: s.forgottenLeaves };
+        remembered_leaves: s.rememberedLeaves, forgotten_leaves: s.forgottenLeaves,
+        masked_attachments: s.maskedAttachments };
       // Эфемерный тред живёт один запрос: его историю никто не вернёт, помнить нечего.
       if (!ctx.ephemeral) {
         remember = (restored, original): void =>
@@ -263,6 +278,12 @@ export class PiiProxy {
         code: e.code });
       return errorResponse(STATUS_UNAVAILABLE, 'api_error',
         'Сервис маскирования данных недоступен: запрос не отправлен.');
+    }
+    if (e instanceof MediaMaskerError) {
+      this.deps.logger.log('media_masker_failure', { ...base, status: STATUS_UNAVAILABLE,
+        code: e.code });
+      return errorResponse(STATUS_UNAVAILABLE, 'api_error',
+        'Сервис маскирования вложений недоступен: запрос не отправлен.');
     }
     if (e instanceof BadBodyError) {
       this.deps.logger.log('request_rejected', { ...base, status: STATUS_BAD_REQUEST,
