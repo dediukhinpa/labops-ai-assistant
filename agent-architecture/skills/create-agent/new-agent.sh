@@ -12,7 +12,7 @@
 #   • labops-tg-plugin      — Telegram-канал (бот, голос, реакции)
 #
 # Переменные (любую можно передать заранее — тогда без вопроса):
-#   AGENT_NAME PRIMARY_MODEL OPERATOR_ADDRESS LANGUAGE
+#   AGENT_NAME PRIMARY_MODEL LANGUAGE
 #   USER_MD_SOURCE (чей core/USER.md взять; по умолчанию — первого агента роя)
 #   MCP_HOST (default: 127.0.0.1, colocated) AGENT_SCOPES
 #   SECOND_BRAIN_MEMORY_URL/_MEMORY_ROUTER_URL/_AGENT_ROUTER_URL/_TASKS_URL (override for remote/reverse-proxy)
@@ -245,16 +245,14 @@ ask PRIMARY_MODEL    "Модель — алиас последней (fable / op
 # установке. Спрашиваем подтверждение, см. lib/model-choice.sh.
 confirm_primary_model
 # Профиль оператора общий: у второго и следующих агентов USER.md копируется у первого,
-# и обращение с языком из него не переспрашиваются (см. lib/operator-profile.sh).
+# и язык из него не переспрашивается (см. lib/operator-profile.sh). Обращение не
+# спрашивается вовсе: его пишет урок курса 08-user-md.
 USER_MD_FROM="$(operator_profile_source "$LAB_DIR" "$AGENT_ID")"
 if [ -n "$USER_MD_FROM" ]; then
   ok "профиль оператора (USER.md) возьму у первого агента: $USER_MD_FROM"
   [ -n "${LANGUAGE:-}" ] || LANGUAGE="$(operator_profile_language "$USER_MD_FROM")"
-  ask LANGUAGE "Язык ответов" "Russian"
-else
-  ask LANGUAGE         "Язык ответов" "Russian"
-  ask OPERATOR_ADDRESS "Как обращаться к вам" "Boss"
 fi
+ask LANGUAGE "Язык ответов" "Russian"
 # Второй мозг всегда колоцирован на этом же VPS, без reverse proxy — прямые
 # host:port URL на дефолтных портах, без вопроса. Переопределяется через
 # MCP_HOST (другой хост) или напрямую SECOND_BRAIN_*_URL (напр. свой домен+proxy).
@@ -400,7 +398,7 @@ if [ -n "$USER_MD_FROM" ]; then
 fi
 NONINTERACTIVE=1 AGENT_NAME="$AGENT_NAME" LANGUAGE="$LANGUAGE" \
   PRIMARY_MODEL="$PRIMARY_MODEL" \
-  OPERATOR_ADDRESS="${OPERATOR_ADDRESS:-}" MCP_HOST="$MCP_HOST" \
+  MCP_HOST="$MCP_HOST" \
   SECOND_BRAIN_MEMORY_URL="$SECOND_BRAIN_MEMORY_URL" \
   SECOND_BRAIN_MEMORY_ROUTER_URL="$SECOND_BRAIN_MEMORY_ROUTER_URL" \
   SECOND_BRAIN_AGENT_ROUTER_URL="$SECOND_BRAIN_AGENT_ROUTER_URL" \

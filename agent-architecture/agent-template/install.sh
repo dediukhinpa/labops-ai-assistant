@@ -128,7 +128,6 @@ prompt RESEARCH_MODEL         "Research model [Perplexity Sonar]" "Perplexity So
 prompt MAX_SUBAGENTS          "Max simultaneous subagents [5]" "5"
 
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "--- Operator (you) ---"; }
-prompt OPERATOR_ADDRESS       "How agent should address you (e.g. Boss, Chief)" "Boss"
 prompt LANGUAGE               "Response language (e.g. English, Russian)" "English"
 prompt COMMIT_LANGUAGE        "Commit language (e.g. English, Russian)" "English"
 # Порога трат нет: любые траты агента -- через владельца (общая красная зона).
@@ -166,7 +165,6 @@ echo "============================================"
 echo ""
 echo "  Agent:       ${AGENT_NAME} (${AGENT_ID})"
 echo "  Model:       ${PRIMARY_MODEL}"
-echo "  Address as:  ${OPERATOR_ADDRESS}"
 echo "  Language:    ${LANGUAGE}"
 echo "  Workspace:   ${LAB_DIR}/${AGENT_ID}/.claude/"
 echo "  second_brain memory:        ${SECOND_BRAIN_MEMORY_URL}"
@@ -226,7 +224,6 @@ fill_template() {
     sed_i "s|{{PRIMARY_MODEL}}|${PRIMARY_MODEL}|g" "$dst"
     sed_i "s|{{RESEARCH_MODEL}}|${RESEARCH_MODEL}|g" "$dst"
     sed_i "s|{{MAX_SUBAGENTS}}|${MAX_SUBAGENTS}|g" "$dst"
-    sed_i "s|{{OPERATOR_ADDRESS}}|${OPERATOR_ADDRESS}|g" "$dst"
     sed_i "s|{{LANGUAGE}}|${LANGUAGE}|g" "$dst"
     sed_i "s|{{COMMIT_LANGUAGE}}|${COMMIT_LANGUAGE}|g" "$dst"
     sed_i "s|{{GITHUB_USERNAME}}|${GITHUB_USERNAME}|g" "$dst"
@@ -274,7 +271,7 @@ log "Filling templates..."
 
 fill_template "${TEMPLATES_DIR}/CLAUDE.md.template"    "${WORKSPACE}/CLAUDE.md"
 fill_template "${TEMPLATES_DIR}/agents.md.template"    "${WORKSPACE}/core/AGENTS.md"
-# В шаблоне только поля, которые спрашивает установщик (обращение, язык). Имя, часовой
+# В шаблоне только поля, которые спрашивает установщик (язык). Обращение, имя, часовой
 # пояс, профиль, стиль и нужды оператор дописывает уроком курса 08-user-md, характер --
 # уроком 07-claude-md: имя и пояс никто не спрашивал, и агенту доставались «Operator»/UTC; заготовки под них раньше доезжали
 # до агента строками «TODO: fill in» и читались в каждом разговоре.

@@ -271,7 +271,7 @@ The **shared-brain write policy** is fixed in [`SECONDBRAIN_WRITE_RULES.md`](SEC
 
 [`agent-template/`](agent-template/) is a complete Claude Code workspace template, wired to the shared `labops-second-brain` (memory + memory_router + agent_router + tasks). The interactive `install.sh` asks for the agent's identity and brain connection parameters, renders the templates, and assembles the workspace into `~/.claude-lab/<agent-id>/.claude/`.
 
-**Prompts during scaffolding** (they fill `CLAUDE.md` placeholders): name (`{{AGENT_NAME}}`), how to address the Operator and response language (only for the first agent — later agents copy its `core/USER.md`), model; role and character are written into `CLAUDE.md` by the course lesson, not asked; plus brain parameters — `MCP_HOST` (host/IP only), `AGENT_BEARER`, `AGENT_SCOPES`. Four per-service endpoint vars (`SECOND_BRAIN_MEMORY_URL`, `SECOND_BRAIN_MEMORY_ROUTER_URL`, `SECOND_BRAIN_AGENT_ROUTER_URL`, `SECOND_BRAIN_TASKS_URL`) are derived automatically from `MCP_HOST` but can be overridden directly.
+**Prompts during scaffolding** (they fill `CLAUDE.md` placeholders): name (`{{AGENT_NAME}}`), response language (only for the first agent — later agents copy its `core/USER.md`), model; role and character are written into `CLAUDE.md` by the course lesson, not asked; plus brain parameters — `MCP_HOST` (host/IP only), `AGENT_BEARER`, `AGENT_SCOPES`. Four per-service endpoint vars (`SECOND_BRAIN_MEMORY_URL`, `SECOND_BRAIN_MEMORY_ROUTER_URL`, `SECOND_BRAIN_AGENT_ROUTER_URL`, `SECOND_BRAIN_TASKS_URL`) are derived automatically from `MCP_HOST` but can be overridden directly.
 
 **What gets generated:**
 
