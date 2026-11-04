@@ -178,9 +178,9 @@ class DecryptCounter:
         self._real = store._decrypt  # noqa: SLF001
         store._decrypt = self  # type: ignore[method-assign]  # noqa: SLF001
 
-    def __call__(self, blob: bytes) -> str:
+    def __call__(self, blob: bytes, thread_id: str) -> str:
         self.count += 1
-        return self._real(blob)
+        return self._real(blob, thread_id)
 
 
 def _persons(store: SqliteReplacementStore, thread: str, n: int) -> None:

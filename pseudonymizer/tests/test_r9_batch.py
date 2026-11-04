@@ -106,7 +106,7 @@ def _rows(store: SqliteReplacementStore) -> list[Row]:
         "SELECT thread_id, token, pii_type, key_enc, value_enc FROM replacements ORDER BY rowid"
     )
     return [
-        (thread, token, pii_type, store._decrypt(key), store._decrypt(value))  # noqa: SLF001
+        (thread, token, pii_type, store._decrypt(key, thread), store._decrypt(value, thread))  # noqa: SLF001
         for thread, token, pii_type, key, value in cursor.fetchall()
     ]
 

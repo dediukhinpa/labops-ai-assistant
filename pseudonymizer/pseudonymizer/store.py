@@ -28,6 +28,15 @@ logger = logging.getLogger(__name__)
 # индекс v2 = "v2:" + hex. Схему SQLite менять не нужно, старые файлы читаются как есть.
 V2_PREFIX = "v2:"
 V2_PREFIX_BYTES = V2_PREFIX.encode()
+# v3: те же два ключа, но выводятся отдельно для каждого префикса треда (часть thread_id до
+# первого «:»; нет двоеточия - префикс весь id). info = метка v2 + "/" + префикс. Так клиенты
+# с разными префиксами (агенты, приложения) не читают строки друг друга на уровне шифрования.
+# Новые строки пишутся в v3; строки v2 и v1 читаются как раньше.
+V3_PREFIX = "v3:"
+V3_PREFIX_BYTES = V3_PREFIX.encode()
+THREAD_PREFIX_SEPARATOR = ":"
+# Сколько производных наборов ключей (по префиксам) держим; префиксов обычно единицы
+MAX_PREFIX_KEYSETS = 1_024
 HKDF_INFO_FERNET = b"pseudonymizer/replacements/fernet/v2"
 HKDF_INFO_INDEX = b"pseudonymizer/replacements/index-hmac/v2"
 DERIVED_KEY_LEN = 32
@@ -88,6 +97,19 @@ class RekeyReport:
     legacy: int
     migrated: int
     dry_run: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _PrefixKeys:
+    """Ключи схемы v3 одного префикса треда."""
+
+    fernet: Fernet
+    index_secret: bytes
+
+
+def thread_prefix(thread_id: str) -> str:
+    """Префикс треда: часть id до первого «:» (нет двоеточия — весь id)."""
+    return thread_id.split(THREAD_PREFIX_SEPARATOR, 1)[0]
 
 
 def _hkdf(master: bytes, info: bytes) -> bytes:
@@ -166,6 +188,9 @@ class SqliteReplacementStore:
         # v2: раздельные ключи шифрования и слепого индекса (HMAC от ключа записи)
         self._fernet = Fernet(base64.urlsafe_b64encode(_hkdf(master, HKDF_INFO_FERNET)))
         self._index_secret = _hkdf(master, HKDF_INFO_INDEX)
+        # v3: наборы ключей по префиксам тредов, выводятся лениво
+        self._master = master
+        self._prefix_keys: dict[str, _PrefixKeys] = {}
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -199,8 +224,30 @@ class SqliteReplacementStore:
                 legacy,
             )
 
-    def _hash(self, key: str) -> str:
-        """Слепой индекс схемы v2."""
+    def _keys_for(self, thread_id: str) -> _PrefixKeys:
+        """Ключи v3 для префикса треда (HKDF от мастер-ключа, кэш по префиксу)."""
+        prefix = thread_prefix(thread_id)
+        keys = self._prefix_keys.get(prefix)
+        if keys is None:
+            suffix = b"/" + prefix.encode()
+            keys = _PrefixKeys(
+                fernet=Fernet(
+                    base64.urlsafe_b64encode(_hkdf(self._master, HKDF_INFO_FERNET + suffix))
+                ),
+                index_secret=_hkdf(self._master, HKDF_INFO_INDEX + suffix),
+            )
+            if len(self._prefix_keys) >= MAX_PREFIX_KEYSETS:
+                self._prefix_keys.clear()
+            self._prefix_keys[prefix] = keys
+        return keys
+
+    def _hash(self, thread_id: str, key: str) -> str:
+        """Слепой индекс схемы v3 (ключ зависит от префикса треда)."""
+        secret = self._keys_for(thread_id).index_secret
+        return V3_PREFIX + hmac.new(secret, key.encode(), hashlib.sha256).hexdigest()
+
+    def _v2_hash(self, key: str) -> str:
+        """Слепой индекс схемы v2 (для чтения строк, записанных до v3)."""
         digest = hmac.new(self._index_secret, key.encode(), hashlib.sha256).hexdigest()
         return V2_PREFIX + digest
 
@@ -208,17 +255,19 @@ class SqliteReplacementStore:
         """Слепой индекс схемы v1 (HMAC мастер-ключом)."""
         return hmac.new(self._legacy_index_secret, key.encode(), hashlib.sha256).hexdigest()
 
-    def _encrypt(self, plain: str) -> bytes:
-        """Шифрует по схеме v2 с меткой версии."""
-        return V2_PREFIX_BYTES + self._fernet.encrypt(plain.encode())
+    def _encrypt(self, thread_id: str, plain: str) -> bytes:
+        """Шифрует по схеме v3 с меткой версии (ключ зависит от префикса треда)."""
+        return V3_PREFIX_BYTES + self._keys_for(thread_id).fernet.encrypt(plain.encode())
 
-    def _decrypt(self, blob: bytes) -> str:
-        """Расшифровывает данные v2 и v1 (по метке версии).
+    def _decrypt(self, blob: bytes, thread_id: str) -> str:
+        """Расшифровывает данные v3, v2 и v1 (по метке версии).
 
         Raises:
             cryptography.fernet.InvalidToken: Неверный ключ или повреждённые данные.
         """
         raw = bytes(blob)
+        if raw.startswith(V3_PREFIX_BYTES):
+            return self._keys_for(thread_id).fernet.decrypt(raw[len(V3_PREFIX_BYTES):]).decode()
         if raw.startswith(V2_PREFIX_BYTES):
             return self._fernet.decrypt(raw[len(V2_PREFIX_BYTES):]).decode()
         return self._legacy_fernet.decrypt(raw).decode()
@@ -242,8 +291,10 @@ class SqliteReplacementStore:
 
     def find_token(self, thread_id: str, pii_type: str, key: str) -> str | None:
         with self._lock:
-            # Сначала индекс v2, затем v1: строки, ещё не прошедшие rekey, остаются находимыми
-            for key_hash in (self._hash(key), self._legacy_hash(key)):
+            # Сначала индекс v3, затем v2 и v1: строки, ещё не прошедшие rekey, остаются находимыми
+            for key_hash in (
+                self._hash(thread_id, key), self._v2_hash(key), self._legacy_hash(key)
+            ):
                 row = self._conn.execute(
                     "SELECT token FROM replacements "
                     "WHERE thread_id=? AND pii_type=? AND key_hash=?",
@@ -272,7 +323,7 @@ class SqliteReplacementStore:
                 "SELECT key_enc, token FROM replacements WHERE thread_id=? AND pii_type=?",
                 cache_key,
             ).fetchall()
-            keys = [(self._decrypt(enc), str(token)) for enc, token in rows]
+            keys = [(self._decrypt(enc, thread_id), str(token)) for enc, token in rows]
             self._key_cache[cache_key] = keys
             self._key_cache.move_to_end(cache_key)
             while len(self._key_cache) > self._key_cache_entries:
@@ -323,9 +374,9 @@ class SqliteReplacementStore:
                         thread_id,
                         token,
                         pii_type,
-                        self._hash(key),
-                        self._encrypt(key),
-                        self._encrypt(original),
+                        self._hash(thread_id, key),
+                        self._encrypt(thread_id, key),
+                        self._encrypt(thread_id, original),
                     ),
                 )
                 self._touch_locked(thread_id)
@@ -377,7 +428,7 @@ class SqliteReplacementStore:
             ).fetchone()
             if row:
                 self._touch_locked(thread_id)
-        return self._decrypt(row[0]) if row else None
+        return self._decrypt(row[0], thread_id) if row else None
 
     def get_originals(self, thread_id: str, tokens: Collection[str]) -> dict[str, str]:
         """Читает оригиналы пачкой: один запрос на LOOKUP_BATCH токенов."""
@@ -396,7 +447,7 @@ class SqliteReplacementStore:
                 )
             if rows:
                 self._touch_locked(thread_id)
-        return {str(token): self._decrypt(value) for token, value in rows}
+        return {str(token): self._decrypt(value, thread_id) for token, value in rows}
 
     def purge_expired(self, retention_days: int) -> int:
         """Удаляет треды без обращений дольше retention_days дней; см. purge_idle."""
@@ -469,9 +520,11 @@ class SqliteReplacementStore:
         """Сколько строк ещё в схеме v1 (индекс без метки v2 или шифртекст без метки v2)."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT COUNT(*) FROM replacements WHERE key_hash NOT LIKE ? "
-                "OR substr(key_enc,1,3) != ? OR substr(value_enc,1,3) != ?",
-                (V2_PREFIX + "%", V2_PREFIX_BYTES, V2_PREFIX_BYTES),
+                "SELECT COUNT(*) FROM replacements WHERE "
+                "(key_hash NOT LIKE ? AND key_hash NOT LIKE ?) "
+                "OR substr(key_enc,1,3) NOT IN (?, ?) OR substr(value_enc,1,3) NOT IN (?, ?)",
+                (V2_PREFIX + "%", V3_PREFIX + "%", V2_PREFIX_BYTES, V3_PREFIX_BYTES,
+                 V2_PREFIX_BYTES, V3_PREFIX_BYTES),
             ).fetchone()
         return int(row[0])
 
@@ -498,17 +551,18 @@ class SqliteReplacementStore:
             ).fetchall()
             updates: list[tuple[str, bytes, bytes, str, str]] = []
             for thread_id, token, key_hash, key_enc, value_enc in rows:
-                is_v2 = (
-                    str(key_hash).startswith(V2_PREFIX)
-                    and bytes(key_enc).startswith(V2_PREFIX_BYTES)
-                    and bytes(value_enc).startswith(V2_PREFIX_BYTES)
+                is_current = (
+                    str(key_hash).startswith((V2_PREFIX, V3_PREFIX))
+                    and bytes(key_enc).startswith((V2_PREFIX_BYTES, V3_PREFIX_BYTES))
+                    and bytes(value_enc).startswith((V2_PREFIX_BYTES, V3_PREFIX_BYTES))
                 )
-                key = self._decrypt(key_enc)  # проверка ключа касается и строк v2
-                original = self._decrypt(value_enc)
-                if is_v2:
+                tid = str(thread_id)
+                key = self._decrypt(key_enc, tid)  # проверка ключа касается и строк v2/v3
+                original = self._decrypt(value_enc, tid)
+                if is_current:
                     continue
                 updates.append(
-                    (self._hash(key), self._encrypt(key), self._encrypt(original),
+                    (self._hash(tid, key), self._encrypt(tid, key), self._encrypt(tid, original),
                      str(thread_id), str(token))
                 )
             if dry_run or not updates:

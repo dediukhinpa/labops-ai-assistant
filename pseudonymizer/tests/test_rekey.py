@@ -13,7 +13,15 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from pseudonymizer import rekey
 from pseudonymizer.config import ENV_KEY
-from pseudonymizer.store import SCHEMA, V2_PREFIX, V2_PREFIX_BYTES, SqliteReplacementStore
+from pseudonymizer.store import (
+    SCHEMA,
+    V2_PREFIX,
+    V2_PREFIX_BYTES,
+    V3_PREFIX,
+    V3_PREFIX_BYTES,
+    SqliteReplacementStore,
+    thread_prefix,
+)
 
 ROWS = [
     ("t1", "[PERSON_1]", "PERSON", "иванов", "Иванов Иван"),
@@ -59,7 +67,7 @@ def test_keys_are_separated(tmp_path: Path, fernet_key: str) -> None:
     assert derived != store._index_secret
 
 
-def test_new_data_written_in_v2(tmp_path: Path, fernet_key: str) -> None:
+def test_new_data_written_in_v3(tmp_path: Path, fernet_key: str) -> None:
     db = tmp_path / "n.sqlite3"
     store = SqliteReplacementStore(db, fernet_key)
     store.add(*ROWS[0])
@@ -67,11 +75,11 @@ def test_new_data_written_in_v2(tmp_path: Path, fernet_key: str) -> None:
     assert store.find_token("t1", "PERSON", "иванов") == "[PERSON_1]"
     store.close()
     (key_hash, key_enc, value_enc), = _raw_rows(db)
-    assert key_hash.startswith(V2_PREFIX)
-    assert key_enc.startswith(V2_PREFIX_BYTES) and value_enc.startswith(V2_PREFIX_BYTES)
-    # Старым (общим) ключом v2-данные не читаются
+    assert key_hash.startswith(V3_PREFIX)
+    assert key_enc.startswith(V3_PREFIX_BYTES) and value_enc.startswith(V3_PREFIX_BYTES)
+    # Старым (общим) ключом v3-данные не читаются
     with pytest.raises(InvalidToken):
-        Fernet(fernet_key.encode()).decrypt(value_enc[len(V2_PREFIX_BYTES):])
+        Fernet(fernet_key.encode()).decrypt(value_enc[len(V3_PREFIX_BYTES):])
 
 
 def test_legacy_data_still_readable_and_searchable(tmp_path: Path, fernet_key: str) -> None:
@@ -82,7 +90,7 @@ def test_legacy_data_still_readable_and_searchable(tmp_path: Path, fernet_key: s
     assert store.get_original("t1", "[EMAIL_1]") == "A@x.ru"
     assert store.find_token("t1", "EMAIL", "a@x.ru") == "[EMAIL_1]"
     assert dict(store.list_keys("t1", "PERSON")) == {"иванов": "[PERSON_1]"}
-    # новая запись идёт по v2 и соседствует со старыми
+    # новая запись идёт по v3 и соседствует со старыми
     store.add("t1", "[EMAIL_2]", "EMAIL", "b@x.ru", "B@x.ru")
     assert store.get_original("t1", "[EMAIL_2]") == "B@x.ru"
     assert store.legacy_row_count() == len(ROWS)
@@ -103,8 +111,8 @@ def test_rekey_migrates_everything_and_is_idempotent(tmp_path: Path, fernet_key:
     store.close()
     # после rekey в файле нет ничего старой схемы
     for key_hash, key_enc, value_enc in _raw_rows(db):
-        assert key_hash.startswith(V2_PREFIX)
-        assert key_enc.startswith(V2_PREFIX_BYTES) and value_enc.startswith(V2_PREFIX_BYTES)
+        assert key_hash.startswith(V3_PREFIX)
+        assert key_enc.startswith(V3_PREFIX_BYTES) and value_enc.startswith(V3_PREFIX_BYTES)
 
 
 def test_rekey_dry_run_does_not_write(tmp_path: Path, fernet_key: str) -> None:
@@ -244,3 +252,69 @@ def test_backup_does_not_overwrite_existing_file(
     with pytest.raises(FileExistsError):
         rekey.make_backup(db)
     assert first.read_bytes() == content
+
+
+def test_thread_prefix() -> None:
+    assert thread_prefix("agent:session-1") == "agent"
+    assert thread_prefix("a:b:c") == "a"
+    assert thread_prefix("plain") == "plain"
+    assert thread_prefix(":x") == ""
+
+
+def test_prefixes_get_different_ciphertext_and_index(tmp_path: Path, fernet_key: str) -> None:
+    db = tmp_path / "p.sqlite3"
+    store = SqliteReplacementStore(db, fernet_key)
+    store.add("alpha:s1", "[PERSON_1]", "PERSON", "иванов", "Иванов")
+    store.add("beta:s1", "[PERSON_1]", "PERSON", "иванов", "Иванов")
+    store.add("alpha:s2", "[PERSON_1]", "PERSON", "иванов", "Иванов")
+    store.close()
+    conn = sqlite3.connect(db)
+    rows = dict(
+        ((t, h), (bytes(k), bytes(v)))
+        for t, h, k, v in conn.execute(
+            "SELECT thread_id, key_hash, key_enc, value_enc FROM replacements"
+        )
+    )
+    conn.close()
+    by_thread = {t: (h, kv) for (t, h), kv in rows.items()}
+    # одно и то же значение: у разных префиксов разные индекс и шифртекст
+    assert by_thread["alpha:s1"][0] != by_thread["beta:s1"][0]
+    assert by_thread["alpha:s1"][1][1][:60] != by_thread["beta:s1"][1][1][:60]
+    # один префикс — один индекс (поиск по ключу работает между тредами префикса)
+    assert by_thread["alpha:s1"][0] == by_thread["alpha:s2"][0]
+
+
+def test_prefix_cannot_decrypt_other_prefix_rows(tmp_path: Path, fernet_key: str) -> None:
+    store = SqliteReplacementStore(tmp_path / "x.sqlite3", fernet_key)
+    store.add("alpha:s1", "[PERSON_1]", "PERSON", "иванов", "Иванов")
+    blob = store._conn.execute(  # noqa: SLF001
+        "SELECT value_enc FROM replacements"
+    ).fetchone()[0]
+    assert store._decrypt(blob, "alpha:other") == "Иванов"  # noqa: SLF001
+    with pytest.raises(InvalidToken):
+        store._decrypt(blob, "beta:s1")  # noqa: SLF001
+    # каждый тред читает свои строки
+    store.add("beta:s1", "[PERSON_1]", "PERSON", "петров", "Петров")
+    assert store.get_original("alpha:s1", "[PERSON_1]") == "Иванов"
+    assert store.get_original("beta:s1", "[PERSON_1]") == "Петров"
+    assert store.find_token("beta:s1", "PERSON", "иванов") is None
+
+
+def test_v2_rows_still_readable_next_to_v3(tmp_path: Path, fernet_key: str) -> None:
+    db = tmp_path / "v2.sqlite3"
+    store = SqliteReplacementStore(db, fernet_key)
+    # строка, записанная схемой v2 (до появления префиксов)
+    store._conn.execute(  # noqa: SLF001
+        "INSERT INTO replacements VALUES (?,?,?,?,?,?)",
+        ("t1", "[EMAIL_1]", "EMAIL", store._v2_hash("a@x.ru"),  # noqa: SLF001
+         V2_PREFIX_BYTES + store._fernet.encrypt(b"a@x.ru"),  # noqa: SLF001
+         V2_PREFIX_BYTES + store._fernet.encrypt(b"A@x.ru")),  # noqa: SLF001
+    )
+    store._conn.commit()  # noqa: SLF001
+    assert store.legacy_row_count() == 0  # v2 не считается устаревшей
+    assert store.get_original("t1", "[EMAIL_1]") == "A@x.ru"
+    assert store.find_token("t1", "EMAIL", "a@x.ru") == "[EMAIL_1]"
+    assert dict(store.list_keys("t1", "EMAIL")) == {"a@x.ru": "[EMAIL_1]"}
+    store.add("t1", "[EMAIL_2]", "EMAIL", "b@x.ru", "B@x.ru")  # новая строка — v3
+    assert store.get_original("t1", "[EMAIL_2]") == "B@x.ru"
+    assert dict(store.list_keys("t1", "EMAIL")) == {"a@x.ru": "[EMAIL_1]", "b@x.ru": "[EMAIL_2]"}
