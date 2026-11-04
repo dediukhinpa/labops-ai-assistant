@@ -346,7 +346,7 @@ flowchart LR
 | 2. Идентичность | проводит по `CLAUDE.md` (SOUL, характер, принципы) и `rules.md` | заполненные RED-файлы |
 | 3. Скаффолд | прогоняет `agent-template` → рендерит шаблоны | `~/.claude-lab/<agent>/.claude/` |
 | 4. Telegram-бот | регистрирует бота через `@BotFather`, пишет токен | `channel.env` (`/etc/labops-plugin/<agent>/` или `shared/state/<agent>/telegram/`) |
-| 5. Голос | подключает скилл `local-voice` (транскрипция `.ogg` локальным `voice-transcriber`) | `VOICE_TRANSCRIBER_TOKEN` в секретах |
+| 5. Голос | подключает скилл `local-voice` (транскрипция `.ogg` локальным voice-transcriber) | `VOICE_TRANSCRIBER_TOKEN` в секретах |
 | 6. Токен мозга | запрашивает у `labops-second-brain` Bearer + `scopes` | `.mcp.json` (chmod 600) |
 | 7. Автозапуск | ставит `claude-agent-<agent>.service` + watchdog, добавляет в roster | юнит + строка в `agents.conf` |
 | 8. Smoke-тест | финальная проверка: канал слушает, memory_router/agent_router отвечают, реакции ставятся | зелёный прогон |
@@ -468,7 +468,7 @@ sudo /usr/local/sbin/labops-runtime-deploy   # заодно обновляет �
 |---|---|---|
 | `create-agent` | заводит нового агента под ключ: личность, бот, голос, автозапуск, смоук-тест | — |
 | `memory-consolidate` | сворачивает сырую эпизодическую память в устойчивые выводы по сигналу рефлексии | — |
-| `local-voice` | транскрипция голосовых/аудио `.ogg` локальным сервисом `voice-transcriber` (когда канал не дал расшифровку) | `VOICE_TRANSCRIBER_TOKEN` |
+| `local-voice` | транскрипция голосовых/аудио `.ogg` локальным сервисом voice-transcriber (когда канал не дал расшифровку) | `VOICE_TRANSCRIBER_TOKEN` |
 | `second_brain-doctor` | агент-сайд-диагностика second_brain: коннект, identity, memory_router, agent_router, hooks-parity, webhooks, repo, безопасность MCP-URL; вывод редактируется (секреты маскируются) | — |
 | `agent-browser` | браузерная автоматизация через CDP (навигация, формы, скриншоты) | бинарь `agent-browser` + Chrome — `install.sh` их не ставит |
 
@@ -629,7 +629,7 @@ Self-hosted by design: агенты работают на собственном
 |---|---|---|---|
 | `api.anthropic.com` (через движок Claude Code) | инференс LLM — модель, на которой работает агент | пока агент активен | нет (ядро) |
 | `api.telegram.org` | ввод-вывод чата — приём и отправка сообщений | во время работы | нет |
-| `127.0.0.1` (локальный `voice-transcriber`, faster-whisper) | транскрипция голоса | только на голосовых сообщениях | локально — аудио не покидает хост |
+| `127.0.0.1` (локальный voice-transcriber, faster-whisper) | транскрипция голоса | только на голосовых сообщениях | локально — аудио не покидает хост |
 | `second_brain` (`localhost` MCP, Postgres + vault) | память диалога и состояние | всегда | локально — не покидает хост |
 
 > [!IMPORTANT]

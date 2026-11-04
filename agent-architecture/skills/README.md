@@ -28,7 +28,7 @@ it when the description matches.
 | `create-agent` | Roll out a new agent end to end: identity, Telegram bot, voice, autostart, smoke test. | this repo |
 | `memory-consolidate` | Distil raw episodic memory into durable insights on a reflection nudge. | the agent memory layout |
 | `second_brain-doctor` | Diagnose the agent's second_brain setup end to end; output is redacted. | second_brain |
-| `local-voice` | Transcribe voice/audio files (`.ogg`) with the local `voice-transcriber` service (faster-whisper); audio never leaves the host. | `VOICE_TRANSCRIBER_TOKEN` |
+| `local-voice` | Transcribe voice/audio files (`.ogg`) with the local voice-transcriber service (faster-whisper); audio never leaves the host. | `VOICE_TRANSCRIBER_TOKEN` |
 | `agent-browser` | Browser automation CLI (Chrome/Chromium via CDP). Navigate, click, fill forms, screenshot. | `agent-browser` binary + Chrome, not installed by `install.sh` |
 
 | `deep-research` | Cited, cross-checked research report with stated confidence and gaps. | web search; perplexity-research skill optional |

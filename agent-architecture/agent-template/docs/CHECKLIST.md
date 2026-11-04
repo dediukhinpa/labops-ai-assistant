@@ -16,7 +16,7 @@ Do not build a workspace by hand: the script wires pieces that are easy to miss
       memory_router 5002, agent_router 5000, tasks 5003)
 - [ ] A Telegram bot from @BotFather: `/newbot`, copy the token
 - [ ] Your Telegram user id (the bot answers only the ids you allow)
-- [ ] Optional: the token of the local `voice-transcriber` service for voice (see its README)
+- [ ] Optional: the token of the local voice-transcriber service for voice (see its README)
 
 ## 2. What the script does (steps it prints)
 

@@ -346,7 +346,7 @@ flowchart LR
 | 2. Identity | walks through `CLAUDE.md` (SOUL, character, principles) and `rules.md` | filled-in RED files |
 | 3. Scaffold | runs `agent-template` → renders the templates | `~/.claude-lab/<agent>/.claude/` |
 | 4. Telegram bot | registers a bot via `@BotFather`, writes the token | `channel.env` (`/etc/labops-plugin/<agent>/` or `shared/state/<agent>/telegram/`) |
-| 5. Voice | wires up the `local-voice` skill (`.ogg` transcription by the local `voice-transcriber`) | `VOICE_TRANSCRIBER_TOKEN` in secrets |
+| 5. Voice | wires up the `local-voice` skill (`.ogg` transcription by the local voice-transcriber) | `VOICE_TRANSCRIBER_TOKEN` in secrets |
 | 6. Brain token | requests a Bearer + `scopes` from `labops-second-brain` | `.mcp.json` (chmod 600) |
 | 7. Autostart | installs `claude-agent-<agent>.service` + watchdog, adds to the roster | unit + a line in `agents.conf` |
 | 8. Smoke test | final check: channel is listening, memory_router/agent_router respond, reactions are set | green run |
@@ -469,7 +469,7 @@ clone, not against the agent itself.
 |---|---|---|
 | `create-agent` | rolls out a new agent end to end: identity, bot, voice, autostart, smoke test | — |
 | `memory-consolidate` | distils raw episodic memory into durable insights on a reflection nudge | — |
-| `local-voice` | transcribes voice/audio `.ogg` with the local `voice-transcriber` service (when the channel gave no transcript) | `VOICE_TRANSCRIBER_TOKEN` |
+| `local-voice` | transcribes voice/audio `.ogg` with the local voice-transcriber service (when the channel gave no transcript) | `VOICE_TRANSCRIBER_TOKEN` |
 | `second_brain-doctor` | agent-side diagnostics of second_brain: connect, identity, memory_router, agent_router, hooks-parity, webhooks, repo, MCP-URL safety; output is redacted (secrets masked) | — |
 | `agent-browser` | browser automation via CDP (navigation, forms, screenshots) | the `agent-browser` binary + Chrome — `install.sh` does not install them |
 
@@ -627,7 +627,7 @@ Self-hosted by design: agents run on the operator's own Linux server, the `secon
 |---|---|---|---|
 | `api.anthropic.com` (via the Claude Code engine) | LLM inference — the model the agent runs on | while the agent is active | no (core) |
 | `api.telegram.org` | chat I/O — receiving and sending messages | while running | no |
-| `127.0.0.1` (local `voice-transcriber`, faster-whisper) | voice transcription | only on voice messages | local — audio never leaves the host |
+| `127.0.0.1` (local voice-transcriber, faster-whisper) | voice transcription | only on voice messages | local — audio never leaves the host |
 | `second_brain` (`localhost` MCP, Postgres + vault) | conversation memory & state | always | local — never leaves the host |
 
 > [!IMPORTANT]
