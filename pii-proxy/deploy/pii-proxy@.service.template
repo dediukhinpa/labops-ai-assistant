@@ -1,0 +1,32 @@
+[Unit]
+Description=LabOps pii-proxy for agent %i (masks PII between Claude Code and the API)
+After=network-online.target pseudonymizer.service
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__USER__
+# Каталог подпроекта pii-proxy/ (с node_modules после `bun install`).
+WorkingDirectory=__INSTALL_DIR__
+# Файл на агента: порт, PII_PROXY_AGENT_ID, токен сервиса. Права 600, вне репозитория.
+# Образец: env.example
+EnvironmentFile=__AGENT_HOME__/%i/.claude/secrets/pii-proxy.env
+ExecStart=__BUN_BIN__ run src/main.ts
+Restart=on-failure
+RestartSec=3
+# Замер 04.11.2026: простой ~46 МБ RSS; после 5 запросов по ~3,6 МБ (300 сообщений) ~220 МБ
+# вместе с тестовым стендом в том же процессе. 512 МБ - запас ~2x к худшему замеру.
+MemoryMax=512M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Прокси ничего не пишет на диск: журнал идёт в stderr (journald).
+
+[Install]
+WantedBy=multi-user.target

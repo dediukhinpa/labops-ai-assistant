@@ -1,0 +1,56 @@
+import { z } from 'zod';
+
+/** Политика для вложений (image, PDF), пока маскирование картинок не готово. */
+export type ImagePolicy = 'strip' | 'reject';
+
+const DEFAULT_HOST = '127.0.0.1';
+const DEFAULT_UPSTREAM = 'https://api.anthropic.com';
+const DEFAULT_PSEUDONYMIZER_URL = 'http://127.0.0.1:8300';
+const DEFAULT_TIMEOUT_MS = 10_000;
+const MAX_PORT = 65_535;
+
+const envSchema = z.object({
+  PII_PROXY_PORT: z.coerce.number().int().min(0).max(MAX_PORT),
+  PII_PROXY_HOST: z.string().min(1).default(DEFAULT_HOST),
+  PII_PROXY_UPSTREAM: z.string().url().default(DEFAULT_UPSTREAM),
+  PII_PROXY_AGENT_ID: z.string().min(1).regex(/^[^/:\s]+$/, 'без «/», «:» и пробелов'),
+  PSEUDONYMIZER_URL: z.string().url().default(DEFAULT_PSEUDONYMIZER_URL),
+  PSEUDONYMIZER_API_TOKEN: z.string().min(1),
+  PSEUDONYMIZER_TIMEOUT_MS: z.coerce.number().int().positive().default(DEFAULT_TIMEOUT_MS),
+  PII_PROXY_IMAGE_POLICY: z.enum(['strip', 'reject']).default('strip'),
+});
+
+/** Настройки прокси. Токен сервиса нельзя выводить в журнал. */
+export interface ProxyConfig {
+  readonly port: number;
+  readonly host: string;
+  readonly upstream: string;
+  readonly agentId: string;
+  readonly pseudonymizerUrl: string;
+  readonly pseudonymizerToken: string;
+  readonly timeoutMs: number;
+  readonly imagePolicy: ImagePolicy;
+}
+
+/**
+ * Разобрать конфиг из переменных окружения.
+ * @throws Error с перечнем неверных переменных (значения в сообщение не попадают).
+ */
+export function loadConfig(env: Record<string, string | undefined>): ProxyConfig {
+  const parsed = envSchema.safeParse(env);
+  if (!parsed.success) {
+    const names = parsed.error.issues.map((i) => i.path.join('.')).join(', ');
+    throw new Error(`Неверная конфигурация pii-proxy: ${names}`);
+  }
+  const v = parsed.data;
+  return {
+    port: v.PII_PROXY_PORT,
+    host: v.PII_PROXY_HOST,
+    upstream: v.PII_PROXY_UPSTREAM.replace(/\/+$/, ''),
+    agentId: v.PII_PROXY_AGENT_ID,
+    pseudonymizerUrl: v.PSEUDONYMIZER_URL.replace(/\/+$/, ''),
+    pseudonymizerToken: v.PSEUDONYMIZER_API_TOKEN,
+    timeoutMs: v.PSEUDONYMIZER_TIMEOUT_MS,
+    imagePolicy: v.PII_PROXY_IMAGE_POLICY,
+  };
+}
