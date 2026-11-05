@@ -1,6 +1,6 @@
 {
   "model": "{{PRIMARY_MODEL}}",
-  "cleanupPeriodDays": 30,
+  "cleanupPeriodDays": 36500,
   "env": {
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
     "ANTHROPIC_BASE_URL": "{{PII_PROXY_URL}}",
