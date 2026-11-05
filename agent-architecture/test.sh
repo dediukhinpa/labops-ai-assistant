@@ -90,14 +90,23 @@ if grep -q '"model"' agent-template/templates/settings.json.template; then
 else
   bad "settings.json.template не задаёт \"model\" — агент стартует на дефолтной модели CLI"
 fi
-# 4a2. Весь трафик агента к модели идёт через pii-proxy, телеметрия CLI выключена (она идёт
-# мимо ANTHROPIC_BASE_URL), срок хранения транскриптов задан.
-for key in ANTHROPIC_BASE_URL DISABLE_TELEMETRY DISABLE_ERROR_REPORTING \
-           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC cleanupPeriodDays; do
+# 4a2. Весь трафик агента к модели идёт через pii-proxy, отчёты об ошибках CLI выключены (они
+# идут мимо ANTHROPIC_BASE_URL), срок хранения транскриптов задан.
+for key in ANTHROPIC_BASE_URL DISABLE_ERROR_REPORTING cleanupPeriodDays; do
   if grep -q "\"$key\"" agent-template/templates/settings.json.template; then
     ok "settings.json.template задаёт $key"
   else
     bad "settings.json.template не задаёт $key — данные могут уйти мимо pii-proxy / без срока хранения"
+  fi
+done
+# 4a3. DISABLE_TELEMETRY и CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC выключают у CLI загрузку
+# флагов функций, и каналы (Telegram) не поднимаются: «Channels are not currently available»
+# (проверено 05.11.26 на CLI 2.1.318, developer остался без связи). В шаблон их не возвращать.
+for key in DISABLE_TELEMETRY CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC; do
+  if grep -q "\"$key\"" agent-template/templates/settings.json.template; then
+    bad "settings.json.template задаёт $key — агент останется без канала Telegram"
+  else
+    ok "settings.json.template не задаёт $key (ломает каналы)"
   fi
 done
 unit "pii.sh: порты / gate / session_stuck / геопроверка — юнит-тест зелёный" \

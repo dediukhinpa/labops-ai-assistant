@@ -24,7 +24,7 @@ Short English summary at the end.
 | Серверный поиск/fetch провайдера | Запрос маскируется; результат рождается у провайдера | Запрос — да | транскрипт | как у транскрипта |
 | Межагентные задачи `claude -p` | listener запускает `claude -p` | Только если передан `ANTHROPIC_BASE_URL` прокси (иначе обход) | `/var/log/labops-plugin-webhook/<agent>/*.log` — полный вывод агента | 30 дн. (`retention-sweep.sh`) |
 | Чаты multichat/per_person | Отдельная сессия на собеседника | Только если у сессии задан прокси | `chats/<id>`, `state/multichat`, транскрипты | очереди 30 дн.; сессии — по запросу субъекта |
-| Телеметрия и отчёты об ошибках CLI | Мимо `ANTHROPIC_BASE_URL` | Нет; отключается переменными `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | — | — |
+| Телеметрия и отчёты об ошибках CLI | Мимо `ANTHROPIC_BASE_URL` | Отчёты об ошибках отключены `DISABLE_ERROR_REPORTING`; телеметрия остаётся: `DISABLE_TELEMETRY` и `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` ломают каналы CLI | — | — |
 | second-brain | Заметки и вектора, общий recall между собеседниками | Нет | vault + Postgres | — (удаляет оператор) |
 | Журналы плагина | `logs/*.log`, `permissions.jsonl`, `ask-user-question.jsonl` | Секреты — да, ПДн — нет | `<state>/logs` | 30 дн. (ротация) |
 | Журналы агента | `<ws>/logs/verbose-*.jsonl`, hooks, task-poller | Нет | `<ws>/logs` | 30 дн. |

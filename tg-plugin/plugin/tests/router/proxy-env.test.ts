@@ -29,13 +29,16 @@ describe('ensureChatsProxyEnv', () => {
   test('создаёт chats/.claude/settings.json с адресом прокси и телеметрией', () => {
     agentSettings({
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:6311',
+      DISABLE_ERROR_REPORTING: '1',
       DISABLE_TELEMETRY: '1',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000',
     })
     expect(ensureChatsProxyEnv(workspace, chats)).toBe(true)
     const env = readTarget().env
     expect(env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:6311')
-    expect(env.DISABLE_TELEMETRY).toBe('1')
+    expect(env.DISABLE_ERROR_REPORTING).toBe('1')
+    // ломает каналы в сессии собеседника - не наследуется
+    expect(env.DISABLE_TELEMETRY).toBeUndefined()
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined()
   })
 
