@@ -1,0 +1,41 @@
+# labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
+# Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
+ref: v0.1.0
+tag: v0.1.0
+commit: 465fff19f6980975bcba2aa1576befa6b92dbebd
+parts: media,service
+vendored_at: 2026-11-05T10:58:51Z
+hash_algorithm: sha256
+files:
+  ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
+  1efe29dd7d9f7289e6d0b5e7d684d6f9130042bc384e212277681263ecd0f310  labops_pii/__init__.py
+  356ad6a8aee34e5cbcb7e75d1ff954d7391fe8a511484ad71877fde0389a514b  labops_pii/__main__.py
+  5d9d61fb2bf66901b7ef3281c9b8b5128482e3dcaa2575fbe519ad436fb67a92  labops_pii/allowlist.py
+  b798852aba623900bb1fc736c88a9789819d9b71f27e4cd1be0ba90324192767  labops_pii/api.py
+  fc9b9cef86099a9999a9423daa03306ee694bd4f2aea090e300f27d0b9ed5189  labops_pii/body_guard.py
+  027288d8b935ffce3096ede3689c69ee88c7370f78073286561ed54b8bc08763  labops_pii/checksums.py
+  6ac24f0270b58b39af28cfe5370cca9418a6bd9f6b8d7e026e91d55262bcf28a  labops_pii/config.py
+  1137dbd337ac7e4fe8f31f85b13c97f2dae946b1c17ec888f12374f08c81278f  labops_pii/detector.py
+  d67189690e9f239b1e93c76ff43943a08d85b278f3f78a7881df249ff872058d  labops_pii/inflect.py
+  f4908d51b6fd46a5c098760b5299f43967a356fb0bda90f53782f24bbadc0b50  labops_pii/jsonlog.py
+  d10ed85e67bbabf1b461b5fa7dc214ce7478bdae3cc43ac0b677a92ee47c0fe4  labops_pii/media/__init__.py
+  34716bdc85a68dc17c4c3544c1a454f3cf250a039756a2c3bd5f0b61d4c26d43  labops_pii/media/gate/__init__.py
+  d6205541701e9b751621aab31a4c6dfb069d606d919c6e16ef1513ce3737f543  labops_pii/media/gate/api.py
+  371fa33cbdf074fe8fd4c07da4deda7db7015c5ccba8ca123919e756cffa2885  labops_pii/media/gate/detect.py
+  eaeb017b9eef67f6628e165ea8dfe486e3b54037dffbef60f7a25a8611dfbb22  labops_pii/media/gate/normalize.py
+  0bf3056e2a852ee1ef34ccd78554f8e636e4dc3e08882725d93d7ba7c2196003  labops_pii/media/mask/__init__.py
+  a3b38c4fc7effc00e8dc3eabef099a4f502087e7ac582853ed7b79962e235d7f  labops_pii/media/mask/__main__.py
+  cf1f296559391b0eb2ea0bea6206667cd24ffad2d1ce976d9e458ea65e4da6d0  labops_pii/media/mask/api.py
+  afa75eba54bcf2f54ed9fa0271a5e077ae765af9a3570bffc56ae767c8adbdf3  labops_pii/media/mask/config.py
+  1ebb74afa00c68a7862d01755b7f2526a51d78df1f580353fec9f5117755045a  labops_pii/media/mask/faces.py
+  fea11a8abc5ca58c98237858a83474ca0f1223aca4b833dcf95d2a0168c6ef28  labops_pii/media/mask/imaging.py
+  7a6daa70f0952cca1291f7fce8d2a96935a2411f205db11844d23093e32c63ef  labops_pii/media/mask/jsonlog.py
+  0a18998366bbb2caca3bf17fb394074c79e841775a472d0b5656087dc3cf356c  labops_pii/media/mask/ocr.py
+  9b03bb5398573cd20a8bf66a2e0e238caa024a8fa47875a80af86d3286ea608e  labops_pii/media/mask/pdfdoc.py
+  e2d7f9527316e32059067708f0d8c926b989ba8954aa90587bbf327ef372c46c  labops_pii/morph.py
+  408ed930c8e0f9f086c895e2bbb67b18175d35a5740ab9b24ca9a817abd8c9da  labops_pii/pii_patterns.py
+  d231431735fe6a7e246fd8ad0e069c971aadab8b38da408d4046ec300a027dcc  labops_pii/profiles.py
+  f8b79b3643f49fd2762cc284e20c6506a271178e5e1a3154d1e77c71a3aa746b  labops_pii/rekey.py
+  4cbfe1a749cf27cc81f0099f652eb7363fcc89eddec701379d2a0d40dd8cdf30  labops_pii/service.py
+  59ec1b8f05717bad3c9c748488c2ba10602f3ab65067b0f762ac3876512676f1  labops_pii/store.py
+  06256424fe301305c468d43f2e56dbc9fbf99aed9d6dc06e4d521201d6437b14  labops_pii/tech_tokens.py
