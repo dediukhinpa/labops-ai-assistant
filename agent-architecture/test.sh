@@ -284,6 +284,8 @@ unit "task-poller.sh: обёртка видима надзору, без headles
 # Логика опроса живёт в python-демоне: адресный фильтр, idle-гейт, идемпотентность,
 # кэш токена, одна живая MCP-сессия.
 unit "pii_forget.py: поиск / dry-run / apply / бэкап — юнит-тест зелёный" "pii_forget.py: юнит-тест провален (scripts/pii_forget.test.py)" python3 scripts/pii_forget.test.py
+# Вендоренная labops-pii (vendor/labops-pii) - только через vendor.sh из репозитория библиотеки.
+unit "labops-pii: вендоренные файлы не правились руками — тест зелёный" "labops-pii: вендоренные файлы расходятся с VERSION (scripts/labops_pii_vendor.test.py)" python3 scripts/labops_pii_vendor.test.py
 unit "retention-sweep.sh: ротация / сроки / dry-run — юнит-тест зелёный" "retention-sweep.sh: юнит-тест провален (scripts/retention-sweep.test.sh)" bash scripts/retention-sweep.test.sh
 unit "task_poller.py: фильтр / idle-гейт / идемпотентность / MCP-сессия — юнит-тест зелёный" "task_poller.py: юнит-тест провален (agent-template/scripts/task_poller.test.py)" python3 agent-template/scripts/task_poller.test.py
 # Регрессия: доска задач должна попасть новому агенту. Забыли сервер в шаблоне

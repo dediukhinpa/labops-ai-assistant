@@ -1,0 +1,18 @@
+# Зависимости вендоренной labops-pii (vendor/labops-pii), части service + media.
+# Вендоренная копия - не pip-пакет (нет pyproject), поэтому ставим зависимости отдельно,
+# а сам код подключает PYTHONPATH в юнитах. Источник списка: python/pyproject.toml библиотеки
+# (dependencies + extra media); при обновлении тега сверить diff и поправить здесь.
+# Установка: pip install -r labops-pii.requirements.txt -c labops-pii.constraints.txt
+natasha>=1.6,<2
+pymorphy3>=2.0
+pymorphy3-dicts-ru
+setuptools>=61,<81
+cryptography>=42
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2
+pillow>=11
+# Строго 4.x: в 5.x пакет headless не содержит каскадов Хаара (cv2.data пуст)
+opencv-python-headless>=4.10,<5
+pypdfium2>=4.30
+python-multipart>=0.0.9

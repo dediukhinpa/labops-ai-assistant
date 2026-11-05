@@ -34,9 +34,6 @@ export function blockReason(e: MediaMaskerError): BlockReason {
 /** Метка начала записи кэша с отказом (в base64 и JSON не встречается в начале значения). */
 const REFUSED_MARK = '!';
 
-/** Разделитель частей значения кэша (ни base64, ни media_type его не содержат). */
-const SEP = '\n';
-
 /**
  * Вложения через media-masker с кэшем результата по sha256 исходных данных.
  * Кэш нужен, чтобы история с картинками не перегонялась через OCR на каждом запросе и чтобы
@@ -58,12 +55,13 @@ export class MediaProcessor {
     if (hit !== undefined) {
       this.cacheHits++;
       throwIfRefused(hit);
-      const [type = '', payload = ''] = hit.split(SEP);
-      return { mediaType: type, data: payload };
+      return JSON.parse(hit) as MaskedImage;
     }
     this.serviceCalls++;
     const r = await this.guarded(key, () => this.service.maskImage(mediaType, data));
-    this.cache.set(key, `${r.mediaType}${SEP}${r.data}`);
+    // Вместе с картинкой кэшируется распознанный текст: без него каждый запрос с этой картинкой
+    // в истории гонял бы её через OCR заново, а текст блока менялся бы от запроса к запросу
+    this.cache.set(key, JSON.stringify(r));
     return r;
   }
 

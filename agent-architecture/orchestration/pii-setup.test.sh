@@ -48,6 +48,25 @@ tok1="$(cat "$TMP/cfg/pseudonymizer.token")"
 bash "$HERE/pii-setup.sh" host >/dev/null 2>&1
 [ "$(cat "$TMP/cfg/pseudonymizer.token")" = "$tok1" ] || fail "повторный host перевыпустил токен"
 
+# 2a. labops-pii: вендоренная копия в рабочей папке, юниты на её модули, адреса включены
+[ -f "$TMP/runtime/labops-pii/labops_pii/__main__.py" ] || fail "нет копии labops_pii"
+[ -f "$TMP/runtime/labops-pii/VERSION" ] || fail "нет VERSION вендоренной копии"
+grep -q 'python -m labops_pii$' "$TMP/units/labops-pseudonymizer.service" || fail "ExecStart сервиса"
+grep -q "^Environment=PYTHONPATH=$TMP/runtime/labops-pii$" "$TMP/units/labops-pseudonymizer.service" \
+  || fail "PYTHONPATH юнита"
+grep -qx 'Environment=LABOPS_PII_PROFILE=labops' "$TMP/units/labops-pseudonymizer.service" \
+  || fail "профиль labops в юните"
+grep -qx 'PSEUDONYMIZER_ADDRESS_MASK=true' "$TMP/cfg/pseudonymizer.env" || fail "адреса не включены"
+# старый env-файл (до перехода на labops-pii): ключ дописывается, значение оператора сохраняется
+sed -i '/^PSEUDONYMIZER_ADDRESS_MASK=/d' "$TMP/cfg/pseudonymizer.env"
+bash "$HERE/pii-setup.sh" host >/dev/null 2>&1
+grep -qx 'PSEUDONYMIZER_ADDRESS_MASK=true' "$TMP/cfg/pseudonymizer.env" || fail "env не обновлён"
+sed -i 's/^PSEUDONYMIZER_ADDRESS_MASK=.*/PSEUDONYMIZER_ADDRESS_MASK=false/' "$TMP/cfg/pseudonymizer.env"
+bash "$HERE/pii-setup.sh" host >/dev/null 2>&1
+grep -qx 'PSEUDONYMIZER_ADDRESS_MASK=false' "$TMP/cfg/pseudonymizer.env" \
+  || fail "решение оператора перезаписано"
+sed -i 's/^PSEUDONYMIZER_ADDRESS_MASK=.*/PSEUDONYMIZER_ADDRESS_MASK=true/' "$TMP/cfg/pseudonymizer.env"
+
 # 2b. с (фиктивным) Tesseract: токен 600, env маскера, юнит, политика mask у агента
 printf '#!/usr/bin/env bash\nprintf "List of available languages (3):\\neng\\nosd\\nrus\\n"\n' \
   > "$TMP/tesseract"
@@ -58,8 +77,11 @@ bash "$HERE/pii-setup.sh" host >/dev/null 2>&1 || fail "host с tesseract упа
 [ "$(stat -c %a "$TMP/cfg/media-masker.env")" = "600" ] || fail "права env маскера"
 grep -q '^MEDIA_MASKER_API_TOKEN=.' "$TMP/cfg/media-masker.env" || fail "нет токена в env маскера"
 grep -q "^MEDIA_MASKER_TESSERACT_CMD=$TMP/tesseract" "$TMP/cfg/media-masker.env" || fail "cmd"
+grep -qx 'MEDIA_MASKER_ADDRESS_MASK=true' "$TMP/cfg/media-masker.env" || fail "адреса в маскере"
 [ -f "$TMP/units/labops-media-masker.service" ] || fail "нет юнита маскера"
 grep -q '__' "$TMP/units/labops-media-masker.service" && fail "плейсхолдеры в юните маскера"
+grep -q 'python -m labops_pii.media.mask$' "$TMP/units/labops-media-masker.service" \
+  || fail "ExecStart маскера"
 grep -q 'enable --now labops-media-masker.service' "$TMP/systemctl.log" || fail "маскер не включён"
 mtok="$(cat "$TMP/cfg/media-masker.token")"
 bash "$HERE/pii-setup.sh" host >/dev/null 2>&1

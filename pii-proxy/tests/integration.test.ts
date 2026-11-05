@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { PiiProxy } from '../src/proxy';
@@ -8,12 +9,16 @@ import {
 } from './helpers';
 
 /**
- * Сквозной тест на настоящем сервисе псевдонимизации. Пропускается, если нет
- * pseudonymizer/.venv (python3.12 -m venv .venv && .venv/bin/pip install -e ".[dev]")
- * или задано PII_SKIP_INTEGRATION=1.
+ * Сквозной тест на настоящем сервисе псевдонимизации - вендоренной labops-pii (профиль labops).
+ * Python берётся из PII_TEST_PYTHON либо из venv, который строит pii-setup.sh host; без него
+ * тест пропускается (как и при PII_SKIP_INTEGRATION=1). Корпус - tests/fixtures/pii_corpus.json
+ * (снимок корпуса прежнего pseudonymizer/tests/pii_corpus.py).
  */
-const SERVICE_DIR = join(import.meta.dir, '..', '..', 'pseudonymizer');
-const PYTHON = join(SERVICE_DIR, '.venv', 'bin', 'python');
+const REPO_DIR = join(import.meta.dir, '..', '..');
+const LIB_DIR = join(REPO_DIR, 'vendor', 'labops-pii');
+const DEFAULT_VENV_PYTHON = join(homedir(), 'labops-pii-runtime', 'labops-pii', '.venv', 'bin',
+  'python');
+const PYTHON = process.env.PII_TEST_PYTHON ?? DEFAULT_VENV_PYTHON;
 const RUN = existsSync(PYTHON) && process.env.PII_SKIP_INTEGRATION !== '1';
 const BOOT_WAIT_MS = 120_000;
 const MIN_DIGITS_TAIL = 10;
@@ -49,8 +54,11 @@ describe.skipIf(!RUN)('сквозной тест с настоящим серв�
   beforeAll(async () => {
     const port = await freePort();
     serviceUrl = `http://127.0.0.1:${port}`;
-    proc = Bun.spawn([PYTHON, '-m', 'pseudonymizer'], { cwd: SERVICE_DIR, stdout: 'ignore',
-      stderr: 'ignore', env: { PATH: process.env.PATH ?? '', PSEUDONYMIZER_API_TOKEN: token,
+    proc = Bun.spawn([PYTHON, '-m', 'labops_pii'], { cwd: LIB_DIR, stdout: 'ignore',
+      stderr: 'ignore', env: { PATH: process.env.PATH ?? '', PYTHONPATH: LIB_DIR,
+        LABOPS_PII_PROFILE: 'labops', PSEUDONYMIZER_API_TOKEN: token,
+        // Адреса маскируются по решению владельца; так же пишет pii-setup.sh
+        PSEUDONYMIZER_ADDRESS_MASK: 'true',
         PSEUDONYMIZER_PORT: String(port), PSEUDONYMIZER_HOST: '127.0.0.1' } });
     const until = Date.now() + BOOT_WAIT_MS;
     for (;;) {
@@ -66,11 +74,8 @@ describe.skipIf(!RUN)('сквозной тест с настоящим серв�
 
   test('в upstream не доходит ни одного значения корпуса, ответ возвращается с оригиналами',
     async () => {
-      const dump = Bun.spawn([PYTHON, '-I', '-c',
-        'import sys,json;sys.path.insert(0,".");from tests.pii_corpus import POSITIVE;'
-        + 'print(json.dumps([{"text":t,"kind":k} for t,k in POSITIVE]))'],
-      { cwd: SERVICE_DIR, stdout: 'pipe' });
-      const corpus = JSON.parse(await new Response(dump.stdout).text()) as Case[];
+      const corpus = JSON.parse(readFileSync(
+        join(import.meta.dir, 'fixtures', 'pii_corpus.json'), 'utf8')) as Case[];
       expect(corpus.length).toBeGreaterThan(40);
 
       const upstream = startFakeUpstream(textStream(['']));
@@ -113,4 +118,30 @@ describe.skipIf(!RUN)('сквозной тест с настоящим серв�
       expect(forwarded).toBeGreaterThan(corpus.length / 2);
       console.log(`корпус: ${forwarded} замаскировано и возвращено, ${blocked} заблокировано`);
     }, 300_000);
+
+  test('адрес маскируется в [ADDRESS_N] и восстанавливается в ответе', async () => {
+    const street = 'ул. Ленина, д. 5, кв. 12';
+    const text = `Отправьте на г. Екатеринбург, ${street} до пятницы`;
+    const upstream = startFakeUpstream(textStream(['']));
+    upstream.replyFor = (hit) => {
+      const body = JSON.parse(hit.body) as { messages: { content: string }[] };
+      return textStream([body.messages.at(-1)?.content ?? '']);
+    };
+    const config = testConfig({ upstream: upstream.url, pseudonymizerUrl: serviceUrl,
+      pseudonymizerToken: token, timeoutMs: 10_000 });
+    const proxy = new PiiProxy(config, { logger: memoryLogger() }).start();
+    try {
+      const res = await post(`http://127.0.0.1:${proxy.port}`, '/v1/messages',
+        { messages: [{ role: 'user', content: text }] },
+        { 'x-claude-code-session-id': 'address-case' });
+      expect(res.status).toBe(200);
+      const hit = upstream.hits.at(-1)?.body ?? '';
+      expect(hit).toContain('[ADDRESS_');
+      expect(hit).not.toContain('Ленина');
+      expect((await collectText(res)).text).toBe(text);
+    } finally {
+      await proxy.stop();
+      await upstream.stop();
+    }
+  });
 });
