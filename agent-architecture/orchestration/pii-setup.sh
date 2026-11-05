@@ -86,6 +86,9 @@ sync_sources() {
   if [ -d "$SRC_DIR/pii-proxy" ] || [ ! -d "$RUNTIME_DIR/pii-proxy/deploy" ]; then
     [ -d "$SRC_DIR/pii-proxy" ] || die "нет $SRC_DIR/pii-proxy - установка идёт не из монорепо?"
     mkdir -p "$RUNTIME_DIR/pii-proxy"
+    # src/ заменяем целиком: модули, переехавшие в библиотеку или удалённые в репо, иначе
+    # остаются в рабочей копии мёртвым дублем (node_modules и state лежат вне src/)
+    rm -rf "$RUNTIME_DIR/pii-proxy/src"
     (cd "$SRC_DIR/pii-proxy" && tar --exclude=node_modules --exclude=.venv --exclude=__pycache__ \
         --exclude=data -cf - .) | (cd "$RUNTIME_DIR/pii-proxy" && tar -xf -)
   fi
