@@ -1,7 +1,7 @@
 # pii-proxy
 
 Локальный HTTP-прокси между Claude Code и API модели: маскирует персональные данные в
-запросах через сервис `pseudonymizer` и возвращает оригиналы в ответах. Один процесс на агента.
+запросах через сервис псевдонимизации (`labops-pii`, `pii-proxy/docs/pseudonymizer.md`) и возвращает оригиналы в ответах. Один процесс на агента.
 
 ## Вложения: PII_PROXY_IMAGE_POLICY
 
@@ -15,7 +15,7 @@
 При `mask` обязателен `MEDIA_MASKER_API_TOKEN` (без него прокси не стартует), адрес
 `MEDIA_MASKER_URL` (по умолчанию `http://127.0.0.1:8320`), `MEDIA_MASKER_TIMEOUT_MS` (120 с).
 
-Где живёт OCR: отдельный сервис `media-masker/`, а не эндпоинт pseudonymizer. Причины:
+Где живёт OCR: отдельный сервис media-masker (`labops_pii.media.mask` из вендоренной `labops-pii`), а не эндпоинт сервиса псевдонимизации. Причины:
 Tesseract и растеризация PDF тяжёлые (до 2 ГБ, минуты CPU) и не должны отнимать память и
 потоки у текстового сервиса, на котором держится каждый запрос; у юнита свои `MemoryMax` и
 очередь (2 параллельных обработки); детектор ПДн при этом тот же `PiiDetector`.
@@ -43,7 +43,7 @@ Tesseract и растеризация PDF тяжёлые (до 2 ГБ, мину�
 
 1. Установить Tesseract: с sudo `apt-get install tesseract-ocr tesseract-ocr-rus
    tesseract-ocr-eng tesseract-ocr-osd`; без sudo - `apt-get download` + `dpkg -x` и
-   `LD_LIBRARY_PATH`/`TESSDATA_PREFIX` (см. `media-masker/README.md`).
+   `LD_LIBRARY_PATH`/`TESSDATA_PREFIX` (см. `docs/media-masker.md`).
 2. Поднять `media-masker` (unit `MemoryMax=2G`, `OMP_THREAD_LIMIT=1`, 2 параллельных запроса).
 3. Задать `MEDIA_MASKER_API_TOKEN` в секретном файле прокси, перезапустить прокси.
 
@@ -52,7 +52,7 @@ Tesseract и растеризация PDF тяжёлые (до 2 ГБ, мину�
 agent` пишет в env прокси `mask` и токен. Tesseract не найден - громкое предупреждение,
 media-masker не ставится, агентам пишется `PII_PROXY_IMAGE_POLICY=strip` (старт не ломается).
 
-Сквозная проверка с настоящим OCR: `media-masker/scripts/make_e2e_fixtures.py <каталог>`,
+Сквозная проверка с настоящим OCR: `pii-proxy/scripts/make_e2e_fixtures.py <каталог>`,
 затем `MEDIA_E2E_URL=... MEDIA_E2E_TOKEN=... MEDIA_E2E_DIR=<каталог> bun test
 tests/media-e2e.test.ts` (без переменных тест пропускается).
 
@@ -61,7 +61,7 @@ tests/media-e2e.test.ts` (без переменных тест пропуска�
 Рукописный и очень мелкий текст, текст под углом (кроме кратных 90 градусов), сложный фон,
 штрихкоды/QR, логотипы, лица вне работы каскадов Хаара; картинки внутри PDF с текстовым слоем
 отбрасываются (уходит только текст), но ПДн, набранные в картинке такого PDF, не читаются.
-Подробности - `media-masker/README.md`. Лица без текста и имена без контекста NER может пропустить.
+Подробности - `docs/media-masker.md`. Лица без текста и имена без контекста NER может пропустить.
 
 ## Установка (обычно делает `agent-architecture`)
 
