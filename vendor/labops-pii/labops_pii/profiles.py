@@ -55,7 +55,6 @@ class Profile:
         guard_names_mode: Режим проверки ФИО в guard по умолчанию.
         guard_address_mode: Режим проверки адресов в guard по умолчанию.
         allowed_words: Основы слов-исключений (не маскируются ни как ФИО, ни как организация).
-        guard_names_morph: Искать ФИО в guard с морфологией (extras, тяжёлые зависимости).
         contacts: Белый список имён по умолчанию (дополняется файлом контактов сервиса).
     """
 
@@ -71,7 +70,6 @@ class Profile:
     accept_case_labels: bool
     guard_names_mode: str
     guard_address_mode: str
-    guard_names_morph: bool = False
     # Основы слов, которые не ПДн (название проекта): см. labops_pii.allowlist
     allowed_words: tuple[str, ...] = ALLOWED_WORDS_DEFAULT
     contacts: tuple[str, ...] = ()
@@ -107,6 +105,9 @@ PROFILES: dict[str, Profile] = {
         accept_case_labels=False,
         guard_names_mode=GUARD_MODE_LOG_ONLY,
         guard_address_mode=GUARD_MODE_LOG_ONLY,
+        # Торговая марка «С.ПУДОВЪ» (замер на 75 752 названиях БД Прагматики, 05.11.26): с
+        # инициалом guard видел в ней ФИО. Основа с «ъ» не совпадает с фамилией «Пудов».
+        allowed_words=(*ALLOWED_WORDS_DEFAULT, "пудовъ"),
     ),
     # web-app-v2: своего псевдонимизатора не было (план: общий сервис labops); guard искал
     # только цифровые типы, поэтому ФИО и адреса в guard выключены
