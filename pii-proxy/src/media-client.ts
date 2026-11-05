@@ -7,26 +7,63 @@ const REFUSAL_STATUSES: ReadonlySet<number> = new Set([413, 422]);
 const MAX_CODE_CHARS = 40;
 
 const imageSchema = z.object({ media_type: z.string().min(1), data: z.string().min(1) });
+// Старая версия сервиса поля не присылает: тогда вложение идёт как раньше, только закрашенным.
+const recognizedSchema = z.object({
+  text: z.string().default(''),
+  codes: z.array(z.object({ kind: z.enum(['qr', 'barcode']), text: z.string() })).default([]),
+  hidden_text: z.boolean().default(false),
+});
+const maskImageSchema = imageSchema.extend({ recognized: recognizedSchema.nullish() });
 const extractSchema = z.object({
   kind: z.enum(['text', 'images', 'mixed']),
   pages: z.array(z.object({
     index: z.number().int(),
     text: z.string().nullable(),
     image: imageSchema.nullable(),
+    recognized: recognizedSchema.nullish(),
   })),
 });
 const errorSchema = z.object({ error: z.string() });
 
-/** Закрашенная картинка. */
+/** Содержимое QR-кода или штрихкода, расшифрованное локально (пусто - не расшифровано). */
+export interface RecognizedCode {
+  readonly kind: 'qr' | 'barcode';
+  readonly text: string;
+}
+
+/**
+ * Что media-masker нашёл на картинке локально. Тексты - с настоящими значениями: их ПДн
+ * заменяет прокси тем же маскированием, что и остальной текст запроса.
+ */
+export interface Recognized {
+  /** Распознанный текст в порядке чтения. */
+  readonly text: string;
+  readonly codes: readonly RecognizedCode[];
+  /** Есть нераспознанный (рукописный и т.п.) текст, он закрашен. */
+  readonly hiddenText: boolean;
+}
+
+/** Ничего не распознано. */
+export const NOTHING_RECOGNIZED: Recognized = { text: '', codes: [], hiddenText: false };
+
+/** Закрашенная картинка и распознанное на ней. */
 export interface MaskedImage {
   readonly mediaType: string;
   readonly data: string;
+  readonly recognized: Recognized;
 }
 
 /** Страница PDF: либо текстовый слой, либо замаскированная картинка. */
 export interface DocumentPage {
   readonly text: string | null;
   readonly image: MaskedImage | null;
+}
+
+type RecognizedWire = z.input<typeof recognizedSchema> | null | undefined;
+
+function toRecognized(r: RecognizedWire): Recognized {
+  if (r === null || r === undefined) return NOTHING_RECOGNIZED;
+  return { text: r.text ?? '', codes: r.codes ?? [], hiddenText: r.hidden_text ?? false };
 }
 
 /** Результат разбора PDF. */
@@ -56,8 +93,8 @@ export class HttpMediaMasker implements MediaMasker {
 
   async maskImage(mediaType: string, data: string): Promise<MaskedImage> {
     const raw = await this.post('/mask_image', { media_type: mediaType, data });
-    const r = parseWith(imageSchema, raw);
-    return { mediaType: r.media_type, data: r.data };
+    const r = parseWith(maskImageSchema, raw);
+    return { mediaType: r.media_type, data: r.data, recognized: toRecognized(r.recognized) };
   }
 
   async extractDocument(data: string): Promise<ExtractedDocument> {
@@ -66,7 +103,11 @@ export class HttpMediaMasker implements MediaMasker {
     return {
       pages: r.pages.map((p) => ({
         text: p.text,
-        image: p.image === null ? null : { mediaType: p.image.media_type, data: p.image.data },
+        image: p.image === null ? null : {
+          mediaType: p.image.media_type,
+          data: p.image.data,
+          recognized: toRecognized(p.recognized),
+        },
       })),
     };
   }
