@@ -65,6 +65,8 @@ cp "$HERE/orchestration/lib/ui.sh" "$REPO/orchestration/lib/ui.sh"
 cp "$HERE/orchestration/lib/plugin.sh" "$REPO/orchestration/lib/plugin.sh"
 # voice-install.sh даёт voice_install (шаг «Голос»): install.sh сорсит его при старте.
 cp "$HERE/orchestration/lib/voice-install.sh" "$REPO/orchestration/lib/voice-install.sh"
+# openai-adapter-install.sh даёт openai_adapter_install: install.sh сорсит его при старте.
+cp "$HERE/orchestration/lib/openai-adapter-install.sh" "$REPO/orchestration/lib/openai-adapter-install.sh"
 
 # 1. Закрытый хост (403) — установка обязана остановиться.
 make_curl_stub 403

@@ -25,6 +25,8 @@
 #                             # siblings ещё не установлены их собственными install.sh —
 #                             # агент стартует в деградированном режиме, см. README → Quickstart.
 #   ./install.sh --test-only  # только self-test
+#   ./install.sh --openai-adapter # ТОЛЬКО поставить адаптер Claude Code -> OpenAI (LiteLLM) и
+#                             # выйти; рой на моделях OpenAI, см. docs/openai-adapter.md
 #   ./install.sh --no-agent   # подготовить + склонировать siblings, но авторизацию и
 #                             # агента не выполнять (для ручного/отложенного запуска:
 #                             #  claude --dangerously-skip-permissions && bash skills/create-agent/new-agent.sh)
@@ -59,10 +61,14 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # voice_install: сервис расшифровки голоса ставится, пока у установки есть root.
 # shellcheck source=orchestration/lib/voice-install.sh
 . "$REPO_DIR/orchestration/lib/voice-install.sh"
+# openai_adapter_install: адаптер Claude Code -> OpenAI, только по --openai-adapter.
+# shellcheck source=orchestration/lib/openai-adapter-install.sh
+. "$REPO_DIR/orchestration/lib/openai-adapter-install.sh"
 
 MODE="full"
 [ "${1:-}" = "--test-only" ] && MODE="test"
 [ "${1:-}" = "--no-agent" ] && MODE="prep"
+[ "${1:-}" = "--openai-adapter" ] && MODE="openai"
 
 echo "════════════════════════════════════════════"
 echo "  labops-agent-architecture · установка"
@@ -198,6 +204,17 @@ runtime_conf_source() {
   { grep -E '^SOURCE=' "$LABOPS_RUNTIME_CONF" 2>/dev/null || true; } \
     | tail -n 1 | sed 's/^SOURCE=//'
 }
+
+# ── --openai-adapter ──────────────────────────────────────────────
+# Альтернативный вариант курса: рой на моделях OpenAI. Ставится только сам адаптер; агентов
+# на него переводит orchestration/openai-adapter-wire.sh (каждого отдельно, с откатом).
+if [ "$MODE" = "openai" ]; then
+  say "Адаптер Claude Code -> OpenAI"
+  echo "  Ставлю LiteLLM на 127.0.0.1: Claude Code говорит с ним по протоколу Anthropic, а он с"
+  echo "  OpenAI. Ключ OpenAI хранится только в файле юнита адаптера, не в настройках агентов."
+  openai_adapter_install "$(id -un)" "$HOME" || die "адаптер не установлен - причина в сообщениях выше"
+  exit 0
+fi
 
 # ── 0. Доступность внешних хостов ─────────────────────────────────
 # Проверяем связь ПЕРВЫМ делом, до любых изменений на машине. Установка тянет

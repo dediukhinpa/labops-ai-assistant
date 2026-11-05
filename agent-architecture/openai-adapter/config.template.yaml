@@ -1,0 +1,17 @@
+# Конфиг адаптера LiteLLM: Claude Code -> /v1/messages -> OpenAI.
+# Подстановки делает orchestration/lib/openai-adapter-install.sh; ключи сюда НЕ пишутся,
+# они читаются из окружения юнита (/etc/labops-openai-adapter/adapter.env).
+model_list:
+  - model_name: __MODEL__
+    litellm_params:
+      # LiteLLM переводит запрос в Responses API OpenAI (/v1/responses), проверено на 1.106.3.
+      model: openai/__MODEL__
+      api_key: os.environ/OPENAI_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+
+litellm_settings:
+  # Параметры, которых нет у модели OpenAI (thinking, cache_control и т.п.), отбрасываются,
+  # а не роняют запрос.
+  drop_params: true

@@ -869,6 +869,15 @@ unit "install.sh ставит сервис голоса и раздаёт ток
      "voice-install: юнит-тест провален (orchestration/lib/voice-install.test.sh)" \
      bash orchestration/lib/voice-install.test.sh
 
+# Адаптер Claude Code -> OpenAI (LiteLLM): зависимости только по lock-файлу с хэшами, ключи не
+# светятся, повтор не меняет ключ шлюза; перевод агента обратим (openai-adapter-wire.sh).
+unit "openai-adapter-install: установка по lock с хэшами, ключи не светятся — юнит-тест зелёный" \
+     "openai-adapter-install: юнит-тест провален (orchestration/lib/openai-adapter-install.test.sh)" \
+     bash orchestration/lib/openai-adapter-install.test.sh
+unit "openai-adapter-wire: перевод агента на адаптер и откат — юнит-тест зелёный" \
+     "openai-adapter-wire: юнит-тест провален (orchestration/openai-adapter-wire.test.sh)" \
+     bash orchestration/openai-adapter-wire.test.sh
+
 # Тест гоняет НАСТОЯЩИЙ install.sh, поэтому обязан быть глух к флагам в шелле
 # оператора: с PREFLIGHT_DONE=1 в окружении он винил установщик в том, чего тот
 # не делал.
