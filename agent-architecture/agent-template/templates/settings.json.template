@@ -1,7 +1,12 @@
 {
   "model": "{{PRIMARY_MODEL}}",
+  "cleanupPeriodDays": 30,
   "env": {
-    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000"
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
+    "ANTHROPIC_BASE_URL": "{{PII_PROXY_URL}}",
+    "DISABLE_TELEMETRY": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
   "permissions": {
     "allow": [

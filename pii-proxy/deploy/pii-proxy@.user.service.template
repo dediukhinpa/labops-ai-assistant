@@ -1,0 +1,23 @@
+[Unit]
+Description=LabOps pii-proxy for agent %i (user unit: masks PII between Claude Code and the API)
+After=labops-pseudonymizer.service
+Wants=labops-pseudonymizer.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Каталог подпроекта pii-proxy/ в рабочей копии (с node_modules после `bun install`).
+WorkingDirectory=__INSTALL_DIR__
+# Файл на агента: порт, PII_PROXY_AGENT_ID, токен сервиса, PII_PROXY_ALERT_FILE. Права 600.
+EnvironmentFile=__AGENT_HOME__/%i/.claude/secrets/pii-proxy.env
+ExecStart=__BUN_BIN__ run src/main.ts
+Restart=on-failure
+RestartSec=3
+# Замер 04.11.2026: пик ~220 МБ на 300 сообщений; 512 МБ - запас ~2x.
+MemoryMax=512M
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
