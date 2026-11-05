@@ -2,7 +2,8 @@
 
 Запуск: python media-masker/scripts/make_e2e_fixtures.py <каталог>
 Создаёт person.png, phone.jpg, passport.png (фото с ПДн), scan.pdf (скан), text.pdf (текстовый
-слой). Все значения вымышлены.
+слой), card.png (визитка с подписью), qr.png (QR с vCard), photo.png (фото без текста).
+Все значения вымышлены.
 """
 
 from __future__ import annotations
@@ -16,6 +17,9 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.conftest import PII_LINES, SAFE_LINES, make_text_image  # noqa: E402
+from tests.synthetic import (  # noqa: E402
+    VCARD, card_image, draw_signature, photo_image, qr_image,
+)
 from tests.test_api import scan_pdf, text_pdf  # noqa: E402
 
 PASSPORT_LINES = ("Паспорт 4510 123456", "Выдан: ОВД района Ясенево", *SAFE_LINES)
@@ -33,6 +37,11 @@ def main(out: Path) -> None:
     _save(make_text_image(PII_LINES), out / "person.png", "PNG")
     _save(make_text_image((*SAFE_LINES, *PII_LINES)), out / "phone.jpg", "JPEG")
     _save(make_text_image(PASSPORT_LINES), out / "passport.png", "PNG")
+    card = card_image()
+    draw_signature(card)
+    _save(card, out / "card.png", "PNG")
+    _save(qr_image(VCARD), out / "qr.png", "PNG")
+    _save(photo_image(), out / "photo.png", "PNG")
     (out / "scan.pdf").write_bytes(scan_pdf(2))
     (out / "text.pdf").write_bytes(text_pdf())
 

@@ -104,7 +104,13 @@ export type FakeMediaMode = 'ok' | 'http500' | 'refuse422' | 'refuse413' | 'hang
 /** Фейковый media-masker: картинку «закрашивает» префиксом, PDF разбирает по тестовой разметке. */
 export interface FakeMedia {
   readonly url: string;
-  readonly state: { mode: FakeMediaMode; calls: string[]; tokenSeen: string[] };
+  readonly state: {
+    mode: FakeMediaMode;
+    calls: string[];
+    tokenSeen: string[];
+    /** Что «распознано» на каждой картинке и странице скана (как поле recognized сервиса). */
+    recognized?: { text: string; codes: { kind: string; text: string }[]; hidden_text: boolean };
+  };
   stop(): Promise<void>;
 }
 
@@ -122,6 +128,8 @@ export function fakeMaskedData(data: string): string {
  */
 export function startFakeMedia(): FakeMedia {
   const state: FakeMedia['state'] = { mode: 'ok', calls: [], tokenSeen: [] };
+  const withRecognized = (): object => state.recognized === undefined ? {}
+    : { recognized: state.recognized };
   const server = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
@@ -137,13 +145,15 @@ export function startFakeMedia(): FakeMedia {
         { status: 413 });
       const body = (await req.json()) as { media_type: string; data: string };
       if (path === '/mask_image') {
-        return Response.json({ media_type: body.media_type, data: fakeMaskedData(body.data) });
+        return Response.json({ media_type: body.media_type, data: fakeMaskedData(body.data),
+          ...withRecognized() });
       }
       const spec = Buffer.from(body.data, 'base64').toString('utf8');
       const pages = spec.startsWith('TEXT:')
         ? spec.slice(5).split('|').map((text, index) => ({ index, text, image: null }))
         : Array.from({ length: Number(spec.slice(5)) }, (_v, index) => ({ index, text: null,
-          image: { media_type: 'image/jpeg', data: fakeMaskedData(`page${index}`) } }));
+          image: { media_type: 'image/jpeg', data: fakeMaskedData(`page${index}`) },
+          ...withRecognized() }));
       return Response.json({ kind: spec.startsWith('TEXT:') ? 'text' : 'images', pages });
     },
   });
