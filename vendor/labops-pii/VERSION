@@ -1,10 +1,10 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: v0.3.0
-tag: v0.3.0
-commit: 3c534719ac4045b2b190dc91d5d667d8ec1518b7
-parts: media,service
-vendored_at: 2026-11-05T11:33:22Z
+ref: f02d085
+tag: (без тега)
+commit: f02d085fb862a1e6e474414f5a32e4feb7bf0ba1
+parts: media,service,ts
+vendored_at: 2026-11-05T11:48:42Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
@@ -41,3 +41,24 @@ files:
   4cbfe1a749cf27cc81f0099f652eb7363fcc89eddec701379d2a0d40dd8cdf30  labops_pii/service.py
   59ec1b8f05717bad3c9c748488c2ba10602f3ab65067b0f762ac3876512676f1  labops_pii/store.py
   06256424fe301305c468d43f2e56dbc9fbf99aed9d6dc06e4d521201d6437b14  labops_pii/tech_tokens.py
+  ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  ts/LICENSE
+  830e33bf3a396670629ce376b695654023ceed129465bdfaac09c8f5d5a86be4  ts/package.json
+  371dc33274c468cb29394ae8e555382dbd4af912bc78ef4b43f473416d92bed1  ts/src/constants.ts
+  36bc9e0221ccdc30e0920506304b443b783bc357b6942f1d67feec0703e4b017  ts/src/errors.ts
+  534fafa377bfe1043ab580e74df170a3fe98e73e280b44d2a52f047857934245  ts/src/image-policy.ts
+  47e7689d778585529c406c6d5d08c0f295bfa295de578fc07337a0e3b89158d7  ts/src/index.ts
+  d49f514a831812a6cf88f885eb7de0e8b9e97905e141fcd670ef5b3c2fd7c5ba  ts/src/json-leaves.ts
+  bae5d57410acd13d76f60792d563e4ba0a7370a3edc5fa5b9843fb6c9bfa800c  ts/src/json-restore.ts
+  17ca13991d5690831e07198c59de8c962d30d685fcdbf6e820b0cd96cfc88442  ts/src/log.ts
+  135ac727107806ea94b33f4d292593e00043d749c2970fb7b7d127704f41cc4b  ts/src/mask-cache.ts
+  88f8a923e5b42f7da133d3147c05a0267af1a24d33f109f5dbc5cab2ae9a55e0  ts/src/masker.ts
+  1c68c9ef9b0b3fadd490b1fa8cdf27e75f8aa4d7c9f2904df466a09a3c2bb292  ts/src/media-client.ts
+  6d5e44b4d4f00f674f999c3e215150d897093e5542e7627b3b4338539f37f340  ts/src/media-text.ts
+  2aa235004b59312cc345d593222859258710f5f09cdb271a84817312861dc315  ts/src/media.ts
+  2d33215f725e502342380531a4f561da84cf79d1e28608dd3c5afcd081981430  ts/src/pseudonymizer-client.ts
+  d019f61b3170c4021139d7e5386b43695b238d9a876ae7f221bbbd87dbc0944d  ts/src/request-walker.ts
+  439aa1eef8d56dc344a93277bb087078b55e2aab38eb11760527329b3ddfa8bc  ts/src/restorer.ts
+  4fe503eef2b859e24c77f8b7f7b3d645290c722f32511ee08aebe0758b017028  ts/src/sse.ts
+  9064c0f2171d840b0ca5a7a14445ec73c5098211201fe02d6bf40e2abd7e5fa7  ts/src/stream-restore.ts
+  5130f101a55adc69b42b0e4d95132e8bc95f9222c3c587461d52d3fbdade57ef  ts/src/text-split.ts
+  d475531651fb184e2f48bf83010a80db3776140bfe15522df6b6360d930485b0  ts/src/token-boundary-buffer.ts
