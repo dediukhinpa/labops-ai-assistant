@@ -99,6 +99,15 @@ for key in ANTHROPIC_BASE_URL DISABLE_ERROR_REPORTING cleanupPeriodDays; do
     bad "settings.json.template не задаёт $key — данные могут уйти мимо pii-proxy / без срока хранения"
   fi
 done
+# 4a2b. Транскрипты бессрочные (решение владельца 05.11.26: память и контекст клиента не стираются).
+# JSON не допускает комментариев, поэтому причина здесь. Значение 0 не используем: смысл 0 в CLI
+# не подтверждён, а срок по умолчанию (30 дн.) рвёт контекст возобновляемых сессий собеседников.
+TRANSCRIPT_KEEP_DAYS=36500
+if grep -q "\"cleanupPeriodDays\": $TRANSCRIPT_KEEP_DAYS" agent-template/templates/settings.json.template; then
+  ok "cleanupPeriodDays = $TRANSCRIPT_KEEP_DAYS (транскрипты бессрочны)"
+else
+  bad "cleanupPeriodDays != $TRANSCRIPT_KEEP_DAYS — CLI сотрёт транскрипты и контекст клиента"
+fi
 # 4a3. DISABLE_TELEMETRY и CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC выключают у CLI загрузку
 # флагов функций, и каналы (Telegram) не поднимаются: «Channels are not currently available»
 # (проверено 05.11.26 на CLI 2.1.318, developer остался без связи). В шаблон их не возвращать.

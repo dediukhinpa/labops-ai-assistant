@@ -19,6 +19,14 @@ export const PROXY_ENV_KEYS = [
   'DISABLE_ERROR_REPORTING',
 ] as const
 
+/**
+ * Срок хранения транскриптов CLI в днях (~100 лет = бессрочно). Решение владельца 05.11.26:
+ * контекст клиента не теряется. Сессии собеседников возобновляются по id, а CLI по умолчанию
+ * удаляет транскрипты старше 30 дней - клиент, вернувшийся через месяц, потерял бы контекст.
+ * 0 не используем: его смысл в CLI не подтверждён.
+ */
+export const TRANSCRIPT_KEEP_DAYS = 36500
+
 /** Прокси слушает только локальный адрес: любое другое значение не считается прокси агента. */
 const LOCAL_PROXY_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/
 
@@ -60,7 +68,8 @@ export function ensureChatsProxyEnv(workspaceDir: string, chatsBasePath: string)
     existing.env !== null && typeof existing.env === 'object'
       ? { ...(existing.env as Record<string, unknown>) }
       : {}
-  let changed = false
+  // cleanupPeriodDays читается из настроек проекта сессии; user-уровень даёт дефолт 30 дней.
+  let changed = existing.cleanupPeriodDays !== TRANSCRIPT_KEEP_DAYS
   for (const key of PROXY_ENV_KEYS) {
     const value = env[key]
     if (typeof value === 'string' && value !== '' && chatsEnv[key] !== value) {
@@ -72,7 +81,11 @@ export function ensureChatsProxyEnv(workspaceDir: string, chatsBasePath: string)
   try {
     mkdirSync(dirname(target), { recursive: true })
     const tmp = `${target}.tmp`
-    writeFileSync(tmp, `${JSON.stringify({ ...existing, env: chatsEnv }, null, 2)}\n`)
+    writeFileSync(tmp, `${JSON.stringify(
+      { ...existing, cleanupPeriodDays: TRANSCRIPT_KEEP_DAYS, env: chatsEnv },
+      null,
+      2,
+    )}\n`)
     renameSync(tmp, target)
   } catch (e) {
     throw new Error(`multichat: не удалось записать прокси ПДн в ${target}: ${String(e)}`)

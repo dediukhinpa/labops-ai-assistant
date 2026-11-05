@@ -14,8 +14,10 @@ import os
 import stat
 import sys
 import tempfile
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -162,6 +164,41 @@ class PiiForgetTest(unittest.TestCase):
         self.assertFalse(old.exists())
         self.assertTrue(fresh.exists())
         self.assertTrue(foreign.exists())
+
+    def test_thread_id_has_agent_prefix(self) -> None:
+        self.assertEqual(pf.build_thread_ids(["dev"], ["s1", "s2"]), ["dev:s1", "dev:s2"])
+        ns = pf.build_parser().parse_args(
+            ["--user-id", SUBJECT, "--workspace", str(self.ws), "--agent", "extra"]
+        )
+        self.assertEqual(pf.agent_ids(ns), ["extra", "agent"])
+
+    def test_dry_run_counts_threads_and_apply_deletes_prefixed(self) -> None:
+        deleted: list[str] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_DELETE(self) -> None:  # noqa: N802
+                deleted.append(self.path)
+                self.send_response(204)
+                self.end_headers()
+
+            def log_message(self, *_: object) -> None:
+                return
+
+        srv = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        token = self.root / "token"
+        token.write_text("t")
+        url = f"http://127.0.0.1:{srv.server_address[1]}"
+        extra = ("--pseudonymizer-url", url, "--pseudonymizer-token-file", str(token))
+        try:
+            dry = self.run_cli(*extra)
+            self.assertEqual(dry["counts"]["pseudonymizer_threads"], 1)
+            self.assertEqual(deleted, [])
+            self.run_cli("--apply", *extra)
+        finally:
+            srv.shutdown()
+        # ws = <root>/agent/.claude, значит агент "agent"; сессия aaaa целиком принадлежит субъекту
+        self.assertEqual([d.replace("%3A", ":") for d in deleted], ["/threads/agent:aaaa"])
 
     def test_bad_user_id_rejected(self) -> None:
         self.assertEqual(pf.main(["--user-id", "abc"]), 2)

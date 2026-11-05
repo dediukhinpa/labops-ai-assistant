@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { ensureChatsProxyEnv } from '../../src/router/proxy-env.js'
+import { TRANSCRIPT_KEEP_DAYS, ensureChatsProxyEnv } from '../../src/router/proxy-env.js'
 
 let root: string
 let workspace: string
@@ -76,5 +76,27 @@ describe('ensureChatsProxyEnv', () => {
     mkdirSync(join(chats, '.claude'), { recursive: true })
     writeFileSync(target(), '{broken')
     expect(() => ensureChatsProxyEnv(workspace, chats)).toThrow()
+  })
+})
+
+describe('cleanupPeriodDays сессий собеседников', () => {
+  test('прописывается бессрочный срок, существующие ключи сохраняются', () => {
+    agentSettings({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:6311' })
+    mkdirSync(join(chats, '.claude'), { recursive: true })
+    writeFileSync(target(), JSON.stringify({ cleanupPeriodDays: 30, foo: 'bar' }))
+    expect(ensureChatsProxyEnv(workspace, chats)).toBe(true)
+    expect(readTarget().cleanupPeriodDays).toBe(TRANSCRIPT_KEEP_DAYS)
+    expect(readTarget().foo).toBe('bar')
+  })
+
+  test('срок исправляется, даже когда прокси уже прописан', () => {
+    agentSettings({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:6311' })
+    mkdirSync(join(chats, '.claude'), { recursive: true })
+    writeFileSync(
+      target(),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:6311' } }),
+    )
+    ensureChatsProxyEnv(workspace, chats)
+    expect(readTarget().cleanupPeriodDays).toBe(TRANSCRIPT_KEEP_DAYS)
   })
 })
