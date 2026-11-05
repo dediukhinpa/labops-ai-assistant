@@ -63,4 +63,15 @@ eq "$(pii_stuck_poll alpha)" 0 "повторно нового нет"
 echo '{"session":"c3","count":3}' >> "$f"
 eq "$(pii_stuck_poll alpha)" 1 "одна новая"
 
+# 6. геопроверка: не RU - предупреждение; RU и нет сети - без предупреждения; всегда код 0
+warn() { echo "WARN $*"; }; note() { echo "NOTE $*"; }; ok() { echo "OK $*"; }
+PII_GEO_CMD="echo nl" out="$(pii_geo_check)"; rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q 'WARN.*NL' || fail "не RU должно предупреждать"
+PII_GEO_CMD="echo RU" out="$(pii_geo_check)"
+echo "$out" | grep -q WARN && fail "RU не должно предупреждать"
+PII_GEO_CMD="false" out="$(pii_geo_check)"; rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q 'NOTE.*пропущена' || fail "нет сети: пропуск без ошибки"
+PII_GEO_CMD="echo <html>blocked" out="$(pii_geo_check)"
+echo "$out" | grep -q 'NOTE' || fail "мусорный ответ считается неопределённым"
+
 echo "OK: pii.test.sh"

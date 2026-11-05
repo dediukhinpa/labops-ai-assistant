@@ -72,6 +72,8 @@ sync_sources() {
   local sub
   mkdir -p "$RUNTIME_DIR"
   for sub in pii-proxy pseudonymizer; do
+    # Агент создаётся из копии роя без pii-*: код уже лежит в рабочей копии после шага host.
+    if [ ! -d "$SRC_DIR/$sub" ] && [ -d "$RUNTIME_DIR/$sub/deploy" ]; then continue; fi
     [ -d "$SRC_DIR/$sub" ] || die "нет каталога $SRC_DIR/$sub - установка идёт не из монорепо?"
     mkdir -p "$RUNTIME_DIR/$sub"
     (cd "$SRC_DIR/$sub" && tar --exclude=node_modules --exclude=.venv --exclude=__pycache__ \
