@@ -121,8 +121,12 @@ grep -qx "MEDIA_MASKER_API_TOKEN=$mtok" "$CLAUDE_LAB/alpha/.claude/secrets/pii-p
 grep -qx 'MEDIA_MASKER_URL=http://127.0.0.1:8320' "$CLAUDE_LAB/alpha/.claude/secrets/pii-proxy.env" \
   || fail "адрес маскера"
 
-# 4. идемпотентность: повтор не плодит хуки и не меняет порт
+# 4. идемпотентность: повтор не плодит хуки и не меняет порт; модуль, которого нет в репо,
+# из рабочей копии src/ исчезает (иначе остаётся мёртвый дубль переехавшего в библиотеку кода)
+touch "$TMP/runtime/pii-proxy/src/stale-module.ts"
 bash "$HERE/pii-setup.sh" agent alpha >/dev/null 2>&1
+[ ! -e "$TMP/runtime/pii-proxy/src/stale-module.ts" ] || fail "устаревший модуль остался в src/"
+[ -f "$TMP/runtime/pii-proxy/src/main.ts" ] || fail "src/ прокси не восстановлен"
 n="$(grep -c 'session-end.sh' "$CLAUDE_LAB/alpha/.claude/settings.json")"
 [ "$n" = "1" ] || fail "хук продублирован ($n)"
 [ "$(sed -n 's/^PII_PROXY_PORT=//p' "$CLAUDE_LAB/alpha/.claude/secrets/pii-proxy.env")" = "$pa" ] \
