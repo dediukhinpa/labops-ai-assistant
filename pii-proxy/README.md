@@ -47,6 +47,11 @@ Tesseract и растеризация PDF тяжёлые (до 2 ГБ, мину�
 2. Поднять `media-masker` (unit `MemoryMax=2G`, `OMP_THREAD_LIMIT=1`, 2 параллельных запроса).
 3. Задать `MEDIA_MASKER_API_TOKEN` в секретном файле прокси, перезапустить прокси.
 
+`pii-setup.sh host` делает шаги 1-2 сам, если Tesseract (rus+eng) найден: venv, юнит
+`labops-media-masker`, токен в `~/.config/labops-pii/media-masker.token` (600); `pii-setup.sh
+agent` пишет в env прокси `mask` и токен. Tesseract не найден - громкое предупреждение,
+media-masker не ставится, агентам пишется `PII_PROXY_IMAGE_POLICY=strip` (старт не ломается).
+
 Сквозная проверка с настоящим OCR: `media-masker/scripts/make_e2e_fixtures.py <каталог>`,
 затем `MEDIA_E2E_URL=... MEDIA_E2E_TOKEN=... MEDIA_E2E_DIR=<каталог> bun test
 tests/media-e2e.test.ts` (без переменных тест пропускается).
