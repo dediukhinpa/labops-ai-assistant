@@ -79,7 +79,7 @@ python3 - "$CLAUDE_LAB/alpha/.claude/settings.json" "$pa" <<'PY' || fail "settin
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["env"]["ANTHROPIC_BASE_URL"] == f"http://127.0.0.1:{sys.argv[2]}"
-assert d["env"]["DISABLE_TELEMETRY"] == "1"
+assert d["env"]["DISABLE_ERROR_REPORTING"] == "1"
 cmds = [h["command"] for g in d["hooks"]["SessionEnd"] for h in g["hooks"]]
 assert len(cmds) == 2 and "brain-flush" in cmds[0] and "pii-proxy/hooks/session-end.sh" in cmds[1]
 assert d["model"] == "sonnet"

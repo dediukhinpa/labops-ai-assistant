@@ -12,11 +12,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path'
 
 /** Ключи env из settings.json агента, которые наследуют сессии собеседников. */
+// DISABLE_TELEMETRY и CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC сюда не входят: они выключают
+// у CLI флаги функций, и сессия собеседника остаётся без канала Telegram.
 export const PROXY_ENV_KEYS = [
   'ANTHROPIC_BASE_URL',
-  'DISABLE_TELEMETRY',
   'DISABLE_ERROR_REPORTING',
-  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
 ] as const
 
 /** Прокси слушает только локальный адрес: любое другое значение не считается прокси агента. */
