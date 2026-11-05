@@ -1,0 +1,12 @@
+[Unit]
+Description=Суточный retention sweep (152-ФЗ)
+
+[Timer]
+# Ночью, со сдвигом, чтобы не совпадать с другими суточными задачами.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=pii-retention.service
+
+[Install]
+WantedBy=timers.target
