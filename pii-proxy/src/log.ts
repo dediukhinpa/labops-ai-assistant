@@ -17,6 +17,7 @@ export interface LogFields {
   readonly blocked_attachments?: Readonly<Record<string, number>>;
   readonly restored_tokens?: number;
   readonly pii_types?: readonly string[];
+  readonly count?: number;
 }
 
 /** Приёмник журнала (в тестах подменяется). */

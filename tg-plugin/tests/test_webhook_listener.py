@@ -314,6 +314,46 @@ class SubprocessEnvAllowlistTest(unittest.TestCase):
                 os.environ.pop("CLAUDE_HARNESS_MARKER", None)
 
 
+class AgentSettingsEnvTest(unittest.TestCase):
+    """`claude -p` обязан получать ANTHROPIC_BASE_URL (pii-proxy) из settings.json агента."""
+
+    def _env_with_settings(self, settings: str | None) -> dict[str, str]:
+        with tempfile.TemporaryDirectory() as raw:
+            tmpdir = Path(raw)
+            module = _load_listener(tmpdir)
+            if settings is not None:
+                (tmpdir / "settings.json").write_text(settings, encoding="utf-8")
+            return module._build_subprocess_env()
+
+    def setUp(self) -> None:
+        os.environ.pop("ANTHROPIC_BASE_URL", None)
+
+    def test_proxy_url_and_telemetry_flags_forwarded(self) -> None:
+        env = self._env_with_settings(json.dumps({"env": {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:6311",
+            "DISABLE_TELEMETRY": "1",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",
+        }, "hooks": {"Stop": []}}))
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "http://127.0.0.1:6311")
+        self.assertEqual(env["DISABLE_TELEMETRY"], "1")
+        # Прочее из settings.json не пробрасывается.
+        self.assertNotIn("CLAUDE_CODE_AUTO_COMPACT_WINDOW", env)
+
+    def test_explicit_listener_env_wins(self) -> None:
+        os.environ["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:9999"
+        try:
+            env = self._env_with_settings(
+                json.dumps({"env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:6311"}}))
+        finally:
+            os.environ.pop("ANTHROPIC_BASE_URL", None)
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "http://127.0.0.1:9999")
+
+    def test_missing_or_broken_settings_means_no_proxy_key(self) -> None:
+        self.assertNotIn("ANTHROPIC_BASE_URL", self._env_with_settings(None))
+        self.assertNotIn("ANTHROPIC_BASE_URL", self._env_with_settings("{not json"))
+        self.assertNotIn("ANTHROPIC_BASE_URL", self._env_with_settings('{"env": []}'))
+
+
 class RequiredEnvTest(unittest.TestCase):
     def test_agent_name_required(self) -> None:
         """Empty WEBHOOK_AGENT_NAME must abort startup, not fall back to a default."""

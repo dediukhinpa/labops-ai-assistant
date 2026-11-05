@@ -55,6 +55,41 @@ CLI_UPDATE_IDLE_CYCLES="${WATCHDOG_CLI_UPDATE_IDLE_CYCLES:-2}"
 
 log() { echo "[watchdog/$AGENT] $(date -u '+%H:%M:%S') $*"; }
 
+# pii-proxy: агент ходит в модель только через него (ANTHROPIC_BASE_URL в settings.json).
+# shellcheck source=lib/pii.sh
+source "$SCRIPT_DIR/lib/pii.sh"
+
+# pii_start_allowed — можно ли стартовать claude. Зачем: упавший прокси не должен привести к
+# старту «в обход» (fail closed). Если прокси настроен, но молчит, сначала пробуем его
+# поднять через user-юнит, затем перепроверяем; иначе алерт оператору, повтор на следующем
+# проходе цикла (~30с). Алерт троттлится notify.sh (раз в WATCHDOG_DOWN_ALERT_COOLDOWN).
+pii_start_allowed() {
+  if pii_gate "$AGENT"; then return 0; fi
+  if command -v systemctl >/dev/null 2>&1; then
+    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
+      systemctl --user start "labops-pii-proxy@$AGENT.service" >/dev/null 2>&1 || true
+    sleep 3
+    if pii_gate "$AGENT"; then return 0; fi
+  fi
+  log "pii-proxy недоступен — claude не стартую (без прокси данные ушли бы в обход маски)"
+  WATCHDOG_ALERT_COOLDOWN="${WATCHDOG_DOWN_ALERT_COOLDOWN:-3600}" \
+    notify_op "$AGENT" "⛔ pii-proxy агента не отвечает — агент не запущен, чтобы данные не ушли в модель без маскирования. Проверьте: systemctl --user status labops-pii-proxy@$AGENT"
+  return 1
+}
+
+# pii_report_stuck — алерт о застрявшей сессии (прокси пишет session_stuck после серии
+# отказов 422/503). Простой механизм: файл событий + счётчик прочитанного, без журнала.
+pii_report_stuck() {
+  local n
+  n="$(pii_stuck_poll "$AGENT" 2>/dev/null || echo 0)"
+  if [ "${n:-0}" -gt 0 ]; then
+    log "pii-proxy: session_stuck x$n"
+    WATCHDOG_ALERT_COOLDOWN="${WATCHDOG_PII_STUCK_COOLDOWN:-3600}" \
+      notify_op "$AGENT" "⚠️ сессия застряла: прокси маскирования отклоняет запросы подряд (422/503). Агент, вероятно, молчит. Пришлите /doctor или проверьте журнал labops-pii-proxy@$AGENT."
+  fi
+  return 0
+}
+
 # ── Что оператор действительно хочет знать ───────────────────────────────────
 # РОВНО ДВА события заслуживают сообщения в Telegram:
 #   (1) агент не может работать из-за подписки/входа Claude;
@@ -131,7 +166,9 @@ log "starting..."
 if tmux has-session -t "=$SESSION" 2>/dev/null; then
   log "session already alive — resuming monitor without restart"
 else
-  "$START_SCRIPT" "$AGENT"
+  # Если прокси не жив, сессию не поднимаем: основной цикл ниже увидит «session gone» и
+  # повторит попытку через restart_session (тот же gate).
+  if pii_start_allowed; then "$START_SCRIPT" "$AGENT"; fi
 fi
 
 # Liveness model. The ONLY reliable "a turn is actively running" marker is the
@@ -291,6 +328,8 @@ attempt_stuck_input_recovery() {
 restart_session() {
   # Молча: одиночный рестарт — штатное самолечение, оператору сообщать не о чем.
   # Тревога поднимается только если рестарты пошли по кругу (см. note_restart).
+  # Прокси жив? Нет - не перезапускаем, повтор на следующем проходе (см. pii_start_allowed).
+  if ! pii_start_allowed; then return 0; fi
   log "restarting ($1)"
   "$START_SCRIPT" "$AGENT"
   PREV_TAIL=""; FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
@@ -330,6 +369,8 @@ while true; do
       kill -9 "$p" 2>/dev/null || true
     fi
   done
+
+  pii_report_stuck
 
   # Session gone entirely
   if ! tmux has-session -t "=$SESSION" 2>/dev/null; then

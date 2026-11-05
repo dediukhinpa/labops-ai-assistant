@@ -38,6 +38,12 @@ it came from. Agent sessions therefore receive their environment from
 Keep it that way when adding new configuration — pass it through `channel.env` or
 `.claude/secrets/`, never as a flag.
 
+## PII masking and data localisation
+
+Agents are installed behind a local `pii-proxy` by default (`SKIP_PII_PROXY=1` disables it
+explicitly). Masking does not replace 152-FZ localisation: `install.sh` warns when the host IP is
+outside Russia, and the operator decides where personal data of Russian citizens may be stored.
+
 ## Supported versions
 
 Security fixes target the latest commit on the default branch (`main`). There are

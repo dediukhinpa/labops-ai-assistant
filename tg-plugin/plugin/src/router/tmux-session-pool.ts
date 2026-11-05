@@ -30,6 +30,7 @@ import { fileURLToPath } from 'node:url'
 
 import type { MultichatPolicy } from '../chats/policy-loader.js'
 import { sessionTarget } from '../tmux/index.js'
+import { ensureChatsProxyEnv } from './proxy-env.js'
 
 // Resolve the spawn-chat-shell.sh wrapper relative to THIS module so
 // it works regardless of cwd. The wrapper lives at
@@ -686,6 +687,13 @@ export class TmuxSessionPool {
       this.sessions.set(chatId, handle)
       await this.atomicSaveSessions()
       return handle
+    }
+
+    // 152-ФЗ: сессия собеседника ходит в модель через pii-proxy агента. ANTHROPIC_* из окружения
+    // вычищен (см. FORBIDDEN_ENV_REGEX), поэтому адрес прокси кладём в settings.json сессии.
+    // При ошибке записи бросаем: лучше не поднять сессию, чем уйти в API напрямую.
+    if (ensureChatsProxyEnv(this.workspaceDir, this.chatsBasePath)) {
+      this.logger.info('pool.pii_proxy_env_applied', { chatId })
     }
 
     // C4 fix (2026-05-23): cwd MUST be chatsBasePath so claude's

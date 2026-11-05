@@ -228,6 +228,9 @@ fill_template() {
     sed_i "s|{{COMMIT_LANGUAGE}}|${COMMIT_LANGUAGE}|g" "$dst"
     sed_i "s|{{GITHUB_USERNAME}}|${GITHUB_USERNAME}|g" "$dst"
     sed_i "s|{{INSTALL_DATE}}|$(date -u +%Y-%m-%d)|g" "$dst"
+    # URL локального pii-proxy агента (его выдаёт orchestration/pii-setup.sh через new-agent.sh).
+    # Пусто - прокси отключён (SKIP_PII_PROXY=1) либо шаблон рендерится вне new-agent.sh.
+    sed_i "s|{{PII_PROXY_URL}}|${PII_PROXY_URL:-}|g" "$dst"
 
     # ${VAR} placeholders (for .mcp.json template and tools.md, settings.json)
     sed_i "s|\${MCP_HOST}|${MCP_HOST}|g" "$dst"
@@ -285,6 +288,20 @@ fill_template "${TEMPLATES_DIR}/episodic.md.template"    "${WORKSPACE}/core/acti
 fill_template "${TEMPLATES_DIR}/preferences.md.template" "${WORKSPACE}/core/passive/preferences.md"
 fill_template "${TEMPLATES_DIR}/mcp.json.template"     "${WORKSPACE}/.mcp.json"
 fill_template "${TEMPLATES_DIR}/settings.json.template" "${WORKSPACE}/settings.json"
+# Пустой ANTHROPIC_BASE_URL claude прочёл бы как «адрес не задан» неоднозначно: если прокси
+# не выдан, ключ убираем целиком (агент пойдёт на API напрямую, а install.sh/new-agent.sh уже
+# громко предупредили об отключении).
+python3 - "${WORKSPACE}/settings.json" <<'PY' || warn "не удалось почистить пустой ANTHROPIC_BASE_URL"
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+env = d.get("env", {})
+if env.get("ANTHROPIC_BASE_URL", None) == "":
+    del env["ANTHROPIC_BASE_URL"]
+    with open(path, "w") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+PY
 
 # Общие правила всех агентов (git, безопасность, смена модели, принципы) живут
 # ТОЛЬКО в ~/.claude/CLAUDE.md -- из агентских файлов их убрали, чтобы одно правило
