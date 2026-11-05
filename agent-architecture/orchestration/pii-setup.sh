@@ -90,12 +90,42 @@ sync_sources() {
         --exclude=data -cf - .) | (cd "$RUNTIME_DIR/pii-proxy" && tar -xf -)
   fi
   local vendor="$SRC_DIR/vendor/$LIB_NAME"
+  sync_ts_lib "$vendor"
   if [ ! -d "$vendor/labops_pii" ] && [ -d "$LIB_DIR/labops_pii" ]; then return 0; fi
   [ -d "$vendor/labops_pii" ] || die "нет $vendor/labops_pii - вендоренная библиотека не найдена"
   mkdir -p "$LIB_DIR"
   # Пакет заменяем целиком (без tar поверх): файлы, пропавшие в новом теге, не должны остаться.
   rm -rf "$LIB_DIR/labops_pii"
-  (cd "$vendor" && tar --exclude=__pycache__ -cf - .) | (cd "$LIB_DIR" && tar -xf -)
+  # ts/ уже лежит в $RUNTIME_DIR/vendor (sync_ts_lib): в копию Python-части он не нужен
+  (cd "$vendor" && tar --exclude=__pycache__ --exclude=./ts -cf - .) \
+    | (cd "$LIB_DIR" && tar -xf -)
+}
+
+# TS-часть библиотеки (@labops/pii) в раскладку, которую ждёт pii-proxy: tsconfig.json прокси
+# ссылается на ../vendor/labops-pii/ts/src, то есть на $RUNTIME_DIR/vendor/labops-pii/ts.
+# Пакет заменяем целиком; node_modules (zod) там не вендорится, его ставит install_ts_deps.
+sync_ts_lib() {
+  local vendor="$1" dest="$RUNTIME_DIR/vendor/$LIB_NAME/ts"
+  if [ ! -d "$vendor/ts/src" ]; then
+    # Агент создаётся из копии без исходников: ts уже лежит в рабочей копии после шага host
+    [ -d "$dest/src" ] || die "нет $vendor/ts/src - вендоренная TS-часть labops-pii не найдена"
+    return 0
+  fi
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  (cd "$vendor/ts" && tar --exclude=node_modules -cf - .) | (cd "$dest" && tar -xf -)
+  TS_LIB_FRESH=1
+}
+
+# zod для вендоренной TS-части: рядом с её файлами, иначе импорт 'zod' не находится (resolve идёт
+# от реального пути файла, а не от pii-proxy). Версия закреплена вендоренным bun.lock.
+install_ts_deps() {
+  local dest="$RUNTIME_DIR/vendor/$LIB_NAME/ts"
+  [ "${PII_SKIP_BUILD:-0}" = "1" ] && return 0
+  if [ "${TS_LIB_FRESH:-0}" = "1" ] || [ ! -d "$dest/node_modules" ]; then
+    (cd "$dest" && "$(find_bun)" install --production --frozen-lockfile) \
+      || die "bun install для вендоренной TS-части labops-pii не удался (нужен bun в PATH)"
+  fi
 }
 
 # Зависимости библиотеки в общий venv (код подключает PYTHONPATH юнита, pip-пакета нет).
@@ -338,6 +368,7 @@ cmd_agent() {
   fi
   port="$(pii_proxy_port "$agent")"
   sync_sources
+  install_ts_deps
   if [ "${PII_SKIP_BUILD:-0}" != "1" ] && [ ! -d "$RUNTIME_DIR/pii-proxy/node_modules" ]; then
     (cd "$RUNTIME_DIR/pii-proxy" && "$(find_bun)" install --frozen-lockfile) \
       || die "bun install для pii-proxy не удался (нужен bun в PATH)"

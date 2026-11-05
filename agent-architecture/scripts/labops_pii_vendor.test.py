@@ -3,7 +3,7 @@
 
 Читает vendor/labops-pii/VERSION и сверяет sha256 каждого файла; лишний или изменённый файл -
 падение. Чинить нужно в репозитории labops-pii (PR, тег), затем обновить копию командой
-`labops-pii/tools/vendor.sh <каталог монорепо> <тег> service,media`.
+`labops-pii/tools/vendor.sh <каталог монорепо> <тег> service,media,ts`.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from pathlib import Path
 
 VENDOR_DIR = Path(__file__).resolve().parents[2] / "vendor" / "labops-pii"
 VERSION_NAME = "VERSION"
-IGNORED_DIRS = {"__pycache__"}
+# node_modules: зависимости TS-части (zod) ставит проект, они не вендорятся
+IGNORED_DIRS = {"__pycache__", "node_modules"}
 
 
 def declared_hashes() -> dict[str, str]:
