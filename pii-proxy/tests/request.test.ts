@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { ATTACHMENT_STRIPPED_TEXT, SYSTEM_INSERT_TEXT } from '../src/constants';
+import { ATTACHMENT_STRIPPED_TEXT, SYSTEM_INSERT_TEXT } from '@labops/pii';
 import { startRig, post, textStream, type Rig } from './helpers';
 
 const DICT = { 'Иван Петров': '[PERSON_1]', '+7 900 000-00-01': '[PHONE_1]' };

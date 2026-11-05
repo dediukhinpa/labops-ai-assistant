@@ -17,7 +17,10 @@
     "isolatedModules": true,
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false,
-    "types": ["bun-types"]
+    "types": ["bun-types"],
+    "paths": {
+      "@labops/pii": ["../vendor/labops-pii/ts/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "state"]

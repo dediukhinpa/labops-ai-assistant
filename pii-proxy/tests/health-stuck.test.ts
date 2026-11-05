@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { STUCK_FAILURE_THRESHOLD, SESSION_HEADER } from '../src/constants';
+import { STUCK_FAILURE_THRESHOLD, SESSION_HEADER } from '../src/proxy-constants';
 import { SessionStuckTracker } from '../src/session-stuck';
 import { PiiProxy } from '../src/proxy';
 import {

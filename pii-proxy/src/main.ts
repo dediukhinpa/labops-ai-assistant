@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 import { loadConfig } from './config';
-import { stderrLogger } from './log';
+import { stderrLogger } from './stderr-logger';
 import { PiiProxy } from './proxy';
 import type { StuckSignal } from './session-stuck';
 

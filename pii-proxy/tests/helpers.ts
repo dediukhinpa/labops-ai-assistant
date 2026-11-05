@@ -1,5 +1,5 @@
 import type { ProxyConfig } from '../src/config';
-import type { LogFields, Logger } from '../src/log';
+import type { LogFields, Logger } from '@labops/pii';
 import { PiiProxy, type RunningProxy } from '../src/proxy';
 
 export const TEST_TOKEN = 'test-token';

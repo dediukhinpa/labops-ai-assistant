@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { loadConfig } from '../src/config';
-import { SYSTEM_INSERT_TEXT } from '../src/constants';
-import { maskCacheKey } from '../src/mask-cache';
-import { HttpPseudonymizer } from '../src/pseudonymizer-client';
+import { SYSTEM_INSERT_TEXT, maskCacheKey, HttpPseudonymizer } from '@labops/pii';
 import { startFakeService, startRig, post, textStream, TEST_TOKEN, type Rig } from './helpers';
 
 const BASE_ENV = {

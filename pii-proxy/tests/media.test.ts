@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { loadConfig } from '../src/config';
-import { attachmentBlockedText, SYSTEM_INSERT_TEXT } from '../src/constants';
+import { attachmentBlockedText, SYSTEM_INSERT_TEXT } from '@labops/pii';
 import { MEDIA_TOKEN, fakeMaskedData, post, startRig, textStream, type Rig } from './helpers';
 
 const DICT = { 'Иван Петров': '[PERSON_1]', '+7 900 000-00-01': '[PHONE_1]' };
