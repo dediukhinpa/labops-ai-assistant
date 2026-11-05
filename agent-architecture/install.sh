@@ -25,6 +25,8 @@
 #                             # siblings ещё не установлены их собственными install.sh —
 #                             # агент стартует в деградированном режиме, см. README → Quickstart.
 #   ./install.sh --test-only  # только self-test
+#   ./install.sh --proxy-only # ТОЛЬКО поставить прокси для Donut Browser (Squid) и выйти:
+#                             # так прокси появляется до Claude, через него регистрируют аккаунт
 #   ./install.sh --no-agent   # подготовить + склонировать siblings, но авторизацию и
 #                             # агента не выполнять (для ручного/отложенного запуска:
 #                             #  claude --dangerously-skip-permissions && bash skills/create-agent/new-agent.sh)
@@ -36,6 +38,10 @@
 #   SKIP_PII_PROXY=1          # НЕ ставить маскирование ПДн (pii-proxy): агент пойдёт в модель
 #                             # напрямую, с громким предупреждением. По умолчанию - ставится.
 #   SKIP_VOICE=1              # не ставить локальную расшифровку голоса (voice-transcriber)
+#   SETUP_PROXY=1             # ПОСТАВИТЬ HTTP-прокси (Squid) для Donut Browser; по умолчанию
+#                             # выключено: шаг открывает порт 3128 наружу. Пароль случайный,
+#                             # лежит в ~/proxy-credentials.txt (LABOPS_PROXY_ALLOW_FROM=<IP> —
+#                             # пускать только с этого адреса)
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
 #   PREFLIGHT_DONE=1          # пропустить проверку доступности внешних хостов
 #   SKIP_SELFTEST=1           # не останавливать установку на self-test (осознанный обход
@@ -59,10 +65,14 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # voice_install: сервис расшифровки голоса ставится, пока у установки есть root.
 # shellcheck source=orchestration/lib/voice-install.sh
 . "$REPO_DIR/orchestration/lib/voice-install.sh"
+# proxy_install: Squid для Donut Browser, ставится только по SETUP_PROXY=1 или --proxy-only.
+# shellcheck source=orchestration/lib/proxy-install.sh
+. "$REPO_DIR/orchestration/lib/proxy-install.sh"
 
 MODE="full"
 [ "${1:-}" = "--test-only" ] && MODE="test"
 [ "${1:-}" = "--no-agent" ] && MODE="prep"
+[ "${1:-}" = "--proxy-only" ] && MODE="proxy"
 
 echo "════════════════════════════════════════════"
 echo "  labops-agent-architecture · установка"
@@ -165,6 +175,20 @@ run_voice_step() {
     || warn "голос не настроен — текст работает; повторите установку, чтобы включить голос (пропустить: SKIP_VOICE=1)"
 }
 
+# run_proxy_step <пользователь> <его дом> — шаг «Прокси для Donut Browser». По умолчанию
+# выключен: он открывает порт наружу, а нужен не всем. Сбой не останавливает установку.
+run_proxy_step() {
+  export LABOPS_PROXY_DONE=1
+  if [ "${SETUP_PROXY:-0}" != "1" ] && [ "$MODE" != "proxy" ]; then
+    return 0
+  fi
+  say "2d. Прокси для Donut Browser"
+  echo "  Ставлю Squid: Donut Browser на вашем компьютере будет ходить в сеть через этот"
+  echo "  сервер. Доступ — по логину и случайному паролю; пароль в вывод не печатается."
+  proxy_install "$1" "$2" \
+    || warn "прокси не настроен — повторите: bash install.sh --proxy-only (подробности выше)"
+}
+
 # write_runtime_conf <владелец> <checkout монорепо> <лаборатория> — записать от
 # root, из какого checkout хелпер labops-runtime-deploy собирает копию роя в
 # $LABOPS_RUNTIME_DIR. Источник решает root, а не тот, кто зовёт хелпер через sudo.
@@ -198,6 +222,18 @@ runtime_conf_source() {
   { grep -E '^SOURCE=' "$LABOPS_RUNTIME_CONF" 2>/dev/null || true; } \
     | tail -n 1 | sed 's/^SOURCE=//'
 }
+
+# ── --proxy-only ──────────────────────────────────────────────────
+# Прокси нужен ДО аккаунта Claude (через него аккаунт и регистрируют), поэтому его можно
+# поставить отдельно, не начиная остальную установку: ни preflight, ни агента, ни Claude Code.
+if [ "$MODE" = "proxy" ]; then
+  say "Прокси для Donut Browser"
+  echo "  Ставлю Squid: Donut Browser на вашем компьютере будет ходить в сеть через этот"
+  echo "  сервер. Доступ — по логину и случайному паролю; пароль в вывод не печатается."
+  # Здесь сбой прокси — сбой всей команды: другого дела у режима нет.
+  proxy_install "$(id -un)" "$HOME" || die "прокси не настроен — причина в сообщениях выше"
+  exit 0
+fi
 
 # ── 0. Доступность внешних хостов ─────────────────────────────────
 # Проверяем связь ПЕРВЫМ делом, до любых изменений на машине. Установка тянет
@@ -404,6 +440,7 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
         "${CLAUDE_LAB:-$NEW_HOME/.claude-lab}" || true
     fi
     run_voice_step "$AGENT_OS_USER" "$NEW_HOME"
+    run_proxy_step "$AGENT_OS_USER" "$NEW_HOME"
     ok "продолжаю установку от имени $AGENT_OS_USER"
     # Флаги установщика (REUSE_EXISTING=1, SKIP_TG_PLUGIN, PREFLIGHT_DONE,
     # TG_PLUGIN_DIR, INSTALL_TG_LOCAL, ...) должны дойти до install.sh под
@@ -471,6 +508,11 @@ if [ "$MODE" != "test" ] && [ "${LABOPS_VOICE_DONE:-0}" != "1" ]; then
   else
     warn "нет sudo — сервис голоса не поставить (нужен root); текст работает"
   fi
+fi
+
+# ── 2d. Прокси для Donut Browser (по SETUP_PROXY=1) ───────────────
+if [ "$MODE" != "test" ] && [ "${SETUP_PROXY:-0}" = "1" ] && [ "${LABOPS_PROXY_DONE:-0}" != "1" ]; then
+  run_proxy_step "$(id -un)" "$HOME"
 fi
 
 LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"

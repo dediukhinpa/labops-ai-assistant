@@ -869,6 +869,12 @@ unit "install.sh ставит сервис голоса и раздаёт ток
      "voice-install: юнит-тест провален (orchestration/lib/voice-install.test.sh)" \
      bash orchestration/lib/voice-install.test.sh
 
+# Прокси для Donut Browser (Squid): конфиг только с паролем, случайный пароль мимо argv и
+# вывода, повтор не меняет пароль, чужой конфиг сохраняется (lib/proxy-install.sh).
+unit "install.sh ставит Squid для Donut Browser, пароль не светится, повтор его не меняет — юнит-тест зелёный" \
+     "proxy-install: юнит-тест провален (orchestration/lib/proxy-install.test.sh)" \
+     bash orchestration/lib/proxy-install.test.sh
+
 # Тест гоняет НАСТОЯЩИЙ install.sh, поэтому обязан быть глух к флагам в шелле
 # оператора: с PREFLIGHT_DONE=1 в окружении он винил установщик в том, чего тот
 # не делал.
