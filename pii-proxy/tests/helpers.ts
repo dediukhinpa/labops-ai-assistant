@@ -98,6 +98,60 @@ export function startFakeService(dict: Record<string, string> = {}): FakeService
   } };
 }
 
+/** Режим отказа фейкового media-masker. */
+export type FakeMediaMode = 'ok' | 'http500' | 'refuse422' | 'refuse413' | 'hang';
+
+/** Фейковый media-masker: картинку «закрашивает» префиксом, PDF разбирает по тестовой разметке. */
+export interface FakeMedia {
+  readonly url: string;
+  readonly state: { mode: FakeMediaMode; calls: string[]; tokenSeen: string[] };
+  stop(): Promise<void>;
+}
+
+/** Токен фейкового media-masker. */
+export const MEDIA_TOKEN = 'media-token';
+
+/** Как фейк «маскирует» base64-картинку: оригинал в ответе не виден. */
+export function fakeMaskedData(data: string): string {
+  return Buffer.from(`MASKED:${data.length}`).toString('base64');
+}
+
+/**
+ * Запустить фейковый media-masker. PDF задаётся содержимым base64: `TEXT:стр1|стр2` - страницы
+ * с текстовым слоем, `SCAN:n` - n страниц-растров.
+ */
+export function startFakeMedia(): FakeMedia {
+  const state: FakeMedia['state'] = { mode: 'ok', calls: [], tokenSeen: [] };
+  const server = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    async fetch(req): Promise<Response> {
+      const path = new URL(req.url).pathname;
+      state.calls.push(path);
+      state.tokenSeen.push(req.headers.get('authorization') ?? '');
+      if (state.mode === 'hang') await new Promise((r) => setTimeout(r, 5_000));
+      if (state.mode === 'http500') return new Response('boom', { status: 500 });
+      if (state.mode === 'refuse422') return Response.json({ error: 'image_undecodable' },
+        { status: 422 });
+      if (state.mode === 'refuse413') return Response.json({ error: 'pdf_too_many_pages' },
+        { status: 413 });
+      const body = (await req.json()) as { media_type: string; data: string };
+      if (path === '/mask_image') {
+        return Response.json({ media_type: body.media_type, data: fakeMaskedData(body.data) });
+      }
+      const spec = Buffer.from(body.data, 'base64').toString('utf8');
+      const pages = spec.startsWith('TEXT:')
+        ? spec.slice(5).split('|').map((text, index) => ({ index, text, image: null }))
+        : Array.from({ length: Number(spec.slice(5)) }, (_v, index) => ({ index, text: null,
+          image: { media_type: 'image/jpeg', data: fakeMaskedData(`page${index}`) } }));
+      return Response.json({ kind: spec.startsWith('TEXT:') ? 'text' : 'images', pages });
+    },
+  });
+  return { url: `http://127.0.0.1:${server.port}`, state, stop: async () => {
+    await server.stop(true);
+  } };
+}
+
 /** Один принятый фейковым upstream запрос. */
 export interface UpstreamHit {
   readonly method: string;
@@ -173,7 +227,7 @@ export function testConfig(over: Partial<ProxyConfig>): ProxyConfig {
   return {
     port: 0, host: '127.0.0.1', upstream: '', agentId: 'dev', pseudonymizerUrl: '',
     pseudonymizerToken: TEST_TOKEN, timeoutMs: 1_000, imagePolicy: 'strip', caseLabels: false,
-    ...over,
+    mediaMaskerUrl: '', mediaMaskerTimeoutMs: 1_000, ...over,
   };
 }
 
@@ -183,6 +237,7 @@ export interface Rig {
   readonly upstream: FakeUpstream;
   readonly proxy: RunningProxy;
   readonly logger: ReturnType<typeof memoryLogger>;
+  readonly media: FakeMedia;
   readonly base: string;
   stop(): Promise<void>;
 }
@@ -195,15 +250,18 @@ export function startRig(
 ): Rig {
   const service = startFakeService(dict);
   const upstream = startFakeUpstream(reply);
+  const media = startFakeMedia();
   const logger = memoryLogger();
-  const config = testConfig({ upstream: upstream.url, pseudonymizerUrl: service.url, ...over });
+  const config = testConfig({ upstream: upstream.url, pseudonymizerUrl: service.url,
+    mediaMaskerUrl: media.url, mediaMaskerToken: MEDIA_TOKEN, ...over });
   const proxy = new PiiProxy(config, { logger }).start();
   return {
-    service, upstream, proxy, logger, base: `http://127.0.0.1:${proxy.port}`,
+    service, upstream, proxy, logger, media, base: `http://127.0.0.1:${proxy.port}`,
     stop: async () => {
       await proxy.stop();
       await upstream.stop();
       await service.stop();
+      await media.stop();
     },
   };
 }

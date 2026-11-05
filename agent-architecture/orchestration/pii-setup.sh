@@ -19,6 +19,9 @@
 #   PII_UNIT_DIR      каталог user-юнитов (по умолчанию ~/.config/systemd/user)
 #   PII_SYSTEMCTL     команда systemctl (в тестах - заглушка)
 #   PII_SKIP_BUILD=1  не ставить зависимости (bun install, pip) - для тестов
+#   PII_TESSERACT_CMD         путь к tesseract (по умолчанию - из PATH)
+#   PII_TESSDATA_PREFIX       каталог языковых данных Tesseract (хост без sudo)
+#   PII_TESSERACT_LD_LIBRARY_PATH  LD_LIBRARY_PATH для распакованного без sudo Tesseract
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
@@ -36,6 +39,9 @@ SYSTEMCTL="${PII_SYSTEMCTL:-systemctl}"
 HEALTH_WAIT_SEC=20
 # Пароль HTTP-токена: байт случайности для secrets.token_urlsafe (>= 32 по README сервиса).
 TOKEN_BYTES=32
+# Адрес и порт media-masker (OCR для фото и PDF); 8310 занят voice-transcriber.
+MEDIA_MASKER_URL_DEFAULT="http://127.0.0.1:8320"
+MEDIA_MASKER_PORT=8320
 
 warn_disabled() {
   warn "SKIP_PII_PROXY=1: маскирование ПДн ОТКЛЮЧЕНО - агент пойдёт в модель напрямую,"
@@ -71,7 +77,7 @@ find_python() {   # pseudonymizer требует Python >= 3.12
 sync_sources() {
   local sub
   mkdir -p "$RUNTIME_DIR"
-  for sub in pii-proxy pseudonymizer; do
+  for sub in pii-proxy pseudonymizer media-masker; do
     # Агент создаётся из копии роя без pii-*: код уже лежит в рабочей копии после шага host.
     if [ ! -d "$SRC_DIR/$sub" ] && [ -d "$RUNTIME_DIR/$sub/deploy" ]; then continue; fi
     [ -d "$SRC_DIR/$sub" ] || die "нет каталога $SRC_DIR/$sub - установка идёт не из монорепо?"
@@ -150,6 +156,69 @@ cmd_host() {
     || warn "не удалось запустить labops-pseudonymizer (нет systemctl --user?)"
   ensure_linger
   wait_health "$PII_PSEUDONYMIZER_URL_DEFAULT" "pseudonymizer" "labops-pseudonymizer" || true
+  install_media_masker
+}
+
+# Есть ли рабочий Tesseract с языками rus и eng (иначе media-masker не стартует).
+tesseract_ready() {
+  local cmd="${PII_TESSERACT_CMD:-tesseract}" langs
+  command -v "$cmd" >/dev/null 2>&1 || [ -x "$cmd" ] || return 1
+  langs="$(TESSDATA_PREFIX="${PII_TESSDATA_PREFIX:-${TESSDATA_PREFIX:-}}" \
+    LD_LIBRARY_PATH="${PII_TESSERACT_LD_LIBRARY_PATH:-${LD_LIBRARY_PATH:-}}" \
+    "$cmd" --list-langs 2>&1)" || return 1
+  grep -qx 'rus' <<< "$langs" && grep -qx 'eng' <<< "$langs"
+}
+
+warn_no_tesseract() {
+  warn "Tesseract (rus+eng) не найден: media-masker НЕ установлен."
+  warn "Фото и PDF не будут маскироваться: прокси агентов получит PII_PROXY_IMAGE_POLICY=strip"
+  warn "(вложения заменяются пометкой и модели не передаются)."
+  warn "Установить: sudo apt-get install tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng"
+  warn "tesseract-ocr-osd, затем повторить: pii-setup.sh host (см. media-masker/README.md)."
+}
+
+# media-masker: OCR-маскирование вложений. Нет Tesseract - предупреждаем и идём дальше
+# (политика агентов станет strip), чтобы установка псевдонимизации не ломалась целиком.
+install_media_masker() {
+  local py token_file env_file
+  token_file="$CONFIG_DIR/media-masker.token"
+  env_file="$CONFIG_DIR/media-masker.env"
+  if ! tesseract_ready; then warn_no_tesseract; return 0; fi
+  say "media-masker (OCR фото и PDF, один на хост)"
+  if [ "${PII_SKIP_BUILD:-0}" != "1" ]; then
+    py="$(find_python)" || die "нужен Python >= 3.12 для media-masker (apt install python3.12-venv)"
+    if [ ! -x "$RUNTIME_DIR/media-masker/.venv/bin/python" ]; then
+      step "venv и зависимости media-masker (opencv, pillow, pypdfium2, natasha)"
+      "$py" -m venv "$RUNTIME_DIR/media-masker/.venv"
+    fi
+    "$RUNTIME_DIR/media-masker/.venv/bin/pip" install -q \
+      -e "$RUNTIME_DIR/pseudonymizer" -e "$RUNTIME_DIR/media-masker"
+  fi
+  if [ ! -s "$token_file" ]; then
+    umask 077
+    python3 -c "import secrets; print(secrets.token_urlsafe($TOKEN_BYTES))" > "$token_file"
+    ok "создан токен media-masker: $token_file (600)"
+  fi
+  chmod 600 "$token_file"
+  umask 077
+  {
+    echo "MEDIA_MASKER_API_TOKEN=$(tr -d '\n' < "$token_file")"
+    echo "MEDIA_MASKER_HOST=127.0.0.1"
+    echo "MEDIA_MASKER_PORT=$MEDIA_MASKER_PORT"
+    echo "MEDIA_MASKER_MASK_LEGAL_ENTITY=true"
+    [ -z "${PII_TESSERACT_CMD:-}" ] || echo "MEDIA_MASKER_TESSERACT_CMD=$PII_TESSERACT_CMD"
+    [ -z "${PII_TESSDATA_PREFIX:-}" ] || echo "TESSDATA_PREFIX=$PII_TESSDATA_PREFIX"
+    [ -z "${PII_TESSERACT_LD_LIBRARY_PATH:-}" ] \
+      || echo "LD_LIBRARY_PATH=$PII_TESSERACT_LD_LIBRARY_PATH"
+  } > "$env_file"
+  chmod 600 "$env_file"
+  INSTALL_DIR_FOR_UNIT="$RUNTIME_DIR/media-masker" ENV_FILE_FOR_UNIT="$env_file" \
+    render_unit "$RUNTIME_DIR/media-masker/deploy/media-masker.user.service.template" \
+      "$UNIT_DIR/labops-media-masker.service"
+  ucmd daemon-reload
+  ucmd enable --now labops-media-masker.service \
+    || warn "не удалось запустить labops-media-masker (нет systemctl --user?)"
+  wait_health "$MEDIA_MASKER_URL_DEFAULT" "media-masker" "labops-media-masker" || true
 }
 
 # Идемпотентная правка settings.json агента: ANTHROPIC_BASE_URL и второй SessionEnd-хук.
@@ -177,6 +246,38 @@ os.replace(tmp, path)
 PY
 }
 
+# Строки env прокси про вложения. Есть токен media-masker - mask, иначе strip: прокси с
+# политикой mask без токена не стартует, а passthrough пустил бы ПДн с картинок к модели.
+media_env_lines() {
+  local token_file="$CONFIG_DIR/media-masker.token"
+  if [ -s "$token_file" ]; then
+    echo "PII_PROXY_IMAGE_POLICY=mask"
+    echo "MEDIA_MASKER_URL=$MEDIA_MASKER_URL_DEFAULT"
+    echo "MEDIA_MASKER_API_TOKEN=$(tr -d '\n' < "$token_file")"
+  else
+    echo "PII_PROXY_IMAGE_POLICY=strip"
+  fi
+}
+
+# Старый env-файл (политика passthrough/strip, нет токена маскера): если media-masker уже
+# установлен - переводим на mask; иначе оставляем и предупреждаем про strip.
+upgrade_media_policy() {   # <env-file>
+  local f="$1" token_file="$CONFIG_DIR/media-masker.token"
+  if grep -qs '^MEDIA_MASKER_API_TOKEN=.' "$f"; then return 0; fi
+  if [ -s "$token_file" ]; then
+    sed -i '/^PII_PROXY_IMAGE_POLICY=/d' "$f"
+    media_env_lines >> "$f"
+    ok "env прокси: вложения теперь через media-masker (mask)"
+  else
+    warn "media-masker не установлен: вложения в $f не маскируются (политика: $(sed -n 's/^PII_PROXY_IMAGE_POLICY=//p' "$f"))"
+  fi
+}
+
+warn_no_tesseract_agent() {
+  warn "агент $1: media-masker не подключён, фото и PDF модели не передаются (strip)."
+  warn "Поставьте Tesseract и выполните pii-setup.sh host, затем повторите agent $1."
+}
+
 cmd_agent() {
   local agent="${1:?использование: pii-setup.sh agent <agent-id>}" env_file port token_file ws settings
   if ! pii_enabled; then warn_disabled; return 0; fi
@@ -191,6 +292,7 @@ cmd_agent() {
   mkdir -p "$ws/secrets" "$ws/state"; chmod 700 "$ws/secrets" 2>/dev/null || true
   if [ -s "$env_file" ]; then
     note "env-файл прокси уже есть - оставляю: $env_file"
+    upgrade_media_policy "$env_file"
   else
     port="$(pii_pick_port "$agent")" || die "нет свободного порта в диапазоне ${PII_PROXY_BASE_PORT}+"
     umask 077
@@ -203,11 +305,14 @@ cmd_agent() {
       echo "PSEUDONYMIZER_URL=$PII_PSEUDONYMIZER_URL_DEFAULT"
       echo "PSEUDONYMIZER_API_TOKEN=$(tr -d '\n' < "$token_file")"
       echo "PSEUDONYMIZER_TIMEOUT_MS=10000"
-      echo "PII_PROXY_IMAGE_POLICY=passthrough"
+      media_env_lines
     } > "$env_file"
     ok "env прокси: $env_file (порт $port, 600)"
   fi
   chmod 600 "$env_file"
+  if grep -qsx 'PII_PROXY_IMAGE_POLICY=strip' "$env_file"; then
+    warn_no_tesseract_agent "$agent"
+  fi
   port="$(pii_proxy_port "$agent")"
   sync_sources
   if [ "${PII_SKIP_BUILD:-0}" != "1" ] && [ ! -d "$RUNTIME_DIR/pii-proxy/node_modules" ]; then
