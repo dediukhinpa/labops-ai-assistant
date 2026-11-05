@@ -25,8 +25,8 @@
 #                             # siblings ещё не установлены их собственными install.sh —
 #                             # агент стартует в деградированном режиме, см. README → Quickstart.
 #   ./install.sh --test-only  # только self-test
-#   ./install.sh --openai-adapter # ТОЛЬКО поставить адаптер Claude Code -> OpenAI (LiteLLM) и
-#                             # выйти; рой на моделях OpenAI, см. docs/openai-adapter.md
+#   ./install.sh --openai-adapter # ТОЛЬКО поставить адаптер Claude Code -> ChatGPT (LiteLLM) и
+#                             # выйти; рой на подписке ChatGPT, см. docs/openai-adapter.md
 #   ./install.sh --no-agent   # подготовить + склонировать siblings, но авторизацию и
 #                             # агента не выполнять (для ручного/отложенного запуска:
 #                             #  claude --dangerously-skip-permissions && bash skills/create-agent/new-agent.sh)
@@ -209,9 +209,10 @@ runtime_conf_source() {
 # Альтернативный вариант курса: рой на моделях OpenAI. Ставится только сам адаптер; агентов
 # на него переводит orchestration/openai-adapter-wire.sh (каждого отдельно, с откатом).
 if [ "$MODE" = "openai" ]; then
-  say "Адаптер Claude Code -> OpenAI"
+  say "Адаптер Claude Code -> ChatGPT (по подписке)"
   echo "  Ставлю LiteLLM на 127.0.0.1: Claude Code говорит с ним по протоколу Anthropic, а он с"
-  echo "  OpenAI. Ключ OpenAI хранится только в файле юнита адаптера, не в настройках агентов."
+  echo "  ChatGPT по вашей подписке. Вход подтверждается один раз кодом; токены лежат в каталоге"
+  echo "  службы адаптера, а не в настройках агентов."
   openai_adapter_install "$(id -un)" "$HOME" || die "адаптер не установлен - причина в сообщениях выше"
   exit 0
 fi

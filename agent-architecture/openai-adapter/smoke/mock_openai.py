@@ -1,7 +1,7 @@
 """Поддельный OpenAI Responses API (/v1/responses) для проверки цепочки Claude Code -> LiteLLM.
 
 Только stdlib. Журнал запросов — JSONL. Логика: есть function_call_output в input — отвечает
-текстом; в последнем сообщении пользователя RUN_TOOL и есть tools — просит вызвать Bash;
+текстом; в сообщениях пользователя есть RUN_TOOL и есть tools — просит вызвать Bash;
 иначе отвечает текстом.
 """
 import json
@@ -83,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "input_types": [i.get("type") or i.get("role") for i in items],
                                 "has_instructions": bool(req.get("instructions"))},
                                ensure_ascii=False) + "\n")
-        want_tool = bool(user_texts) and "RUN_TOOL" in user_texts[-1] and not has_result \
+        want_tool = any("RUN_TOOL" in t for t in user_texts) and not has_result \
             and any(t.get("name") == "Bash" for t in req.get("tools") or [])
         item = FC_ITEM if want_tool else MSG_ITEM
         if req.get("stream"):

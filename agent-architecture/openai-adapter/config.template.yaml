@@ -1,17 +1,22 @@
-# Конфиг адаптера LiteLLM: Claude Code -> /v1/messages -> OpenAI.
-# Подстановки делает orchestration/lib/openai-adapter-install.sh; ключи сюда НЕ пишутся,
-# они читаются из окружения юнита (/etc/labops-openai-adapter/adapter.env).
+# Конфиг адаптера LiteLLM: Claude Code -> /v1/messages -> ChatGPT (по подписке).
+# Подстановки делает orchestration/lib/openai-adapter-install.sh. Токены подписки сюда НЕ
+# пишутся: они лежат в CHATGPT_TOKEN_DIR (см. adapter.env), которую читает только юнит адаптера.
 model_list:
   - model_name: __MODEL__
     litellm_params:
-      # LiteLLM переводит запрос в Responses API OpenAI (/v1/responses), проверено на 1.106.3.
-      model: openai/__MODEL__
-      api_key: os.environ/OPENAI_API_KEY
+      # Провайдер chatgpt/ ходит в бэкенд подписки ChatGPT (Responses API) с токеном входа
+      # по коду устройства. Проверено на LiteLLM 1.106.3: /v1/messages -> /responses.
+      model: chatgpt/__MODEL__
+    # Режим задаём явно: LiteLLM берёт его из своего справочника по имени модели, и модель,
+    # которой там нет (новая), ушла бы в /chat/completions, а бэкенд подписки принимает
+    # только Responses API.
+    model_info:
+      mode: responses
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 
 litellm_settings:
-  # Параметры, которых нет у модели OpenAI (thinking, cache_control и т.п.), отбрасываются,
+  # Параметры, которых нет у модели ChatGPT (thinking, cache_control и т.п.), отбрасываются,
   # а не роняют запрос.
   drop_params: true

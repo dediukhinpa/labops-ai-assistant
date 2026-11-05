@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Unit tests for lib/openai-adapter-install.sh - установка адаптера Claude Code -> OpenAI.
-# systemctl, curl, useradd, openssl и pip подменены: проверяются пути, права, ключи,
-# идемпотентность и то, что ключ OpenAI и ключ шлюза не попадают ни в argv, ни в вывод.
+# Unit tests for lib/openai-adapter-install.sh - установка адаптера Claude Code -> ChatGPT (подписка).
+# systemctl, curl, useradd, openssl, pip и вход в ChatGPT подменены: проверяются пути, права,
+# ключи, идемпотентность и то, что токены входа и ключ шлюза не попадают ни в argv, ни в вывод.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TMP="$(mktemp -d)"
@@ -16,7 +16,7 @@ SRC="$HERE/../../openai-adapter"
 grep -q -- '--hash=sha256:' "$SRC/requirements.lock" || fail "в lock-файле нет хэшей"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
-for t in bash env cat sed grep install mktemp rm id awk df tr dirname head tail cp touch; do
+for t in bash env cat sed grep install mktemp rm id awk df tr dirname head tail cp touch test chmod; do
   p="$(type -P "$t")" && ln -sf "$p" "$BIN/$t"
 done
 LOG="$TMP/calls.log"; : > "$LOG"
@@ -25,7 +25,8 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$BIN/$1"; chmod +x "$BIN/$1"
 stub systemctl "echo \"systemctl \$*\" >> \"$LOG\""
 stub useradd "echo \"useradd \$*\" >> \"$LOG\""
 stub sleep 'exit 0'
-stub fakesudo 'exec "$@"'
+# fakesudo понимает «-u пользователь»: так установщик запускает вход от имени службы.
+stub fakesudo 'if [ "${1:-}" = "-u" ]; then shift 2; fi; exec "$@"'
 stub openssl 'echo 00112233445566778899aabbccddeeff0011223344556677'
 stub curl "echo \"curl \$*\" >> \"$LOG\"; [ -s \"$HEALTH\" ]"
 stub python3 'exit 0'
@@ -34,17 +35,24 @@ stub python3 'exit 0'
 DIR="$TMP/opt/adapter"
 mkdir -p "$DIR/.venv/bin"
 printf '#!/usr/bin/env bash\necho "pip $*" >> "%s"\n' "$LOG" > "$DIR/.venv/bin/pip"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$DIR/.venv/bin/python"
+# «python» venv - это вход в ChatGPT: кладёт токены в CHATGPT_TOKEN_DIR, как это делает LiteLLM.
+LOGIN_TOKEN="fake-access-token-9f8e7d6c"
+cat > "$DIR/.venv/bin/python" <<PYSTUB
+#!/usr/bin/env bash
+echo "login \$CHATGPT_TOKEN_DIR" >> "$LOG"
+echo "Sign in with ChatGPT using device code: https://auth.openai.com/codex/device CODE-1234"
+[ -z "\${LOGIN_FAIL:-}" ] || exit 1
+[ -n "\${LOGIN_NO_FILE:-}" ] || printf '{"access_token":"$LOGIN_TOKEN"}' > "\$CHATGPT_TOKEN_DIR/auth.json"
+PYSTUB
 chmod +x "$DIR/.venv/bin/"*
 
 HOME_A="$TMP/home-agent"; mkdir -p "$HOME_A"
-OPENAI_KEY="sk-proj-TESTKEY-1234567890abcdef"
-ETC="$TMP/etc"; UNITS="$TMP/units"; mkdir -p "$UNITS"
+ETC="$TMP/etc"; UNITS="$TMP/units"; STATE="$TMP/state"; mkdir -p "$UNITS"
 
 run_install() {   # окружение подаётся снаружи через ENV_EXTRA
   env -i PATH="$BIN" HOME="$HOME_A" SUDO="$BIN/fakesudo" ${ENV_EXTRA:-} \
     LABOPS_LLM_SRC="$SRC" LABOPS_LLM_DIR="$DIR" LABOPS_LLM_ETC="$ETC" \
-    LABOPS_LLM_UNIT_DIR="$UNITS" LABOPS_LLM_USER="$ME" LABOPS_LLM_OWNER="$ME" \
+    LABOPS_LLM_UNIT_DIR="$UNITS" LABOPS_LLM_STATE="$STATE" LABOPS_LLM_USER="$ME" LABOPS_LLM_OWNER="$ME" \
     LABOPS_LLM_PYTHON="$BIN/python3" \
     bash -c '
       ok() { echo "OK $*"; }; warn() { echo "WARN $*"; }; note() { echo "NOTE $*"; }
@@ -54,20 +62,25 @@ run_install() {   # окружение подаётся снаружи чере�
 }
 
 # 1. Полная установка.
-ENV_EXTRA="OPENAI_API_KEY=$OPENAI_KEY LABOPS_OPENAI_MODEL=gpt-test-1"
+ENV_EXTRA="LABOPS_OPENAI_MODEL=gpt-test-1"
 OUT="$(run_install 2>&1)" || fail "установка не прошла: $OUT"
 CONF="$ETC/config.yaml"; ENVF="$ETC/adapter.env"; UNIT="$UNITS/labops-openai-adapter.service"
 SHARED="$HOME_A/.claude-lab/shared/secrets/openai-adapter.env"
 grep -q 'model_name: gpt-test-1' "$CONF" || fail "в конфиге нет имени модели"
-grep -q 'model: openai/gpt-test-1' "$CONF" || fail "в конфиге нет openai/<модель>"
+grep -q 'model: chatgpt/gpt-test-1' "$CONF" || fail "в конфиге нет chatgpt/<модель>"
+grep -q 'mode: responses' "$CONF" || fail "режим responses не задан: новая модель уйдёт в chat/completions"
 grep -q '__MODEL__' "$CONF" && fail "в конфиге остался плейсхолдер"
-grep -qF "$OPENAI_KEY" "$CONF" && fail "ключ OpenAI попал в config.yaml"
-grep -q 'os.environ/OPENAI_API_KEY' "$CONF" || fail "ключ OpenAI не из окружения"
+grep -qi 'api_key\|OPENAI_API_KEY' "$CONF" && fail "в конфиге остались следы ключа API"
 [ "$(stat -c %a "$ENVF")" = "640" ] || fail "права env-файла не 640: $(stat -c %a "$ENVF")"
-grep -qx "OPENAI_API_KEY=$OPENAI_KEY" "$ENVF" || fail "в env-файле нет ключа OpenAI"
+grep -q '^OPENAI_API_KEY' "$ENVF" && fail "в env-файле остался ключ API"
+grep -qx "CHATGPT_TOKEN_DIR=$STATE" "$ENVF" || fail "юнит не знает, где токены входа"
 grep -q '^LITELLM_MASTER_KEY=sk-' "$ENVF" || fail "в env-файле нет ключа шлюза"
 MASTER="$(sed -n 's/^LITELLM_MASTER_KEY=//p' "$ENVF")"
 grep -qx 'LITELLM_LOCAL_MODEL_COST_MAP=True' "$ENVF" || fail "адаптер будет качать таблицу цен"
+[ "$(stat -c %a "$STATE")" = "700" ] || fail "каталог токенов не 700: $(stat -c %a "$STATE")"
+[ "$(stat -c %a "$STATE/auth.json")" = "600" ] || fail "токены входа не 600"
+grep -qx "login $STATE" "$LOG" || fail "вход в ChatGPT не запускался в каталоге токенов"
+echo "$OUT" | grep -q "CODE-1234" || fail "человеку не показан код входа"
 grep -q -- '--host 127.0.0.1' "$UNIT" || fail "юнит слушает не только 127.0.0.1"
 grep -q -- '--port 4000' "$UNIT" || fail "в юните не тот порт"
 grep -qx "EnvironmentFile=$ETC/adapter.env" "$UNIT" || fail "в юните не тот env-файл"
@@ -80,14 +93,13 @@ grep -q "curl .*liveliness" "$LOG" || fail "нет проверки готовн
 [ "$(stat -c %a "$SHARED")" = "600" ] || fail "права файла для агентов не 600"
 grep -qx "ANTHROPIC_AUTH_TOKEN=$MASTER" "$SHARED" || fail "в файле агентов не тот токен"
 grep -qx "LABOPS_OPENAI_MODEL=gpt-test-1" "$SHARED" || fail "в файле агентов нет модели"
-grep -qF "$OPENAI_KEY" "$SHARED" && fail "ключ OpenAI попал в файл для агентов"
-grep -qF "$OPENAI_KEY" "$LOG" && fail "ключ OpenAI попал в командную строку"
+grep -qF "$LOGIN_TOKEN" "$SHARED" "$CONF" "$ENVF" "$UNIT" && fail "токен входа попал не в каталог токенов"
 grep -qF "$MASTER" "$LOG" && fail "ключ шлюза попал в командную строку"
-echo "$OUT" | grep -qF "$OPENAI_KEY" && fail "ключ OpenAI попал в вывод"
+echo "$OUT" | grep -qF "$LOGIN_TOKEN" && fail "токен входа попал в вывод"
 echo "$OUT" | grep -qF "$MASTER" && fail "ключ шлюза попал в вывод"
 
 # 2. Повтор: ключ шлюза не меняется (иначе агенты потеряли бы доступ), модель можно сменить.
-: > "$LOG"; ENV_EXTRA="OPENAI_API_KEY=$OPENAI_KEY LABOPS_OPENAI_MODEL=gpt-test-2"
+: > "$LOG"; ENV_EXTRA="LABOPS_OPENAI_MODEL=gpt-test-2"
 run_install >/dev/null 2>&1 || fail "повторная установка не прошла"
 [ "$(sed -n 's/^LITELLM_MASTER_KEY=//p' "$ENVF")" = "$MASTER" ] || fail "ключ шлюза сменился"
 grep -q 'model_name: gpt-test-2' "$CONF" || fail "модель не обновилась"
@@ -95,27 +107,39 @@ grep -qx "LABOPS_OPENAI_MODEL=gpt-test-2" "$SHARED" || fail "модель в ф�
 
 # 3. Недопустимое имя модели - ничего не ставится.
 rm -rf "$ETC"; : > "$LOG"
-ENV_EXTRA="OPENAI_API_KEY=$OPENAI_KEY LABOPS_OPENAI_MODEL=gpt;rm" OUT="$(run_install 2>&1)" \
+ENV_EXTRA="LABOPS_OPENAI_MODEL=gpt;rm" OUT="$(run_install 2>&1)" \
   && fail "принято недопустимое имя модели"
 echo "$OUT" | grep -q "недопустимые символы" || fail "нет объяснения про имя модели"
 [ -e "$ETC/adapter.env" ] && fail "env-файл создан при ошибке в имени модели"
 
-# 4. Нет ключа OpenAI и нет терминала - остановка с объяснением, без зависания на вводе.
-ENV_EXTRA="LABOPS_OPENAI_MODEL=gpt-test-1" OUT="$(run_install 2>&1 </dev/null)" \
-  && fail "установка прошла без ключа OpenAI"
-echo "$OUT" | grep -q "OPENAI_API_KEY" || fail "нет объяснения про ключ"
+# 4. Без модели и без терминала берётся рекомендуемая: вопрос задать некому.
+rm -rf "$ETC"
+ENV_EXTRA="X=1" OUT="$(run_install 2>&1 </dev/null)" || fail "без модели установка должна взять рекомендуемую: $OUT"
+grep -q 'model: chatgpt/gpt-5.5' "$ETC/config.yaml" || fail "рекомендуемая модель не подставлена"
 
-# 5. Адаптер не поднялся - установка честно падает.
-: > "$HEALTH"
-ENV_EXTRA="OPENAI_API_KEY=$OPENAI_KEY LABOPS_OPENAI_MODEL=gpt-test-1" OUT="$(run_install 2>&1)" \
+# 5. Вход не завершён - установка честно падает и службу не запускает.
+rm -rf "$ETC" "$STATE"; : > "$LOG"
+ENV_EXTRA="LABOPS_OPENAI_MODEL=gpt-test-1 LOGIN_FAIL=1" OUT="$(run_install 2>&1)" \
+  && fail "установка прошла без входа в ChatGPT"
+echo "$OUT" | grep -q "вход в ChatGPT не завершён" || fail "нет сообщения про незавершённый вход"
+grep -q "systemctl restart" "$LOG" && fail "служба запущена без входа"
+
+# 5b. Вход «прошёл», но токенов нет - тоже провал.
+rm -rf "$ETC" "$STATE"
+ENV_EXTRA="LABOPS_OPENAI_MODEL=gpt-test-1 LOGIN_NO_FILE=1" OUT="$(run_install 2>&1)" \
+  && fail "установка прошла без файла токенов"
+echo "$OUT" | grep -q "нет файла токенов" || fail "нет сообщения про отсутствие токенов"
+
+# 5c. Адаптер не поднялся - установка честно падает.
+rm -rf "$ETC" "$STATE"; : > "$HEALTH"
+ENV_EXTRA="LABOPS_OPENAI_MODEL=gpt-test-1" OUT="$(run_install 2>&1)" \
   && fail "установка прошла, хотя адаптер не отвечает"
 echo "$OUT" | grep -q "не ответил" || fail "нет сообщения про неответивший адаптер"
 echo up > "$HEALTH"
 
 # 6. Нет lock-файла - адаптер не ставится (без хэшей зависимости не ставим).
 EMPTY="$TMP/empty-src"; mkdir -p "$EMPTY"
-ENV_EXTRA="OPENAI_API_KEY=$OPENAI_KEY LABOPS_OPENAI_MODEL=gpt-test-1" \
-  OUT="$(env -i PATH="$BIN" HOME="$HOME_A" SUDO="$BIN/fakesudo" OPENAI_API_KEY=x LABOPS_OPENAI_MODEL=m \
+OUT="$(env -i PATH="$BIN" HOME="$HOME_A" SUDO="$BIN/fakesudo" LABOPS_OPENAI_MODEL=m \
     LABOPS_LLM_SRC="$EMPTY" bash -c '
       ok() { :; }; warn() { echo "WARN $*"; }; note() { :; }
       . "'"$HERE"'/openai-adapter-install.sh"; openai_adapter_install x /tmp' 2>&1)" \

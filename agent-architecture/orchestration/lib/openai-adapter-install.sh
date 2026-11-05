@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
-# Адаптер Claude Code -> OpenAI (LiteLLM). Альтернативный вариант курса: рой работает на моделях
-# OpenAI, архитектура репозитория не меняется.
+# Адаптер Claude Code -> ChatGPT (LiteLLM). Альтернативный вариант курса: рой работает на моделях
+# OpenAI по ПОДПИСКЕ ChatGPT (Plus/Pro), а не по ключу API. Архитектура репозитория не меняется.
 #
 # Как это устроено. Claude Code умеет ходить не на api.anthropic.com, а на любой шлюз с форматом
 # Anthropic Messages (ANTHROPIC_BASE_URL). Агент и так ходит через pii-proxy, а у того адрес
 # апстрима настраивается (PII_PROXY_UPSTREAM). Адаптер - ещё одно звено на 127.0.0.1:
-#   claude -> pii-proxy -> адаптер (LiteLLM, /v1/messages) -> OpenAI (Responses API)
+#   claude -> pii-proxy -> адаптер (LiteLLM, /v1/messages) -> бэкенд подписки ChatGPT
 # Сюда входит только установка самого адаптера; перевод агентов на него - openai-adapter-wire.sh.
 #
-# Что ставится (всё вне домашних каталогов, код и ключи - root):
+# Вход в подписку. LiteLLM входит по коду устройства (как Codex CLI): установщик печатает
+# ссылку и код, человек подтверждает вход в браузере. Это делается ОДИН раз и отдельно от
+# службы (внутри неё вход невозможен): токены ложатся в каталог службы, дальше она сама их
+# обновляет. Если OpenAI отзовёт доступ - повторить `install.sh --openai-adapter`.
+#
+# Что ставится (всё вне домашних каталогов, код - root):
 #   /opt/labops-openai-adapter/.venv            LiteLLM по requirements.lock (с хэшами)
-#   /etc/labops-openai-adapter/config.yaml      модели, без ключей, 640 root:labops-llm
-#   /etc/labops-openai-adapter/adapter.env      OPENAI_API_KEY и локальный ключ шлюза, 640
+#   /etc/labops-openai-adapter/config.yaml      модели, без секретов, 640 root:labops-llm
+#   /etc/labops-openai-adapter/adapter.env      локальный ключ шлюза, 640
+#   /var/lib/labops-openai-adapter/auth.json    токены входа в ChatGPT, 700 labops-llm
 #   labops-openai-adapter.service               пользователь labops-llm, 127.0.0.1:4000
 #   <лаборатория>/shared/secrets/openai-adapter.env   локальный ключ шлюза для агентов, 600
 #
-# Ключ OpenAI берётся из окружения (OPENAI_API_KEY) или спрашивается без эха; в argv, вывод и
-# журналы он не попадает. Имя модели - LABOPS_OPENAI_MODEL (по умолчанию его нет: актуальное
-# имя берут на странице моделей OpenAI). Повтор идемпотентен: локальный ключ шлюза остаётся.
+# Имя модели - LABOPS_OPENAI_MODEL или выбор из короткого списка. В argv, вывод и журналы
+# токены не попадают. Повтор идемпотентен: ключ шлюза и вход остаются.
 #
 #   openai_adapter_install <пользователь агентов> <его домашний каталог>  -> 0 адаптер работает
 
@@ -29,6 +34,8 @@ LLM_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${LABOPS_LLM_SRC:=$LLM_LIB_DIR/../../openai-adapter}"
 : "${LABOPS_LLM_DIR:=/opt/labops-openai-adapter}"
 : "${LABOPS_LLM_ETC:=/etc/labops-openai-adapter}"
+# Каталог токенов входа в ChatGPT: принадлежит пользователю службы, остальным закрыт.
+: "${LABOPS_LLM_STATE:=/var/lib/labops-openai-adapter}"
 : "${LABOPS_LLM_UNIT_DIR:=/etc/systemd/system}"
 : "${LABOPS_LLM_UNIT:=labops-openai-adapter.service}"
 : "${LABOPS_LLM_USER:=labops-llm}"
@@ -65,21 +72,32 @@ sys.exit(0 if sys.version_info[:2] >= (3, $LLM_MIN_PYTHON_MINOR) else 1)" >/dev/
   return 1
 }
 
-# llm_ask_inputs - ключ OpenAI и модель: из окружения, иначе вопрос (ключ без эха).
+# Рекомендуемая модель и короткий список для выбора. Названия из справочника LiteLLM
+# (chatgpt/*); какие из них доступны на конкретном тарифе, решает OpenAI.
+LLM_DEFAULT_MODEL="gpt-5.5"
+LLM_MODEL_CHOICES=("gpt-5.5" "gpt-5.4" "gpt-5.3-codex")
+
+# llm_ask_inputs - модель: из окружения, иначе выбор цифрой (Enter - рекомендуемая).
+# Без терминала берётся рекомендуемая: вопрос там задать некому.
 llm_ask_inputs() {
-  if [ -z "${OPENAI_API_KEY:-}" ]; then
-    [ -t 0 ] || { warn "нет OPENAI_API_KEY и нет терминала - задайте ключ в окружении"; return 1; }
-    printf "Ключ OpenAI API (ввод не виден): "
-    read -rs OPENAI_API_KEY; echo
-    export OPENAI_API_KEY
-  fi
+  local answer i
   if [ -z "${LABOPS_OPENAI_MODEL:-}" ]; then
-    [ -t 0 ] || { warn "нет LABOPS_OPENAI_MODEL и нет терминала"; return 1; }
-    printf "Имя модели OpenAI (из списка моделей на platform.openai.com): "
-    read -r LABOPS_OPENAI_MODEL
+    if [ -t 0 ]; then
+      echo "Какую модель ChatGPT использовать?"
+      for i in "${!LLM_MODEL_CHOICES[@]}"; do
+        echo "  $((i + 1))) ${LLM_MODEL_CHOICES[$i]}$([ "${LLM_MODEL_CHOICES[$i]}" = "$LLM_DEFAULT_MODEL" ] && echo '  (рекомендуется)')"
+      done
+      printf "Номер или Enter: "
+      read -r answer
+      case "$answer" in
+        ""|*[!0-9]*) LABOPS_OPENAI_MODEL="$LLM_DEFAULT_MODEL" ;;
+        *) LABOPS_OPENAI_MODEL="${LLM_MODEL_CHOICES[$((answer - 1))]:-$LLM_DEFAULT_MODEL}" ;;
+      esac
+    else
+      LABOPS_OPENAI_MODEL="$LLM_DEFAULT_MODEL"
+    fi
     export LABOPS_OPENAI_MODEL
   fi
-  [ -n "$OPENAI_API_KEY" ] || { warn "ключ OpenAI пуст"; return 1; }
   if ! llm_valid_model "$LABOPS_OPENAI_MODEL"; then
     warn "имя модели '$LABOPS_OPENAI_MODEL' содержит недопустимые символы"
     return 1
@@ -88,8 +106,43 @@ llm_ask_inputs() {
 
 # llm_ensure_user - системный пользователь без входа и без домашнего каталога.
 llm_ensure_user() {
-  id "$LABOPS_LLM_USER" >/dev/null 2>&1 && return 0
-  $SUDO useradd --system --no-create-home --shell /usr/sbin/nologin "$LABOPS_LLM_USER"
+  id "$LABOPS_LLM_USER" >/dev/null 2>&1 \
+    || $SUDO useradd --system --no-create-home --shell /usr/sbin/nologin "$LABOPS_LLM_USER" \
+    || return 1
+  # Токены входа в ChatGPT: каталог только для пользователя службы.
+  $SUDO install -d -m 700 -o "$LABOPS_LLM_USER" "$LABOPS_LLM_STATE"
+}
+
+# llm_as_service_user <команда...> - запуск от пользователя службы (у него нет оболочки входа).
+llm_as_service_user() {
+  if [ -n "${SUDO:-}" ]; then
+    $SUDO -u "$LABOPS_LLM_USER" "$@"
+  else
+    runuser -u "$LABOPS_LLM_USER" -- "$@"
+  fi
+}
+
+# llm_login - вход в ChatGPT по коду устройства. Если токены уже есть и живы, вопросов нет.
+# Печать ссылки и кода делает сам LiteLLM; вывод не перехватываем - его читает человек.
+LLM_LOGIN_PY="from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()"
+llm_login() {
+  echo
+  echo "  Сейчас нужно один раз подтвердить вход в ChatGPT. Ниже появятся ссылка и код:"
+  echo "  откройте ссылку в браузере, где вы вошли в свой аккаунт OpenAI, и введите код."
+  echo "  Ждать подтверждения установщик будет до 15 минут."
+  echo
+  if ! llm_as_service_user env CHATGPT_TOKEN_DIR="$LABOPS_LLM_STATE" HOME="$LABOPS_LLM_STATE" \
+       LITELLM_LOCAL_MODEL_COST_MAP=True \
+       "$LABOPS_LLM_DIR/.venv/bin/python" -c "$LLM_LOGIN_PY"; then
+    warn "вход в ChatGPT не завершён - запустите установку ещё раз"
+    return 1
+  fi
+  if ! $SUDO test -s "$LABOPS_LLM_STATE/auth.json"; then
+    warn "после входа нет файла токенов $LABOPS_LLM_STATE/auth.json"
+    return 1
+  fi
+  $SUDO chmod 600 "$LABOPS_LLM_STATE/auth.json" || true
+  ok "вход в ChatGPT выполнен"
 }
 
 # llm_install_code <python> - venv и зависимости строго по lock-файлу с хэшами.
@@ -142,9 +195,9 @@ llm_write_env() {
   key="$(llm_master_key)" || return 1
   tmp="$(mktemp)"
   {
-    echo "OPENAI_API_KEY=$OPENAI_API_KEY"
     echo "LITELLM_MASTER_KEY=$key"
-    # Не качать таблицу цен из интернета при каждом старте: адаптер ходит только к OpenAI.
+    echo "CHATGPT_TOKEN_DIR=$LABOPS_LLM_STATE"
+    # Не качать таблицу цен из интернета при каждом старте: адаптер ходит только в ChatGPT.
     echo "LITELLM_LOCAL_MODEL_COST_MAP=True"
   } > "$tmp"
   $SUDO install -m 640 -o "$LABOPS_LLM_OWNER" -g "$LABOPS_LLM_USER" "$tmp" \
@@ -158,7 +211,7 @@ llm_install_unit() {
   tmp="$(mktemp)"
   cat > "$tmp" <<EOF
 [Unit]
-Description=LabOps OpenAI adapter (LiteLLM: Anthropic Messages -> OpenAI)
+Description=LabOps OpenAI adapter (LiteLLM: Anthropic Messages -> ChatGPT subscription)
 After=network-online.target
 Wants=network-online.target
 
@@ -233,8 +286,9 @@ openai_adapter_install() {
     warn "мало места на диске (${free:-?} МБ, нужно $LLM_MIN_FREE_MB) - адаптер не поставлен"; return 1
   fi
   llm_ask_inputs || return 1
-  llm_ensure_user || { warn "не создан пользователь $LABOPS_LLM_USER"; return 1; }
+  llm_ensure_user || { warn "не создан пользователь или каталог токенов $LABOPS_LLM_USER"; return 1; }
   llm_install_code "$py" || return 1
+  llm_login || return 1
   llm_write_config || { warn "не записан config.yaml"; return 1; }
   llm_write_env || { warn "не записан env-файл адаптера"; return 1; }
   llm_install_unit || { warn "юнит $LABOPS_LLM_UNIT не запущен"; return 1; }
