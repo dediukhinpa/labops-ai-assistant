@@ -3,7 +3,9 @@ import {
   STATUS_PII_FOUND,
 } from './constants';
 import type { ImagePolicy } from './config';
+import type { Recognized } from './media-client';
 import { MediaMaskerError, RequestRejectedError } from './errors';
+import { recognizedBlockText } from './media-text';
 import { blockReason, type BlockReason, type MediaProcessor } from './media';
 import { collectStringLeaves, isObject, type JsonObject, type Leaf } from './json-leaves';
 
@@ -188,7 +190,16 @@ export class RequestWalker {
         src.media_type = masked.mediaType;
         src.data = masked.data;
         this.maskedAttachments++;
-        return 1;
+        const note = this.recognizedBlock(masked.recognized);
+        if (note === undefined) return 1;
+        // cache_control закрывает префикс: переносим на блок с распознанным текстом
+        if (block.cache_control !== undefined) {
+          note.cache_control = block.cache_control;
+          delete block.cache_control;
+        }
+        parent.splice(index + 1, 0, note);
+        this.leaves.push({ holder: note, key: 'text', text: note.text as string });
+        return 2;
       }
       if (source.mediaType !== PDF_MEDIA_TYPE) return this.block(parent, index, block,
         'unsupported_type');
@@ -204,6 +215,15 @@ export class RequestWalker {
       if (e instanceof MediaMaskerError) return this.block(parent, index, block, blockReason(e));
       throw e;
     }
+  }
+
+  /**
+   * Text-блок с распознанным на картинке (текст, коды, пометка о скрытом): обычный лист, то
+   * есть пройдёт то же маскирование и проверку, что и остальной текст запроса.
+   */
+  private recognizedBlock(rec: Recognized): JsonObject | undefined {
+    const text = recognizedBlockText(rec);
+    return text === null ? undefined : { type: 'text', text };
   }
 
   /** Заменить вложение пометкой с причиной из закрытого списка; cache_control сохраняется. */
@@ -241,6 +261,11 @@ export class RequestWalker {
       else if (page.image !== null) {
         blocks.push({ type: 'image', source: { type: 'base64', media_type: page.image.mediaType,
           data: page.image.data } });
+        const note = this.recognizedBlock(page.image.recognized);
+        if (note !== undefined) {
+          blocks.push(note);
+          leaves.push({ holder: note, key: 'text', text: note.text as string });
+        }
       }
     }
     if (blocks.length === 0) addText(EMPTY_DOCUMENT_TEXT);

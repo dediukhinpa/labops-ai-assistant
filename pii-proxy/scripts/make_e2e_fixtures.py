@@ -2,15 +2,19 @@
 
 Запуск: python pii-proxy/scripts/make_e2e_fixtures.py <каталог>
 Создаёт person.png, phone.jpg, passport.png (фото с ПДн), scan.pdf (скан), text.pdf (текстовый
-слой). Все значения вымышлены. Нужен Pillow (есть в venv вендоренной labops-pii).
+слой), card.png (визитка с подписью), qr.png (QR с vCard), photo.png (фото без текста).
+Все значения вымышлены. Нужны Pillow, OpenCV и numpy (есть в venv вендоренной labops-pii).
 """
 
 from __future__ import annotations
 
 import io
+import random
 import sys
 from pathlib import Path
 
+import cv2
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
@@ -30,14 +34,94 @@ TEXT_PDF_BODY = (
 )
 
 
-def make_text_image(lines: tuple[str, ...]) -> Image.Image:
+def make_text_image(lines: tuple[str, ...], size: tuple[int, int] = PAGE_SIZE) -> Image.Image:
     """Рисует строки чёрным по белому шрифтом DejaVu."""
     font = ImageFont.truetype(str(FONT_PATH), FONT_SIZE)
-    img = Image.new("RGB", PAGE_SIZE, "white")
+    img = Image.new("RGB", size, "white")
     draw = ImageDraw.Draw(img)
     for i, line in enumerate(lines):
         draw.text((TEXT_ORIGIN[0], TEXT_ORIGIN[1] + i * LINE_STEP), line, font=font, fill="black")
     return img
+
+
+CARD_SIZE = (1200, 600)
+CARD_LINES = (
+    "Иванов Пётр Сергеевич",
+    "Директор по закупкам",
+    "+7 912 345-67-89",
+    "г. Абакан, ул. Ленина 15",
+)
+CARD_FRAGMENTS = ("Иванов", "Сергеевич", "912", "Абакан", "Ленина")
+
+VCARD = (
+    "BEGIN:VCARD\nVERSION:3.0\nN:Иванов;Пётр;Сергеевич;;\nFN:Иванов Пётр Сергеевич\n"
+    "TEL;TYPE=CELL:+7 912 345-67-89\nEMAIL:petr.ivanov@example.com\n"
+    "ADR;TYPE=WORK:;;ул. Ленина 15;Абакан;;655017;Россия\nEND:VCARD"
+)
+QR_MODULE_PX = 5
+QR_QUIET_PX = 40
+QR_ORIGIN = (100, 100)
+
+SIGNATURE_ORIGIN = (700, 450)
+SIGNATURE_BOX = (680, 400, 1000, 520)
+INK = (20, 20, 60)
+SIGNATURE_POINTS = 40
+SIGNATURE_WIDTH = 3
+
+
+
+def card_image() -> Image.Image:
+    """Визитка: ФИО, должность, телефон, адрес."""
+    return make_text_image(CARD_LINES, CARD_SIZE)
+
+
+def draw_signature(img: Image.Image, origin: tuple[int, int] = SIGNATURE_ORIGIN) -> None:
+    """Рисует «рукописную» подпись: плавная кривая со случайной дрожью и росчерк.
+
+    Tesseract такое не читает (проверено в тестах), как и настоящую подпись.
+    """
+    rnd = random.Random(7)
+    draw = ImageDraw.Draw(img)
+    x, y = origin
+    points = []
+    for i in range(SIGNATURE_POINTS):
+        x += rnd.randint(4, 9)
+        y = origin[1] + int(35 * np.sin(i / 2.3)) + rnd.randint(-6, 6)
+        points.append((x, y))
+    draw.line(points, fill=INK, width=SIGNATURE_WIDTH, joint="curve")
+    draw.line([(origin[0] - 10, origin[1] + 50), (x + 20, origin[1] + 30)],
+              fill=INK, width=SIGNATURE_WIDTH)
+
+
+def qr_image(payload: str, size: tuple[int, int] = (1200, 700)) -> Image.Image:
+    """Белая картинка с QR-кодом на месте QR_ORIGIN."""
+    code = cv2.QRCodeEncoder.create().encode(payload)
+    code = cv2.resize(code, None, fx=QR_MODULE_PX, fy=QR_MODULE_PX,
+                      interpolation=cv2.INTER_NEAREST)
+    code = cv2.copyMakeBorder(code, QR_QUIET_PX, QR_QUIET_PX, QR_QUIET_PX, QR_QUIET_PX,
+                              cv2.BORDER_CONSTANT, value=255)
+    img = Image.new("RGB", size, "white")
+    img.paste(Image.fromarray(code).convert("RGB"), QR_ORIGIN)
+    return img
+
+
+def photo_image(size: tuple[int, int] = (900, 600)) -> Image.Image:
+    """Фото без текста: градиент, пятна и мелкий шум, слегка размытые."""
+    rnd = np.random.RandomState(1)
+    width, height = size
+    base = np.zeros((height, width, 3), np.float32)
+    yy, xx = np.mgrid[0:height, 0:width]
+    base[..., 0] = 120 + 60 * xx / width
+    base[..., 1] = 140 + 50 * yy / height
+    base[..., 2] = 170
+    for _ in range(6):
+        center = (int(rnd.randint(100, width - 100)), int(rnd.randint(100, height - 100)))
+        color = tuple(int(v) for v in rnd.randint(40, 230, 3))
+        cv2.circle(base, center, int(rnd.randint(40, 120)), color, -1)
+    base += rnd.normal(0, 6, base.shape)
+    base = cv2.GaussianBlur(base, (0, 0), 3)
+    return Image.fromarray(np.clip(base, 0, 255).astype(np.uint8))
+
 
 
 def text_pdf() -> bytes:
@@ -86,6 +170,11 @@ def main(out: Path) -> None:
     _save(make_text_image(PII_LINES), out / "person.png", "PNG")
     _save(make_text_image((*SAFE_LINES, *PII_LINES)), out / "phone.jpg", "JPEG")
     _save(make_text_image(PASSPORT_LINES), out / "passport.png", "PNG")
+    card = card_image()
+    draw_signature(card)
+    _save(card, out / "card.png", "PNG")
+    _save(qr_image(VCARD), out / "qr.png", "PNG")
+    _save(photo_image(), out / "photo.png", "PNG")
     (out / "scan.pdf").write_bytes(scan_pdf(SCAN_PAGES))
     (out / "text.pdf").write_bytes(text_pdf())
 
