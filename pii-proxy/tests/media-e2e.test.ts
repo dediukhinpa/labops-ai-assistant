@@ -5,7 +5,7 @@ import { post, startRig, textStream, type Rig } from './helpers';
 
 /**
  * Сквозная проверка с настоящими media-masker и Tesseract. Пропускается без окружения:
- * MEDIA_E2E_URL, MEDIA_E2E_TOKEN, MEDIA_E2E_DIR (каталог после media-masker/scripts/
+ * MEDIA_E2E_URL, MEDIA_E2E_TOKEN, MEDIA_E2E_DIR (каталог после pii-proxy/scripts/
  * make_e2e_fixtures.py). Закрашенные картинки, ушедшие «модели», пишутся в MEDIA_E2E_DIR/out-*.png
  * для повторного OCR снаружи.
  */
