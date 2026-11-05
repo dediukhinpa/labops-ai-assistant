@@ -40,3 +40,4 @@ bun.lockb.bak
 .idea/
 .vscode/
 .local-tesseract/
+*.egg-info/
