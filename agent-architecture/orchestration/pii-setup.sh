@@ -227,6 +227,8 @@ install_media_masker() {
     echo "MEDIA_MASKER_HOST=127.0.0.1"
     echo "MEDIA_MASKER_PORT=$MEDIA_MASKER_PORT"
     echo "MEDIA_MASKER_MASK_LEGAL_ENTITY=true"
+    # Адреса закрашиваются и на картинках, как в тексте (флаг читается с labops-pii 0.3.0)
+    echo "MEDIA_MASKER_ADDRESS_MASK=true"
     [ -z "${PII_TESSERACT_CMD:-}" ] || echo "MEDIA_MASKER_TESSERACT_CMD=$PII_TESSERACT_CMD"
     [ -z "${PII_TESSDATA_PREFIX:-}" ] || echo "TESSDATA_PREFIX=$PII_TESSDATA_PREFIX"
     [ -z "${PII_TESSERACT_LD_LIBRARY_PATH:-}" ] \

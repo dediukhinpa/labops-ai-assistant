@@ -77,6 +77,7 @@ bash "$HERE/pii-setup.sh" host >/dev/null 2>&1 || fail "host с tesseract упа
 [ "$(stat -c %a "$TMP/cfg/media-masker.env")" = "600" ] || fail "права env маскера"
 grep -q '^MEDIA_MASKER_API_TOKEN=.' "$TMP/cfg/media-masker.env" || fail "нет токена в env маскера"
 grep -q "^MEDIA_MASKER_TESSERACT_CMD=$TMP/tesseract" "$TMP/cfg/media-masker.env" || fail "cmd"
+grep -qx 'MEDIA_MASKER_ADDRESS_MASK=true' "$TMP/cfg/media-masker.env" || fail "адреса в маскере"
 [ -f "$TMP/units/labops-media-masker.service" ] || fail "нет юнита маскера"
 grep -q '__' "$TMP/units/labops-media-masker.service" && fail "плейсхолдеры в юните маскера"
 grep -q 'python -m labops_pii.media.mask$' "$TMP/units/labops-media-masker.service" \
