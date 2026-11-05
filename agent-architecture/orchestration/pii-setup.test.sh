@@ -51,6 +51,12 @@ bash "$HERE/pii-setup.sh" host >/dev/null 2>&1
 # 2a. labops-pii: вендоренная копия в рабочей папке, юниты на её модули, адреса включены
 [ -f "$TMP/runtime/labops-pii/labops_pii/__main__.py" ] || fail "нет копии labops_pii"
 [ -f "$TMP/runtime/labops-pii/VERSION" ] || fail "нет VERSION вендоренной копии"
+# TS-часть лежит там, куда указывает tsconfig pii-proxy (../vendor/labops-pii/ts), без node_modules
+[ -f "$TMP/runtime/vendor/labops-pii/ts/src/index.ts" ] || fail "нет вендоренной TS-части"
+[ -f "$TMP/runtime/vendor/labops-pii/ts/bun.lock" ] || fail "нет bun.lock вендоренной TS-части"
+[ ! -e "$TMP/runtime/labops-pii/ts" ] || fail "TS-часть попала в копию Python-библиотеки"
+grep -q '"@labops/pii": \["../vendor/labops-pii/ts/src/index.ts"\]' \
+  "$TMP/runtime/pii-proxy/tsconfig.json" || fail "tsconfig pii-proxy не указывает на вендоренную TS-часть"
 grep -q 'python -m labops_pii$' "$TMP/units/labops-pseudonymizer.service" || fail "ExecStart сервиса"
 grep -q "^Environment=PYTHONPATH=$TMP/runtime/labops-pii$" "$TMP/units/labops-pseudonymizer.service" \
   || fail "PYTHONPATH юнита"

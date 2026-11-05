@@ -2,7 +2,7 @@ import {
   STUCK_ALERT_INTERVAL_MS,
   STUCK_FAILURE_THRESHOLD,
   STUCK_TRACKER_MAX_SESSIONS,
-} from './constants';
+} from './proxy-constants';
 
 /** Сработавший сигнал «сессия застряла» (без значений ПДн: только отпечаток и счётчик). */
 export interface StuckSignal {

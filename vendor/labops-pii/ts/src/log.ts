@@ -25,13 +25,6 @@ export interface Logger {
   log(event: string, fields?: LogFields): void;
 }
 
-/** Журнал в stderr: одна JSON-строка на событие. */
-export const stderrLogger: Logger = {
-  log(event: string, fields: LogFields = {}): void {
-    process.stderr.write(`${JSON.stringify({ ts: new Date().toISOString(), event, ...fields })}\n`);
-  },
-};
-
 /** Журнал-пустышка. */
 export const nullLogger: Logger = { log(): void {} };
 

@@ -1,4 +1,4 @@
-/** Общие константы pii-proxy: пределы сервиса, таймеры, коды отказов. */
+/** Общие константы ядра: пределы сервиса, таймеры, коды отказов. */
 
 /** Предел длины одного текста сервиса (PSEUDONYMIZER_MAX_TEXT_CHARS по умолчанию). */
 export const MAX_TEXT_CHARS = 70_000;
@@ -39,20 +39,12 @@ export const RESTORE_MAX_CHARS = 4_000;
 /** Сколько символов sha256 session id попадает в журнал. */
 export const SESSION_HASH_CHARS = 8;
 
-/** HTTP-коды ответов прокси. */
+/** HTTP-коды отказов (их несёт RequestRejectedError; ответы строит проект). */
 export const STATUS_BAD_REQUEST = 400;
 export const STATUS_UNSUPPORTED_ENCODING = 415;
 export const STATUS_PII_FOUND = 422;
 export const STATUS_BAD_GATEWAY = 502;
 export const STATUS_UNAVAILABLE = 503;
-
-/** Предел тела запроса, байт (вложения base64 бывают большими). */
-export const MAX_REQUEST_BODY_BYTES = 256 * 1024 * 1024;
-/** Таймаут простоя соединения Bun.serve, секунд (долгие SSE-ответы). */
-export const SERVER_IDLE_TIMEOUT_S = 255;
-
-/** Заголовок сессии Claude Code. */
-export const SESSION_HEADER = 'x-claude-code-session-id';
 
 /** Текст замены вложения при политике strip. */
 export const ATTACHMENT_STRIPPED_TEXT =
@@ -101,15 +93,3 @@ export const SYSTEM_INSERT_TEXT =
  * Второй подряд перезапуск - сервис нестабилен: отказ (fail closed), а не бесконечный повтор.
  */
 export const MASK_BOOT_ATTEMPTS = 2;
-
-/**
- * Сколько отказов 422/503 подряд в одной сессии считаются «агент застрял». Три: одиночный
- * отказ бывает честным (в запросе нашлись ПДн, модель переформулирует), три подряд - петля.
- */
-export const STUCK_FAILURE_THRESHOLD = 3;
-/** Не чаще раза в час сигнал «сессия застряла» на одну сессию, мс. */
-export const STUCK_ALERT_INTERVAL_MS = 60 * 60 * 1_000;
-/** Сколько сессий помнит счётчик застревания (память ограничена). */
-export const STUCK_TRACKER_MAX_SESSIONS = 1_000;
-/** Маршрут проверки живости (без авторизации; прокси слушает только 127.0.0.1). */
-export const HEALTH_ROUTE = '/health';

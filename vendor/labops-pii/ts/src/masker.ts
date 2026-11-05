@@ -1,4 +1,4 @@
-import type { ImagePolicy } from './config';
+import type { ImagePolicy } from './image-policy';
 import {
   MASK_BOOT_ATTEMPTS,
   CHECK_OVERLAP_CHARS,

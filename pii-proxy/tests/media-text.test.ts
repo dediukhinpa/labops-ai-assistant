@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
-  RECOGNIZED_HEADER, RECOGNIZED_HIDDEN_NOTE,
-} from '../src/constants';
-import { recognizedBlockText } from '../src/media-text';
-import { NOTHING_RECOGNIZED } from '../src/media-client';
+  RECOGNIZED_HEADER, RECOGNIZED_HIDDEN_NOTE, recognizedBlockText, NOTHING_RECOGNIZED,
+} from '@labops/pii';
 import { collectText, post, startRig, textStream, type Rig } from './helpers';
 
 const PERSON = 'Иванов Пётр Сергеевич';

@@ -2,7 +2,7 @@ import {
   ATTACHMENT_STRIPPED_TEXT, attachmentBlockedText, EMPTY_DOCUMENT_TEXT, PDF_MEDIA_TYPE,
   STATUS_PII_FOUND,
 } from './constants';
-import type { ImagePolicy } from './config';
+import type { ImagePolicy } from './image-policy';
 import type { Recognized } from './media-client';
 import { MediaMaskerError, RequestRejectedError } from './errors';
 import { recognizedBlockText } from './media-text';

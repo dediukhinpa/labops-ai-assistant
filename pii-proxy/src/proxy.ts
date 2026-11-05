@@ -1,31 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { ProxyConfig } from './config';
 import {
-  MAX_REQUEST_BODY_BYTES,
-  HEALTH_ROUTE,
-  SERVER_IDLE_TIMEOUT_S,
-  SESSION_HEADER,
-  STATUS_BAD_GATEWAY,
-  STATUS_BAD_REQUEST,
-  STATUS_PII_FOUND,
-  STATUS_UNAVAILABLE,
-  STATUS_UNSUPPORTED_ENCODING,
-} from './constants';
+  HEALTH_ROUTE, MAX_REQUEST_BODY_BYTES, SERVER_IDLE_TIMEOUT_S, SESSION_HEADER,
+} from './proxy-constants';
 import {
-  MediaMaskerError, PseudonymizerError, RequestRejectedError, errorResponse,
-} from './errors';
-import { restoreMessageJson } from './json-restore';
-import { isObject, type JsonObject } from './json-leaves';
-import { sessionFingerprint, type LogFields, type Logger } from './log';
-import { MediaProcessor } from './media';
-import { HttpMediaMasker } from './media-client';
-import { RequestMasker } from './masker';
-import { checkWindows } from './masker';
-import { HttpPseudonymizer, type Pseudonymizer } from './pseudonymizer-client';
-import { Restorer } from './restorer';
+  HttpMediaMasker, HttpPseudonymizer, MediaMaskerError, MediaProcessor, PseudonymizerError,
+  RequestMasker, RequestRejectedError, Restorer, STATUS_BAD_GATEWAY, STATUS_BAD_REQUEST,
+  STATUS_PII_FOUND, STATUS_UNAVAILABLE, STATUS_UNSUPPORTED_ENCODING, checkWindows, errorResponse,
+  formatSse, isObject, parseSse, restoreMessageJson, restoreSse, sessionFingerprint,
+  type JsonObject, type LogFields, type Logger, type Pseudonymizer, type SseEvent,
+} from '@labops/pii';
 import { SessionStuckTracker, type StuckSignal } from './session-stuck';
-import { formatSse, parseSse, type SseEvent } from './sse';
-import { restoreSse } from './stream-restore';
 
 const MASKED_ROUTES: ReadonlySet<string> = new Set(['/v1/messages', '/v1/messages/count_tokens']);
 const DROP_REQUEST_HEADERS = ['host', 'content-length', 'accept-encoding'];

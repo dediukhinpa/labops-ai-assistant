@@ -1,11 +1,8 @@
 import { z } from 'zod';
+import type { ImagePolicy } from '@labops/pii';
 
-/**
- * Что делать с фото и PDF в запросе: mask - через media-masker (OCR, закраска ПДн; по умолчанию),
- * strip - заменить заглушкой, reject - отказать (422), passthrough - отправить как есть
- * (небезопасно: ПДн на картинках уйдут в модель; только по явному решению владельца).
- */
-export type ImagePolicy = 'passthrough' | 'mask' | 'strip' | 'reject';
+// ImagePolicy живёт в библиотеке (там нет env); здесь повторно экспортируется для совместимости
+export type { ImagePolicy };
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_UPSTREAM = 'https://api.anthropic.com';
