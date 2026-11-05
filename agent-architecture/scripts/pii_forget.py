@@ -360,8 +360,35 @@ def process_logs(args: argparse.Namespace, subj: Subject, bk: Backup, rep: Repor
                 path.unlink()
 
 
-def process_pseudonymizer(args: argparse.Namespace, rep: Report, thread_ids: list[str]) -> None:
+def agent_ids(args: argparse.Namespace) -> list[str]:
+    """Агенты, чьи треды искать: --agent и имя агента из пути workspace `<agent>/.claude`."""
+    found = list(args.agent)
+    for ws in args.workspace:
+        path = Path(ws).expanduser().resolve()
+        if path.name == ".claude" and path.parent.name and path.parent.name not in found:
+            found.append(path.parent.name)
+    return found
+
+
+def build_thread_ids(agents: list[str], session_ids: list[str]) -> list[str]:
+    """Тред псевдонимизатора = `<agent>:<id сессии>` (так его строит pii-proxy/src/proxy.ts).
+
+    Без префикса агента DELETE не находит ни одной таблицы замен: раньше id сессии
+    отправлялся голым, и dry-run на живом хосте показывал 0 тредов.
+    """
+    return [f"{a}:{sid}" for a in agents for sid in session_ids]
+
+
+def process_pseudonymizer(args: argparse.Namespace, rep: Report, session_ids: list[str]) -> None:
     """Удалить таблицы замен по id удалённых сессий."""
+    agents = agent_ids(args)
+    if session_ids and not agents:
+        rep.notes.append(
+            "агент не определён (нужен --agent или --workspace вида <agent>/.claude): "
+            "тред псевдонимизатора = <agent>:<id сессии>, таблицы замен не удалены"
+        )
+        return
+    thread_ids = build_thread_ids(agents, session_ids)
     rep.add("pseudonymizer_threads", len(thread_ids))
     if not thread_ids:
         return
@@ -396,6 +423,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--workspace", action="append", default=[], help="<agent>/.claude")
     p.add_argument("--state-dir", action="append", default=[], help="TELEGRAM_STATE_DIR плагина")
     p.add_argument("--listener-log-dir", action="append", default=[])
+    p.add_argument("--agent", action="append", default=[],
+                   help="id агента для тредов псевдонимизатора (иначе из --workspace)")
     p.add_argument("--pseudonymizer-url")
     p.add_argument("--pseudonymizer-token-file")
     p.add_argument("--drop-mixed", action="store_true", help="смешанные сессии удалять целиком")
