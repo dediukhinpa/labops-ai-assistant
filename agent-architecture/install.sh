@@ -38,9 +38,9 @@
 #   SKIP_PII_PROXY=1          # НЕ ставить маскирование ПДн (pii-proxy): агент пойдёт в модель
 #                             # напрямую, с громким предупреждением. По умолчанию - ставится.
 #   SKIP_VOICE=1              # не ставить локальную расшифровку голоса (voice-transcriber)
-#   SETUP_PROXY=1             # ПОСТАВИТЬ HTTP-прокси (Squid) для Donut Browser; по умолчанию
-#                             # выключено: шаг открывает порт 3128 наружу. Пароль случайный,
-#                             # лежит в ~/proxy-credentials.txt (LABOPS_PROXY_ALLOW_FROM=<IP> —
+#   SKIP_PROXY=1              # НЕ ставить HTTP-прокси (Squid) для Donut Browser. По умолчанию
+#                             # ставится: пароль случайный, лежит в ~/proxy-credentials.txt;
+#                             # порт 3128 открывается наружу (LABOPS_PROXY_ALLOW_FROM=<IP> —
 #                             # пускать только с этого адреса)
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
 #   PREFLIGHT_DONE=1          # пропустить проверку доступности внешних хостов
@@ -65,7 +65,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # voice_install: сервис расшифровки голоса ставится, пока у установки есть root.
 # shellcheck source=orchestration/lib/voice-install.sh
 . "$REPO_DIR/orchestration/lib/voice-install.sh"
-# proxy_install: Squid для Donut Browser, ставится только по SETUP_PROXY=1 или --proxy-only.
+# proxy_install: Squid для Donut Browser, ставится по умолчанию (SKIP_PROXY=1 — не ставить).
 # shellcheck source=orchestration/lib/proxy-install.sh
 . "$REPO_DIR/orchestration/lib/proxy-install.sh"
 
@@ -175,52 +175,27 @@ run_voice_step() {
     || warn "голос не настроен — текст работает; повторите установку, чтобы включить голос (пропустить: SKIP_VOICE=1)"
 }
 
-# run_proxy_step <пользователь> <его дом> — шаг «Прокси для Donut Browser». По умолчанию
-# выключен: он открывает порт наружу, а нужен не всем. Сбой не останавливает установку.
+# run_proxy_step <пользователь> <его дом> — шаг «Прокси для Donut Browser». Ставится по
+# умолчанию (отключить: SKIP_PROXY=1). Сбой не останавливает установку — прокси нужен только
+# для Donut Browser на компьютере студента. Без Linux с apt и systemd (например, macOS)
+# шаг тихо пропускается; в режиме --proxy-only эта причина уже ошибка.
 run_proxy_step() {
   export LABOPS_PROXY_DONE=1
-  if [ "${SETUP_PROXY:-0}" != "1" ] && [ "$MODE" != "proxy" ]; then
-    return 0
+  if [ "$MODE" != "proxy" ]; then
+    if [ "${SKIP_PROXY:-0}" = "1" ]; then
+      note "прокси пропущен (SKIP_PROXY=1) — Donut Browser через этот сервер ходить не сможет"
+      return 0
+    fi
+    if ! command -v apt-get >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
+      note "прокси пропущен: нужен Linux с apt и systemd (на этой системе его не поставить)"
+      return 0
+    fi
   fi
   say "2d. Прокси для Donut Browser"
   echo "  Ставлю Squid: Donut Browser на вашем компьютере будет ходить в сеть через этот"
   echo "  сервер. Доступ — по логину и случайному паролю; пароль в вывод не печатается."
   proxy_install "$1" "$2" \
     || warn "прокси не настроен — повторите: bash install.sh --proxy-only (подробности выше)"
-}
-
-# write_runtime_conf <владелец> <checkout монорепо> <лаборатория> — записать от
-# root, из какого checkout хелпер labops-runtime-deploy собирает копию роя в
-# $LABOPS_RUNTIME_DIR. Источник решает root, а не тот, кто зовёт хелпер через sudo.
-write_runtime_conf() {
-  local owner="$1" source="$2" lab="$3" tmp branch
-  tmp="$(mktemp)"
-  printf '# Автосоздано labops-agent-architecture/install.sh.\n' > "$tmp"
-  printf '# Источник копии роя для %s.\n' "$LABOPS_RUNTIME_HELPER" >> "$tmp"
-  printf 'SOURCE=%s\nOWNER=%s\nLAB=%s\n' "$source" "$owner" "$lab" >> "$tmp"
-  # Хелпер по умолчанию собирает копию только с main, иначе переключённый на
-  # фичу checkout молча уехал бы во весь рой. Если ставят с другой ветки —
-  # запоминаем её здесь (решение root, не вызывающего) и говорим об этом.
-  branch="$(git -C "$source" symbolic-ref --short -q HEAD 2>/dev/null || true)"
-  if [ -n "$branch" ] && [ "$branch" != "main" ]; then
-    printf 'BRANCH=%s\n' "$branch" >> "$tmp"
-    warn "копия роя закреплена за веткой $branch — смените ветку и перезапустите install.sh, чтобы вернуться на main"
-  fi
-  if $SUDO install -d -m 755 "$(dirname "$LABOPS_RUNTIME_CONF")" \
-     && $SUDO install -m 644 -o root -g root "$tmp" "$LABOPS_RUNTIME_CONF"; then
-    rm -f "$tmp"
-    ok "копия роя будет собираться из $source ($LABOPS_RUNTIME_CONF)"
-    return 0
-  fi
-  rm -f "$tmp"
-  warn "не записан $LABOPS_RUNTIME_CONF — агенты будут работать из checkout"
-  return 1
-}
-
-# runtime_conf_source — SOURCE из записанных настроек копии (пусто, если нет).
-runtime_conf_source() {
-  { grep -E '^SOURCE=' "$LABOPS_RUNTIME_CONF" 2>/dev/null || true; } \
-    | tail -n 1 | sed 's/^SOURCE=//'
 }
 
 # ── --proxy-only ──────────────────────────────────────────────────
@@ -510,8 +485,10 @@ if [ "$MODE" != "test" ] && [ "${LABOPS_VOICE_DONE:-0}" != "1" ]; then
   fi
 fi
 
-# ── 2d. Прокси для Donut Browser (по SETUP_PROXY=1) ───────────────
-if [ "$MODE" != "test" ] && [ "${SETUP_PROXY:-0}" = "1" ] && [ "${LABOPS_PROXY_DONE:-0}" != "1" ]; then
+# ── 2d. Прокси для Donut Browser ──────────────────────────────────
+# Под root с отдельным пользователем шаг уже выполнен выше (LABOPS_PROXY_DONE пришёл с
+# окружением). Здесь — установка от root без отдельного пользователя и от обычного с sudo.
+if [ "$MODE" != "test" ] && [ "${LABOPS_PROXY_DONE:-0}" != "1" ]; then
   run_proxy_step "$(id -un)" "$HOME"
 fi
 

@@ -9,7 +9,8 @@
 #   squid + apache2-utils                      пакеты (htpasswd для файла паролей)
 #   /etc/squid/squid.conf                      наш конфиг; чужой сохраняется как *.labops-bak-*
 #   /etc/squid/labops-passwd                   bcrypt-хэш, root:proxy 640
-#   <дом пользователя>/proxy-credentials.txt   адрес, логин и пароль, 600
+#   /etc/squid/labops-credentials              общий экземпляр реквизитов, root, 600
+#   <дом пользователя>/proxy-credentials.txt   копия: адрес, логин и пароль, 600
 #
 # Пароль случайный, в вывод установщика НЕ попадает: его читают из файла. Повторный запуск
 # идемпотентен: пароль и конфиг остаются, сервис перезапускается только при смене конфига.
@@ -25,6 +26,10 @@
 : "${LABOPS_PROXY_CONF:=/etc/squid/squid.conf}"
 : "${LABOPS_PROXY_PASSWD:=/etc/squid/labops-passwd}"
 : "${LABOPS_PROXY_AUTH_HELPER:=/usr/lib/squid/basic_ncsa_auth}"
+# Общий экземпляр реквизитов: из него файл копируется в дом любого пользователя. Без него
+# установка от другого пользователя (--proxy-only от root, потом полная под пользователем
+# агентов) создала бы новый пароль, и Donut Browser студента перестал бы пускать.
+: "${LABOPS_PROXY_CREDS_STORE:=/etc/squid/labops-credentials}"
 : "${LABOPS_PROXY_SERVICE:=squid}"
 # Squid в Debian/Ubuntu работает от пользователя proxy и должен читать файл паролей.
 : "${LABOPS_PROXY_OWNER:=root}"
@@ -145,10 +150,14 @@ proxy_public_ip() {
 }
 
 # proxy_ensure_credentials <пользователь> <дом> — пароль и файл реквизитов.
-# Если оба файла уже есть, пароль не меняется: Donut Browser студента остаётся рабочим.
+# Если общий экземпляр и файл паролей уже есть, пароль не меняется — только копируется
+# в дом пользователя: Donut Browser студента остаётся рабочим при любом повторе.
 proxy_ensure_credentials() {
   local user="$1" home="$2" creds="$2/$PROXY_CREDENTIALS_NAME" pw tmp_creds tmp_pw ip group_arg=()
-  if [ -f "$creds" ] && $SUDO test -f "$LABOPS_PROXY_PASSWD"; then
+  if $SUDO test -f "$LABOPS_PROXY_CREDS_STORE" && $SUDO test -f "$LABOPS_PROXY_PASSWD"; then
+    if ! $SUDO cmp -s "$LABOPS_PROXY_CREDS_STORE" "$creds" 2>/dev/null; then
+      $SUDO install -m 600 -o "$user" "$LABOPS_PROXY_CREDS_STORE" "$creds" || return 1
+    fi
     ok "пароль прокси прежний (файл $creds)"
     return 0
   fi
@@ -160,6 +169,8 @@ proxy_ensure_credentials() {
   tmp_creds="$(mktemp)"
   printf 'Адрес:  %s\nПорт:   %s\nЛогин:  %s\nПароль: %s\n' \
     "$ip" "$LABOPS_PROXY_PORT" "$LABOPS_PROXY_USER" "$pw" > "$tmp_creds"
+  $SUDO install -m 600 -o "$LABOPS_PROXY_OWNER" "$tmp_creds" "$LABOPS_PROXY_CREDS_STORE" \
+    || { rm -f "$tmp_creds"; return 1; }
   $SUDO install -m 600 -o "$user" "$tmp_creds" "$creds" || { rm -f "$tmp_creds"; return 1; }
   rm -f "$tmp_creds"
 

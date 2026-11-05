@@ -67,11 +67,12 @@ run_install() {
   env PATH="$BIN" SUDO="$BIN/fakesudo" \
     LABOPS_PROXY_CONF="$CONF" LABOPS_PROXY_PASSWD="$PASSWD" \
     LABOPS_PROXY_OWNER="$ME" LABOPS_PROXY_GROUP="$MYGROUP" \
+    LABOPS_PROXY_CREDS_STORE="$TMP/squid/labops-credentials" \
     LABOPS_PROXY_ALLOW_FROM="${ALLOW_FROM:-}" \
     bash -c '
       ok() { echo "OK $*"; }; warn() { echo "WARN $*"; }; note() { echo "NOTE $*"; }
       . "'"$HERE"'/proxy-install.sh"
-      proxy_install "'"$ME"'" "'"$HOME_A"'"'
+      proxy_install "'"$ME"'" "'"${HOME_X:-$HOME_A}"'"'
 }
 
 CREDS="$HOME_A/proxy-credentials.txt"
@@ -110,6 +111,15 @@ OUT="$(run_install 2>&1)" || fail "повторная установка не п
 grep -q "restart squid" "$LOG" && fail "squid перезапущен без смены конфига"
 grep -q "^htpasswd" "$LOG" && fail "пароль пересоздан при повторе"
 grep -q "^apt-get" "$LOG" && fail "пакеты ставились заново"
+
+# 2b. Установка от другого пользователя (другой дом) получает тот же пароль, а не новый:
+#     иначе после --proxy-only от root полная установка сломала бы Donut Browser студента.
+HOME_B="$TMP/home-other"; mkdir -p "$HOME_B"; : > "$LOG"
+HOME_X="$HOME_B" run_install >/dev/null 2>&1 || fail "установка из другого дома не прошла"
+[ "$(cat "$HOME_B/proxy-credentials.txt")" = "$BEFORE_PW" ] || fail "в другом доме другой пароль"
+[ "$(stat -c %a "$HOME_B/proxy-credentials.txt")" = "600" ] || fail "права копии реквизитов не 600"
+[ "$(stat -c %a "$TMP/squid/labops-credentials")" = "600" ] || fail "права общего экземпляра не 600"
+grep -q "^htpasswd" "$LOG" && fail "пароль пересоздан при установке из другого дома"
 
 # 3. Чужой конфиг сохраняется до замены, а не теряется.
 echo "http_port 9999" > "$CONF"; : > "$LOG"
