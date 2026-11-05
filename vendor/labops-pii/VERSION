@@ -1,10 +1,10 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: ac78d68
-tag: (без тега)
-commit: ac78d685121148e9ceef273d33df86953b7a21b2
+ref: v0.5.0
+tag: v0.5.0
+commit: 4c9648a93fef1ff6a24a6ba033b9c17f49b22a60
 parts: media,service,ts
-vendored_at: 2026-11-05T11:51:12Z
+vendored_at: 2026-11-05T12:58:50Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
@@ -43,11 +43,23 @@ files:
   06256424fe301305c468d43f2e56dbc9fbf99aed9d6dc06e4d521201d6437b14  labops_pii/tech_tokens.py
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  ts/LICENSE
   a99699e44cc5dc561973aca532fb059c3345cb0c4a6c3eed9ed2a845000e97a3  ts/bun.lock
-  830e33bf3a396670629ce376b695654023ceed129465bdfaac09c8f5d5a86be4  ts/package.json
+  23a767c7ada6cd2f77c28190e4bb973ff960cd6f9bae2aa7bf0a16bc25ed5b6a  ts/package.json
   371dc33274c468cb29394ae8e555382dbd4af912bc78ef4b43f473416d92bed1  ts/src/constants.ts
+  bd6923c810bc282a560244792952ede4a130e6eb0f6347de53ecb581e255fdf0  ts/src/detector/address-patterns.ts
+  f53c2a4725568adf851c514501d44a753a4833eb78372d0124f9bdcfdf532b08  ts/src/detector/addresses.ts
+  33627434d2d07a4c518ed6b3f5cb9f5bf3e5e0609d95f32a418da6fe01d810d0  ts/src/detector/allowlist.ts
+  02f22fd4b5213a19e39bd62657b0181de0017dfcb6d6b0bcf0cf2b38db1f4a59  ts/src/detector/dictionary/name-dictionary-data.ts
+  db2994bb85302717615fb69128d1fdd600505e54615e77de2883c82ce1c568f2  ts/src/detector/index.ts
+  870dc9cfca077841a9421d5475818203c8a6044e01344aea7b5eb1a1684c16e6  ts/src/detector/name-dictionary.ts
+  593859312ea4cdfd2d8665653a27d395d70864bc94533211e510b2d70c545140  ts/src/detector/normalize.ts
+  33e2ff14ed2d7a4ea8564cb1dd36880a343958ec3198e34086a16add40917adf  ts/src/detector/person-words.ts
+  10d8e488f67a0d417c11e38632f3860ea4952bbef0c511b969ab2ac35bcae712  ts/src/detector/persons.ts
+  3d16b080f520d354c812084aba138330df9e31bbcb3447e880242410f54a6d1e  ts/src/detector/profiles.ts
+  3aef85af4029a557caecebe87ab2a78d4ac1d7d57543f14aa6cb15d2d52fe7a3  ts/src/detector/regex-utils.ts
+  1ace31c06cc60fe1afba35d66cbc0be86386b7138b5f0d148e57bfbb2a2afc5d  ts/src/detector/types.ts
   36bc9e0221ccdc30e0920506304b443b783bc357b6942f1d67feec0703e4b017  ts/src/errors.ts
   534fafa377bfe1043ab580e74df170a3fe98e73e280b44d2a52f047857934245  ts/src/image-policy.ts
-  47e7689d778585529c406c6d5d08c0f295bfa295de578fc07337a0e3b89158d7  ts/src/index.ts
+  285fa2366650a72512344267c7f8f4400564c690081d19c92b733ad408d050fc  ts/src/index.ts
   d49f514a831812a6cf88f885eb7de0e8b9e97905e141fcd670ef5b3c2fd7c5ba  ts/src/json-leaves.ts
   bae5d57410acd13d76f60792d563e4ba0a7370a3edc5fa5b9843fb6c9bfa800c  ts/src/json-restore.ts
   17ca13991d5690831e07198c59de8c962d30d685fcdbf6e820b0cd96cfc88442  ts/src/log.ts
