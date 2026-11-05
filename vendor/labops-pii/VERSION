@@ -1,10 +1,10 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: v0.2.0
-tag: v0.2.0
-commit: 87a5014c0df8be71e5101cd5b1ce2114a110cc0c
+ref: v0.3.0
+tag: v0.3.0
+commit: 3c534719ac4045b2b190dc91d5d667d8ec1518b7
 parts: media,service
-vendored_at: 2026-11-05T11:08:03Z
+vendored_at: 2026-11-05T11:33:22Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
@@ -25,9 +25,9 @@ files:
   eaeb017b9eef67f6628e165ea8dfe486e3b54037dffbef60f7a25a8611dfbb22  labops_pii/media/gate/normalize.py
   0bf3056e2a852ee1ef34ccd78554f8e636e4dc3e08882725d93d7ba7c2196003  labops_pii/media/mask/__init__.py
   a3b38c4fc7effc00e8dc3eabef099a4f502087e7ac582853ed7b79962e235d7f  labops_pii/media/mask/__main__.py
-  bb1ced256ffd0c03ee0a750cced5ea9c9ed1312d2795b048e7ffc7d1cdd5ae78  labops_pii/media/mask/api.py
+  969e780f7afe4f484ad875901c502eeca6b06a3e148755fe7541484c573a0a27  labops_pii/media/mask/api.py
   c40d65518719f40faaeb5ad6c776096219ef77a99684b3c9ea279c65f4226e05  labops_pii/media/mask/codes.py
-  6ecbf0c59ad7b89440dbed8ecd1d2290a83fea7a7a7655b932951fa248e17d8b  labops_pii/media/mask/config.py
+  621da8b7627c05325769bb061017409a0e6e3942f404ad38470c1208021d858b  labops_pii/media/mask/config.py
   1ebb74afa00c68a7862d01755b7f2526a51d78df1f580353fec9f5117755045a  labops_pii/media/mask/faces.py
   fc7068bbac4d0a0f5105ede5c4c69147813794564771409ae9a45e270376f372  labops_pii/media/mask/imaging.py
   7a6daa70f0952cca1291f7fce8d2a96935a2411f205db11844d23093e32c63ef  labops_pii/media/mask/jsonlog.py
