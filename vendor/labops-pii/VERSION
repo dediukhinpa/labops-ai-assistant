@@ -1,10 +1,10 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: f02d085
+ref: ac78d68
 tag: (без тега)
-commit: f02d085fb862a1e6e474414f5a32e4feb7bf0ba1
+commit: ac78d685121148e9ceef273d33df86953b7a21b2
 parts: media,service,ts
-vendored_at: 2026-11-05T11:48:42Z
+vendored_at: 2026-11-05T11:51:12Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
@@ -42,6 +42,7 @@ files:
   59ec1b8f05717bad3c9c748488c2ba10602f3ab65067b0f762ac3876512676f1  labops_pii/store.py
   06256424fe301305c468d43f2e56dbc9fbf99aed9d6dc06e4d521201d6437b14  labops_pii/tech_tokens.py
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  ts/LICENSE
+  a99699e44cc5dc561973aca532fb059c3345cb0c4a6c3eed9ed2a845000e97a3  ts/bun.lock
   830e33bf3a396670629ce376b695654023ceed129465bdfaac09c8f5d5a86be4  ts/package.json
   371dc33274c468cb29394ae8e555382dbd4af912bc78ef4b43f473416d92bed1  ts/src/constants.ts
   36bc9e0221ccdc30e0920506304b443b783bc357b6942f1d67feec0703e4b017  ts/src/errors.ts
