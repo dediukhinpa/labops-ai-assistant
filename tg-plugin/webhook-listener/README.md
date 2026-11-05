@@ -99,6 +99,15 @@ Either way: the URL you set in `WEBHOOK_SECOND_BRAIN_AGENT_ROUTER_URL` is yours,
 a third-party endpoint. The listener also redacts Bearer tokens from log
 records so the token does not surface in journal output.
 
+## PII proxy
+
+`claude -p` runs with `cwd` set to the agent workspace, so it does not read the agent's own
+`settings.json`. The listener therefore copies `ANTHROPIC_BASE_URL` (the agent's local
+`pii-proxy`) and the telemetry-off flags from the `env` block of
+`$WEBHOOK_AGENT_WORKSPACE/settings.json` into the child environment; a value already present in
+the listener's own environment wins. Without this, background tasks bypass the masking proxy.
+Redeploy the listener to apply it to an already installed agent.
+
 ## Security
 
 - The listener fails to start if the Bearer file is missing — no silent
