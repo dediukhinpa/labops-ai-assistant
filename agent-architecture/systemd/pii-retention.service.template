@@ -1,0 +1,18 @@
+[Unit]
+Description=Retention sweep: журналы и временные файлы агентов (152-ФЗ, сроки хранения)
+
+[Service]
+Type=oneshot
+# Сроки в днях (значения по умолчанию совпадают с retention-sweep.sh):
+Environment=RETENTION_LOG_DAYS=30
+Environment=RETENTION_OUTBOX_DAYS=30
+Environment=RETENTION_TMP_DAYS=7
+Environment=RETENTION_INBOX_DAYS=30
+Environment=RETENTION_LISTENER_DAYS=30
+# 0 = не трогать raw/ (слой памяти агента; срок задаёт владелец)
+Environment=RETENTION_RAW_DAYS=0
+# __SWEEP_ARGS__ — например:
+#   --workspace %h/.claude-lab/developer/.claude --state-dir %h/.claude/channels/<имя>
+#   --listener-log-dir /var/log/labops-plugin-webhook/developer
+# Каталог в /var/log должен быть доступен на запись пользователю юнита.
+ExecStart=/bin/bash __SCRIPTS__/retention-sweep.sh __SWEEP_ARGS__
