@@ -14,6 +14,7 @@ export interface LogFields {
   readonly forgotten_leaves?: number;
   readonly restored_tokens?: number;
   readonly pii_types?: readonly string[];
+  readonly count?: number;
 }
 
 /** Приёмник журнала (в тестах подменяется). */

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ProxyConfig } from './config';
 import {
   MAX_REQUEST_BODY_BYTES,
+  HEALTH_ROUTE,
   SERVER_IDLE_TIMEOUT_S,
   SESSION_HEADER,
   STATUS_BAD_GATEWAY,
@@ -18,6 +19,7 @@ import { RequestMasker } from './masker';
 import { checkWindows } from './masker';
 import { HttpPseudonymizer, type Pseudonymizer } from './pseudonymizer-client';
 import { Restorer } from './restorer';
+import { SessionStuckTracker, type StuckSignal } from './session-stuck';
 import { formatSse, parseSse, type SseEvent } from './sse';
 import { restoreSse } from './stream-restore';
 
@@ -29,6 +31,10 @@ const DROP_RESPONSE_HEADERS = ['content-encoding', 'content-length', 'transfer-e
 export interface ProxyDeps {
   readonly logger: Logger;
   readonly service?: Pseudonymizer;
+  /** Приёмник сигнала «сессия застряла» (файл для watchdog); без него только журнал. */
+  readonly onStuck?: (signal: StuckSignal) => void;
+  /** Счётчик застревания (в тестах - с малым порогом и своими часами). */
+  readonly stuckTracker?: SessionStuckTracker;
 }
 
 /** Запущенный прокси. */
@@ -52,6 +58,7 @@ interface RequestContext {
 export class PiiProxy {
   private readonly service: Pseudonymizer;
   private readonly masker: RequestMasker;
+  private readonly stuck: SessionStuckTracker;
 
   constructor(
     private readonly config: ProxyConfig,
@@ -66,6 +73,7 @@ export class PiiProxy {
         caseLabels: config.caseLabels,
       });
     this.masker = new RequestMasker(this.service, config.imagePolicy, config.caseLabels);
+    this.stuck = deps.stuckTracker ?? new SessionStuckTracker();
   }
 
   /** Запустить HTTP-сервер. */
@@ -88,6 +96,11 @@ export class PiiProxy {
   /** Обработать один запрос. */
   async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    // Проверка живости для watchdog: без авторизации и без обращения к API. Это не маршрут
+    // API, поэтому в upstream он не уходит; прокси слушает только 127.0.0.1.
+    if (req.method === 'GET' && url.pathname === HEALTH_ROUTE) {
+      return Response.json({ status: 'ok' });
+    }
     const sessionId = req.headers.get(SESSION_HEADER);
     const ephemeral = sessionId === null || sessionId === '';
     const ctx: RequestContext = {
@@ -102,6 +115,8 @@ export class PiiProxy {
     try {
       const res = await this.route(req, url, ctx);
       keepThread = res.deferredCleanup;
+      // Дошёл до upstream: серия отказов этой сессии прервана.
+      if (!ctx.ephemeral) this.stuck.recordSuccess(ctx.session);
       return res.response;
     } catch (e) {
       return this.failure(e, ctx);
@@ -255,12 +270,14 @@ export class PiiProxy {
         code: e.code,
         ...(e.piiTypes.length > 0 ? { pii_types: e.piiTypes } : {}),
       });
+      if (e.status === STATUS_PII_FOUND) this.noteFailure(ctx, e.code);
       const type = e.status === STATUS_BAD_GATEWAY ? 'api_error' : 'invalid_request_error';
       return errorResponse(e.status, type, e.message);
     }
     if (e instanceof PseudonymizerError) {
       this.deps.logger.log('pseudonymizer_failure', { ...base, status: STATUS_UNAVAILABLE,
         code: e.code });
+      this.noteFailure(ctx, e.code);
       return errorResponse(STATUS_UNAVAILABLE, 'api_error',
         'Сервис маскирования данных недоступен: запрос не отправлен.');
     }
@@ -271,7 +288,18 @@ export class PiiProxy {
     }
     this.deps.logger.log('request_failed', { ...base, status: STATUS_UNAVAILABLE,
       code: e instanceof Error ? e.name : 'unknown' });
+    this.noteFailure(ctx, 'internal');
     return errorResponse(STATUS_UNAVAILABLE, 'api_error', 'Внутренняя ошибка pii-proxy.');
+  }
+
+  /** Учесть отказ 422/503 сессии; при серии подряд - событие session_stuck (без ПДн). */
+  private noteFailure(ctx: RequestContext, code: string): void {
+    if (ctx.ephemeral) return;
+    const signal = this.stuck.recordFailure(ctx.session, code);
+    if (signal === undefined) return;
+    this.deps.logger.log('session_stuck', { session: signal.session, count: signal.count,
+      code: signal.code });
+    this.deps.onStuck?.(signal);
   }
 
   private async dropThread(ctx: RequestContext): Promise<void> {
