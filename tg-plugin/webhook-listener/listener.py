@@ -176,6 +176,36 @@ _SUBPROCESS_ENV_ALLOW = frozenset({
     "HOME", "PATH", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
 })
 _SUBPROCESS_ENV_PREFIX = ("CLAUDE_", "ANTHROPIC_")
+# Ключи из блока env файла settings.json агента, которые нужны дочернему `claude -p`.
+# Зачем: cwd процесса - рабочий каталог агента, а claude читает проектные настройки из
+# <cwd>/.claude/settings.json, поэтому settings.json самого агента (в cwd) сюда НЕ попадает,
+# и без этого задачи шли мимо pii-proxy прямо в API (проверено живым прогоном 05.11.2026:
+# задача выполнена, в журнале прокси 0 запросов).
+# Почему читаем settings.json, а не отдельный env-файл listener: источник один и тот же
+# для TUI-агента и для listener, порт не может разойтись, а уже установленным агентам
+# хватает обновить код listener. Хуки TUI-агента сюда сознательно НЕ переносим (флаг
+# --settings не используем): они шлют события в вебхук плагина и ломали бы фоновую задачу.
+_AGENT_SETTINGS_ENV_KEYS = (
+    "ANTHROPIC_BASE_URL",
+    "DISABLE_TELEMETRY",
+    "DISABLE_ERROR_REPORTING",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+)
+
+
+def _agent_settings_env(workspace: Path) -> dict[str, str]:
+    """Вернуть разрешённые ключи env из settings.json агента (пусто, если файла нет)."""
+    try:
+        data = json.loads((workspace / "settings.json").read_text(encoding="utf-8"))
+        block = data.get("env", {}) if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(block, dict):
+        return {}
+    return {
+        k: v for k, v in block.items()
+        if k in _AGENT_SETTINGS_ENV_KEYS and isinstance(v, str) and v
+    }
 
 
 def _build_subprocess_env() -> dict[str, str]:
@@ -193,6 +223,9 @@ def _build_subprocess_env() -> dict[str, str]:
     for key, val in os.environ.items():
         if key.startswith(_SUBPROCESS_ENV_PREFIX):
             env[key] = val
+    # Явно заданное в окружении listener важнее settings.json (оператор мог переопределить).
+    for key, val in _agent_settings_env(AGENT_WORKSPACE).items():
+        env.setdefault(key, val)
     env.setdefault("HOME", str(Path.home()))
     return env
 
