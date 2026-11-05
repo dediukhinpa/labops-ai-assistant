@@ -25,8 +25,8 @@
 #                             # siblings ещё не установлены их собственными install.sh —
 #                             # агент стартует в деградированном режиме, см. README → Quickstart.
 #   ./install.sh --test-only  # только self-test
-#   ./install.sh --openai-adapter # ТОЛЬКО поставить адаптер Claude Code -> ChatGPT (LiteLLM) и
-#                             # выйти; рой на подписке ChatGPT, см. docs/openai-adapter.md
+#   AGENT_OS_USER=<польз.> ./install.sh --openai-adapter # ТОЛЬКО поставить адаптер Claude Code ->
+#                             # ChatGPT (LiteLLM) и выйти; рой на подписке ChatGPT, см. docs/openai-adapter.md
 #   ./install.sh --no-agent   # подготовить + склонировать siblings, но авторизацию и
 #                             # агента не выполнять (для ручного/отложенного запуска:
 #                             #  claude --dangerously-skip-permissions && bash skills/create-agent/new-agent.sh)
@@ -213,7 +213,14 @@ if [ "$MODE" = "openai" ]; then
   echo "  Ставлю LiteLLM на 127.0.0.1: Claude Code говорит с ним по протоколу Anthropic, а он с"
   echo "  ChatGPT по вашей подписке. Вход подтверждается один раз кодом; токены лежат в каталоге"
   echo "  службы адаптера, а не в настройках агентов."
-  openai_adapter_install "$(id -un)" "$HOME" || die "адаптер не установлен - причина в сообщениях выше"
+  # Адаптеру нужен root (юнит, пользователь службы), а лаборатория агента живёт в доме
+  # пользователя агентов: ключ шлюза должен лечь туда, а не в /root. Как и в установщике памяти,
+  # пользователя задаёт AGENT_OS_USER; без него берётся тот, кто запустил команду.
+  OPENAI_USER="${AGENT_OS_USER:-$(id -un)}"
+  OPENAI_HOME="$(getent passwd "$OPENAI_USER" | cut -d: -f6)"
+  [ -n "$OPENAI_HOME" ] || die "нет пользователя $OPENAI_USER - укажите AGENT_OS_USER=<пользователь агентов>"
+  openai_adapter_install "$OPENAI_USER" "$OPENAI_HOME" \
+    || die "адаптер не установлен - причина в сообщениях выше"
   exit 0
 fi
 

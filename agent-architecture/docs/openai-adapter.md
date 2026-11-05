@@ -51,8 +51,11 @@ LiteLLM есть провайдер `chatgpt/` (вход по коду устр�
 в стране, которую поддерживает OpenAI.
 
 ```bash
-bash install.sh --openai-adapter
+AGENT_OS_USER=<пользователь агентов> bash install.sh --openai-adapter
 ```
+
+Команда запускается от root (или с sudo). `AGENT_OS_USER` нужен, чтобы ключ шлюза лёг в
+лабораторию агентов, а не в `/root`; без него берётся тот, кто запустил команду.
 
 Установщик предложит модель (Enter - рекомендуемая; либо `LABOPS_OPENAI_MODEL=<имя>`), затем
 покажет ссылку и код: откройте ссылку в браузере, где вы вошли в аккаунт OpenAI, введите код и
@@ -73,9 +76,11 @@ bash install.sh --openai-adapter
 ## Перевод агента на адаптер
 
 ```bash
-bash orchestration/openai-adapter-wire.sh <агент>
+runuser -u <пользователь агентов> -- bash ~<пользователь агентов>/labops-ai-assistant/agent-architecture/orchestration/openai-adapter-wire.sh <агент>
 sudo systemctl restart claude-agent-<агент>.service
 ```
+
+Скрипт запускается от пользователя агентов: он правит файлы его лаборатории.
 
 Скрипт сохраняет исходные файлы в `<агент>/.claude/backup-openai-adapter/` и меняет:
 
