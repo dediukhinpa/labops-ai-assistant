@@ -1,16 +1,16 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: v0.5.0
-tag: v0.5.0
-commit: 4c9648a93fef1ff6a24a6ba033b9c17f49b22a60
+ref: v0.8.0
+tag: v0.8.0
+commit: e2b7d5371e7fda94cb22ebace8fb254ee74e8541
 parts: media,service,ts
-vendored_at: 2026-11-05T12:58:50Z
+vendored_at: 2026-11-05T15:51:00Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
   1efe29dd7d9f7289e6d0b5e7d684d6f9130042bc384e212277681263ecd0f310  labops_pii/__init__.py
   356ad6a8aee34e5cbcb7e75d1ff954d7391fe8a511484ad71877fde0389a514b  labops_pii/__main__.py
-  5d9d61fb2bf66901b7ef3281c9b8b5128482e3dcaa2575fbe519ad436fb67a92  labops_pii/allowlist.py
+  7dfe44b0e133bb7abed8a71477e2e9b8a2f7bce7b7f074cf398dbe2c45981784  labops_pii/allowlist.py
   b798852aba623900bb1fc736c88a9789819d9b71f27e4cd1be0ba90324192767  labops_pii/api.py
   fc9b9cef86099a9999a9423daa03306ee694bd4f2aea090e300f27d0b9ed5189  labops_pii/body_guard.py
   027288d8b935ffce3096ede3689c69ee88c7370f78073286561ed54b8bc08763  labops_pii/checksums.py
@@ -36,7 +36,7 @@ files:
   c6eab763d5cbf8291f8fe791f8b386ce142035b85c0c2c671d5cd4569117c9a9  labops_pii/media/mask/unreadable.py
   e2d7f9527316e32059067708f0d8c926b989ba8954aa90587bbf327ef372c46c  labops_pii/morph.py
   408ed930c8e0f9f086c895e2bbb67b18175d35a5740ab9b24ca9a817abd8c9da  labops_pii/pii_patterns.py
-  d231431735fe6a7e246fd8ad0e069c971aadab8b38da408d4046ec300a027dcc  labops_pii/profiles.py
+  0c8940f9aca3b09ada9e41610b65015703531005df321061b0fe107c1f04fdc6  labops_pii/profiles.py
   f8b79b3643f49fd2762cc284e20c6506a271178e5e1a3154d1e77c71a3aa746b  labops_pii/rekey.py
   4cbfe1a749cf27cc81f0099f652eb7363fcc89eddec701379d2a0d40dd8cdf30  labops_pii/service.py
   59ec1b8f05717bad3c9c748488c2ba10602f3ab65067b0f762ac3876512676f1  labops_pii/store.py
