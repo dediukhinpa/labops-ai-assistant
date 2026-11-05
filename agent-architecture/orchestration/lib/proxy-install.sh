@@ -283,3 +283,15 @@ proxy_install() {
   note "порт принимает логин и пароль по HTTP без шифрования; чтобы пускать только с вашего"
   note "домашнего IP: LABOPS_PROXY_ALLOW_FROM=<ваш IP> и повторить установку прокси"
 }
+
+# proxy_show_credentials <дом> - печатает реквизиты (адрес, порт, логин, пароль) для переноса в
+# Donut Browser. Нужна только режиму --proxy-only: в полной установке пароль не светим.
+proxy_show_credentials() {
+  local file="$1/$PROXY_CREDENTIALS_NAME"
+  [ -f "$file" ] || { warn "нет файла реквизитов $file"; return 1; }
+  echo
+  echo "  Впишите эти данные в Donut Browser (Network -> Proxies -> New proxy, тип HTTP):"
+  echo
+  sed 's/^/      /' "$file"
+  echo
+}

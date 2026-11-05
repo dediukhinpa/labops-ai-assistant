@@ -183,4 +183,19 @@ OUT="$(env PATH="$NOAPT" SUDO="" bash -c '
   && fail "без apt-get установка не должна проходить"
 echo "$OUT" | grep -q "только на Linux с apt и systemd" || fail "нет объяснения про apt: $OUT"
 
+# 12. proxy_show_credentials печатает все четыре значения для Donut и падает без файла.
+SHOWN="$(env PATH="$BIN" bash -c '
+  ok() { :; }; warn() { echo "WARN $*"; }; note() { :; }
+  . "'"$HERE"'/proxy-install.sh"; proxy_show_credentials "'"$HOME_A"'"' 2>&1)" \
+  || fail "реквизиты не показаны: $SHOWN"
+for key in "Адрес:" "Порт:" "Логин:" "Пароль:"; do
+  echo "$SHOWN" | grep -q "$key" || fail "в показанных реквизитах нет «$key»"
+done
+SHOWN_PW="$(sed -n 's/^Пароль: //p' "$HOME_A/proxy-credentials.txt")"
+[ -n "$SHOWN_PW" ] && echo "$SHOWN" | grep -qF "$SHOWN_PW" || fail "пароль не показан студенту"
+env PATH="$BIN" bash -c '
+  ok() { :; }; warn() { :; }; note() { :; }
+  . "'"$HERE"'/proxy-install.sh"; proxy_show_credentials /nonexistent' >/dev/null 2>&1 \
+  && fail "показ реквизитов без файла должен падать"
+
 echo "OK: proxy-install.sh — все проверки пройдены"
