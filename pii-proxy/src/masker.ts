@@ -29,6 +29,20 @@ export interface MaskStats {
   readonly rememberedLeaves: number;
   /** boot_id сервиса, при котором замаскирован запрос (ключ памяти восстановлений). */
   readonly bootId: string;
+  /** Листьев памяти, забытых из-за находки /check и замаскированных сервисом заново. */
+  readonly forgottenLeaves: number;
+}
+
+/** Лист, взятый из памяти восстановлений: ключ записи и отданный текст. */
+interface RememberedLeaf {
+  readonly key: string;
+  readonly text: string;
+}
+
+/** Итог второй линии: тексты с находками и виды ПДн. */
+interface PiiFindings {
+  readonly dirty: ReadonlySet<string>;
+  readonly types: ReadonlySet<string>;
 }
 
 /** Маскирует тело запроса к модели и проверяет результат второй линией (/check). */
@@ -81,12 +95,23 @@ export class RequestMasker {
       // кэш хранит маски старой таблицы, и [PERSON_1] из кэша и [PERSON_1] новой таблицы
       // могли бы оказаться разными людьми. Тогда кэш сброшен (onReset), маскируем заново.
       const bootId = await this.boot.current(true);
-      const stats = await this.maskOnce(walker, threadId, bootId);
-      if ((await this.boot.current(true)) === bootId) {
-        await this.secondLine(stats.maskedTexts);
-        insertSystemNote(body);
-        return stats.stats;
+      let pass = await this.maskOnce(walker, threadId, bootId);
+      if ((await this.boot.current(true)) !== bootId) continue;
+      let found = await this.findPii(pass.maskedTexts);
+      // Свой текст модели идёт мимо сервиса, и /check может найти в нём «ФИО», которое
+      // модель написала сама (название проекта и т.п.). Без отката такой лист даёт 422 на
+      // каждом следующем запросе сессии: история та же. Поэтому лист забываем и маскируем
+      // сервисом; если и после этого /check находит ПДн - отказ, как для любого листа.
+      const stale = pass.remembered.filter((r) => found.dirty.has(r.text));
+      if (stale.length > 0) {
+        stale.forEach((r) => this.rememberCache.delete(r.key));
+        pass = await this.maskOnce(walker, threadId, bootId);
+        if ((await this.boot.current(true)) !== bootId) continue;
+        found = await this.findPii(pass.maskedTexts);
       }
+      rejectIfFound(found.types);
+      insertSystemNote(body);
+      return { ...pass.stats, forgottenLeaves: stale.length };
     }
     throw new PseudonymizerError('boot_changed');
   }
@@ -96,13 +121,18 @@ export class RequestMasker {
     walker: RequestWalker,
     threadId: string,
     bootId: string,
-  ): Promise<{ stats: MaskStats; maskedTexts: string[] }> {
+  ): Promise<{
+    stats: Omit<MaskStats, 'forgottenLeaves'>;
+    maskedTexts: string[];
+    remembered: RememberedLeaf[];
+  }> {
     const keys = walker.leaves.map(
       (l) => maskCacheKey(threadId, bootId, l.text, this.caseLabels),
     );
     // Уже известные маски снимаем сразу: запись кэша может быть вытеснена новыми.
     const resolved = new Map<string, string>();
     let rememberedLeaves = 0;
+    const rememberedList: RememberedLeaf[] = [];
     // Новые листья: уникальные, в порядке первого появления.
     const missing: { key: string; text: string }[] = [];
     const seen = new Set<string>();
@@ -116,6 +146,7 @@ export class RequestMasker {
       if (remembered !== undefined) {
         resolved.set(key, remembered);
         rememberedLeaves++;
+        rememberedList.push({ key, text: remembered });
       } else if (cached !== undefined) {
         resolved.set(key, cached);
         cacheHits++;
@@ -143,6 +174,7 @@ export class RequestMasker {
         bootId,
       },
       maskedTexts,
+      remembered: rememberedList,
     };
   }
 
@@ -171,32 +203,36 @@ export class RequestMasker {
   }
 
   /** Вторая линия: /check каждого замаскированного листа без thread_id. */
-  private async secondLine(maskedTexts: readonly string[]): Promise<void> {
+  private async findPii(maskedTexts: readonly string[]): Promise<PiiFindings> {
     const todo = [...new Set(maskedTexts)]
       .filter((t) => this.cleanCache.get(textKey(t)) === undefined);
-    const found = new Set<string>();
+    const dirty = new Set<string>();
+    const types = new Set<string>();
     await mapLimited(todo, SERVICE_CONCURRENCY, async (text) => {
-      let dirty = false;
       for (const window of checkWindows(text)) {
         const r = await this.service.check(window);
         if (r.hasPii) {
-          dirty = true;
-          r.types.forEach((t) => found.add(t));
+          dirty.add(text);
+          r.types.forEach((t) => types.add(t));
         }
       }
-      if (!dirty) this.cleanCache.set(textKey(text), '1');
+      if (!dirty.has(text)) this.cleanCache.set(textKey(text), '1');
     });
-    if (found.size > 0) {
-      const types = [...found].sort();
-      throw new RequestRejectedError(
-        STATUS_PII_FOUND,
-        `Запрос не отправлен: после маскирования в тексте остались персональные данные `
-          + `(виды: ${types.join(', ')}).`,
-        'pii_after_mask',
-        types,
-      );
-    }
+    return { dirty, types };
   }
+}
+
+/** Отказ, если вторая линия нашла ПДн. */
+function rejectIfFound(found: ReadonlySet<string>): void {
+  if (found.size === 0) return;
+  const types = [...found].sort();
+  throw new RequestRejectedError(
+    STATUS_PII_FOUND,
+    `Запрос не отправлен: после маскирования в тексте остались персональные данные `
+      + `(виды: ${types.join(', ')}).`,
+    'pii_after_mask',
+    types,
+  );
 }
 
 /** Окна проверки длинного листа: не длиннее предела сервиса, соседние перекрываются. */

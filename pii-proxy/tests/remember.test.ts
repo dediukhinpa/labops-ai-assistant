@@ -122,6 +122,27 @@ describe('память восстановлений', () => {
     expect(rig.upstream.hits.length).toBe(1);
   });
 
+  test('слово модели, принятое /check за ФИО: лист маскируется заново, сессия не стоит', async () => {
+    // Модель сама написала «Прагматику»; NER сервиса считает это ФИО и маскирует.
+    const own = 'Посмотрел Прагматику, звоню [PERSON_1|datv]';
+    rig = startRig(DICT, textStream([own]));
+    const first = await collectText(await post(rig.base, '/v1/messages', FIRST));
+    rig.service.state.dict = { ...DICT, 'Прагматику': '[PERSON_2]' };
+    rig.upstream.reply = textStream(['ок']);
+    const body = history(first.text, undefined);
+    const res = await post(rig.base, '/v1/messages', body);
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(sentAssistant(1).text).toBe('Посмотрел [PERSON_2], звоню [PERSON_1]');
+    const line = rig.logger.lines.filter((l) => l.event === 'request').at(-1);
+    expect(line?.fields.forgotten_leaves).toBe(1);
+    // Запись памяти удалена: следующий запрос той же истории проходит с первого прохода.
+    await (await post(rig.base, '/v1/messages', body)).text();
+    expect(rig.upstream.hits.length).toBe(3);
+    expect(rig.logger.lines.filter((l) => l.event === 'request').at(-1)?.fields.forgotten_leaves)
+      .toBe(0);
+  });
+
   test('детерминизм: два запроса подряд маскируют историю одинаково', async () => {
     rig = startRig(DICT, textStream([MODEL_TEXT]));
     const first = await collectText(await post(rig.base, '/v1/messages', FIRST));

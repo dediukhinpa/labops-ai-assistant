@@ -48,6 +48,14 @@ export class BoundedCache {
     }
   }
 
+  /** Удалить запись (нет записи - ничего не делает). */
+  delete(key: string): void {
+    const old = this.map.get(key);
+    if (old === undefined) return;
+    this.totalCost -= CACHE_KEY_CHARS + this.costOf(old);
+    this.map.delete(key);
+  }
+
   clear(): void {
     this.map.clear();
     this.totalCost = 0;
