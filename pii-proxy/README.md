@@ -14,7 +14,7 @@
 | `passthrough` | как есть, ПДн на картинках уйдут в модель; только по явному решению владельца |
 
 При `mask` обязателен `MEDIA_MASKER_API_TOKEN` (без него прокси не стартует), адрес
-`MEDIA_MASKER_URL` (по умолчанию `http://127.0.0.1:8310`), `MEDIA_MASKER_TIMEOUT_MS` (120 с).
+`MEDIA_MASKER_URL` (по умолчанию `http://127.0.0.1:8320`), `MEDIA_MASKER_TIMEOUT_MS` (120 с).
 
 Где живёт OCR: отдельный сервис `media-masker/`, а не эндпоинт pseudonymizer. Причины:
 Tesseract и растеризация PDF тяжёлые (до 2 ГБ, минуты CPU) и не должны отнимать память и

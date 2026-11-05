@@ -22,7 +22,7 @@ ENV_MASK_LEGAL = "MEDIA_MASKER_MASK_LEGAL_ENTITY"
 ENV_CONTACTS = "MEDIA_MASKER_CONTACTS_FILE"
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8310
+DEFAULT_PORT = 8320
 DEFAULT_TESSERACT_CMD = "tesseract"
 DEFAULT_LANGS = "rus+eng"
 # Предел страниц PDF: сверх него 413 (OCR одной страницы - секунды, запрос ограничен таймаутом)

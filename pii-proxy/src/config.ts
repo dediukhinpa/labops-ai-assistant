@@ -12,7 +12,7 @@ const DEFAULT_UPSTREAM = 'https://api.anthropic.com';
 const DEFAULT_PSEUDONYMIZER_URL = 'http://127.0.0.1:8300';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MEDIA_TIMEOUT_MS = 120_000;
-const DEFAULT_MEDIA_MASKER_URL = 'http://127.0.0.1:8310';
+const DEFAULT_MEDIA_MASKER_URL = 'http://127.0.0.1:8320';
 const MAX_PORT = 65_535;
 
 const OPTIONAL_WHEN_EMPTY: readonly string[] = [

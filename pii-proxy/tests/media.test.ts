@@ -236,7 +236,7 @@ describe('конфиг политики вложений', () => {
   test('по умолчанию mask: адрес по умолчанию, токен обязателен', () => {
     const c = loadConfig({ ...base, MEDIA_MASKER_API_TOKEN: 't' });
     expect(c.imagePolicy).toBe('mask');
-    expect(c.mediaMaskerUrl).toBe('http://127.0.0.1:8310');
+    expect(c.mediaMaskerUrl).toBe('http://127.0.0.1:8320');
     const c2 = loadConfig({ ...base, MEDIA_MASKER_URL: 'http://127.0.0.1:9/',
       MEDIA_MASKER_API_TOKEN: 't' });
     expect(c2.mediaMaskerUrl).toBe('http://127.0.0.1:9');

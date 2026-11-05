@@ -18,7 +18,7 @@
 python3.12 -m venv .venv
 .venv/bin/pip install -e ../pseudonymizer -e ".[dev]"
 export MEDIA_MASKER_API_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-.venv/bin/python -m media_masker          # 127.0.0.1:8310
+.venv/bin/python -m media_masker          # 127.0.0.1:8320
 .venv/bin/python -m pytest -q             # тесты (нужен tesseract, иначе пропускаются)
 ```
 
