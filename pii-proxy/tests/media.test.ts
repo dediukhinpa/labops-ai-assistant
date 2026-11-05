@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { loadConfig } from '../src/config';
-import { SYSTEM_INSERT_TEXT } from '../src/constants';
+import { attachmentBlockedText, SYSTEM_INSERT_TEXT } from '../src/constants';
 import { MEDIA_TOKEN, fakeMaskedData, post, startRig, textStream, type Rig } from './helpers';
 
 const DICT = { 'Иван Петров': '[PERSON_1]', '+7 900 000-00-01': '[PHONE_1]' };
@@ -42,12 +42,15 @@ describe('политика mask', () => {
     expect(rig.media.state.calls).toEqual(['/mask_image']);
   });
 
-  test('image по url: 422, upstream не вызван', async () => {
+  test('image по url: пометка вместо блока, запрос уходит, сервис не вызван', async () => {
     rig = maskRig();
     const res = await post(rig.base, '/v1/messages', user([
-      { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } }]));
-    expect(res.status).toBe(422);
-    expect(rig.upstream.hits.length).toBe(0);
+      { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' },
+        cache_control: { type: 'ephemeral' } }]));
+    expect(res.status).toBe(200);
+    expect(upstreamBody(rig).messages[0].content[0]).toEqual({ type: 'text',
+      text: attachmentBlockedText('not_base64'), cache_control: { type: 'ephemeral' } });
+    expect(rig.upstream.hits[0]?.body).not.toContain('example.com');
     expect(rig.media.state.calls.length).toBe(0);
   });
 
@@ -98,44 +101,107 @@ describe('политика mask', () => {
     expect(rig.upstream.hits.length).toBe(0);
   });
 
-  test('документ не-PDF и документ по url: 422', async () => {
+  test('документ не-PDF и документ по url: пометки с причинами', async () => {
     rig = maskRig();
     const docx = { type: 'document', source: { type: 'base64',
       media_type: 'application/msword', data: 'AAAA' } };
-    expect((await post(rig.base, '/v1/messages', user([docx]))).status).toBe(422);
     const byUrl = { type: 'document', source: { type: 'url', url: 'https://x.test/a.pdf' } };
-    expect((await post(rig.base, '/v1/messages', user([byUrl]))).status).toBe(422);
-    expect(rig.upstream.hits.length).toBe(0);
+    const res = await post(rig.base, '/v1/messages', user([docx, byUrl]));
+    expect(res.status).toBe(200);
+    const c = upstreamBody(rig).messages[0].content;
+    expect(c[0].text).toBe(attachmentBlockedText('unsupported_type'));
+    expect(c[1].text).toBe(attachmentBlockedText('not_base64'));
+    expect(rig.media.state.calls.length).toBe(0);
   });
 
-  test('media-masker отказал по файлу (422): запрос отклонён 422', async () => {
+  test('отказ media-masker по файлу: пометка, оригинал не ушёл, счётчик по причине', async () => {
     rig = maskRig();
     rig.media.state.mode = 'refuse422';
-    const res = await post(rig.base, '/v1/messages', user([image()]));
-    expect(res.status).toBe(422);
-    expect(rig.upstream.hits.length).toBe(0);
-    expect(rig.logger.lines.some((l) => l.fields.code === 'attachment_image_undecodable'))
-      .toBe(true);
+    const res = await post(rig.base, '/v1/messages', user([image(), image('QkJCQg==')]));
+    expect(res.status).toBe(200);
+    const raw = rig.upstream.hits[0]?.body ?? '';
+    expect(raw).not.toContain(PNG_DATA);
+    const c = upstreamBody(rig).messages[0].content;
+    expect(c.map((b: { text: string }) => b.text)).toEqual(
+      [attachmentBlockedText('unreadable'), attachmentBlockedText('unreadable')]);
+    // запись журнала появляется после конца потока ответа
+    await Bun.sleep(100);
+    const fields = rig.logger.lines.map((l) => l.fields).find((f) => f.blocked_attachments);
+    expect(fields?.blocked_attachments).toEqual({ unreadable: 2 });
   });
 
-  test('сбой media-masker: 503, upstream не вызван', async () => {
+  test('отказ по файлу кэшируется: повтор не ходит в сервис', async () => {
+    rig = maskRig();
+    rig.media.state.mode = 'refuse422';
+    await post(rig.base, '/v1/messages', user([image()]));
+    await post(rig.base, '/v1/messages', user([image()]));
+    expect(rig.media.state.calls.length).toBe(1);
+    expect(upstreamBody(rig, 1).messages[0].content[0].text)
+      .toBe(attachmentBlockedText('unreadable'));
+  });
+
+  test('сбой и таймаут media-masker: пометка (fail closed), без кэша сбоя', async () => {
+    const expected = { http500: 'service_unavailable', hang: 'timeout' } as const;
     for (const mode of ['http500', 'hang'] as const) {
       rig = maskRig();
       rig.media.state.mode = mode;
       const res = await post(rig.base, '/v1/messages', user([image(), pdf('SCAN:1')]));
-      expect(res.status).toBe(503);
-      expect(rig.upstream.hits.length).toBe(0);
+      expect(res.status).toBe(200);
+      const raw = rig.upstream.hits[0]?.body ?? '';
+      expect(raw).not.toContain(PNG_DATA);
+      const c = upstreamBody(rig).messages[0].content;
+      expect(c.map((b: { text: string }) => b.text)).toEqual(
+        [attachmentBlockedText(expected[mode]), attachmentBlockedText(expected[mode])]);
+      // сервис ожил: то же вложение обрабатывается заново
+      rig.media.state.mode = 'ok';
+      await post(rig.base, '/v1/messages', user([image()]));
+      expect(upstreamBody(rig, 1).messages[0].content[0].source.data)
+        .toBe(fakeMaskedData(PNG_DATA));
       await rig.stop();
     }
     rig = maskRig();
   }, 15_000);
 
-  test('media-masker остановлен: 503', async () => {
+  test('media-masker остановлен: пометка, запрос уходит', async () => {
     rig = maskRig();
     await rig.media.stop();
     const res = await post(rig.base, '/v1/messages', user([image()]));
-    expect(res.status).toBe(503);
-    expect(rig.upstream.hits.length).toBe(0);
+    expect(res.status).toBe(200);
+    expect(upstreamBody(rig).messages[0].content[0].text)
+      .toBe(attachmentBlockedText('service_unavailable'));
+    expect(rig.upstream.hits[0]?.body).not.toContain(PNG_DATA);
+  });
+
+  test('утечки нет: в upstream нет ни исходных байтов, ни ПДн из PDF и подписей', async () => {
+    rig = maskRig();
+    const secret = pdf('TEXT:Клиент Иван Петров|Тел +7 900 000-00-01', { title: 'Иван Петров' });
+    await post(rig.base, '/v1/messages', user([image(), secret, pdf('SCAN:2')]));
+    const raw = rig.upstream.hits[0]?.body ?? '';
+    for (const forbidden of [PNG_DATA, 'Иван', 'Петров', '+7 900', secret.source as never]) {
+      if (typeof forbidden === 'string') expect(raw).not.toContain(forbidden);
+    }
+    expect(raw).not.toContain(Buffer.from('TEXT:Клиент').toString('base64'));
+    expect(raw).not.toContain('"application/pdf"');
+    expect(raw).toContain('[PERSON_1]');
+  });
+
+  test('детерминизм: одинаковая история даёт побайтово одинаковый префикс', async () => {
+    rig = maskRig();
+    const history = [image(), pdf('TEXT:Иван Петров|стр2'), pdf('SCAN:2'), image('QkJCQg==')];
+    await post(rig.base, '/v1/messages', user(history));
+    await post(rig.base, '/v1/messages', user([...history, { type: 'text', text: 'ещё' }]));
+    const a = upstreamBody(rig, 0).messages[0].content;
+    const b = upstreamBody(rig, 1).messages[0].content;
+    expect(b.slice(0, a.length)).toEqual(a);
+    expect(rig.media.state.calls.length).toBe(4);
+  });
+
+  test('pdf: предел страниц сервиса даёт пометку too_many_pages', async () => {
+    rig = maskRig();
+    rig.media.state.mode = 'refuse413';
+    await post(rig.base, '/v1/messages', user([pdf('SCAN:99')]));
+    expect(upstreamBody(rig).messages[0].content[0].text)
+      .toBe(attachmentBlockedText('too_many_pages'));
   });
 
   test('кэш по sha256: одна картинка в истории - один вызов, байты одинаковы', async () => {

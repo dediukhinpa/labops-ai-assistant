@@ -1,9 +1,10 @@
 import {
-  ATTACHMENT_STRIPPED_TEXT, EMPTY_DOCUMENT_TEXT, PDF_MEDIA_TYPE, STATUS_PII_FOUND,
+  ATTACHMENT_STRIPPED_TEXT, attachmentBlockedText, EMPTY_DOCUMENT_TEXT, PDF_MEDIA_TYPE,
+  STATUS_PII_FOUND,
 } from './constants';
 import type { ImagePolicy } from './config';
 import { MediaMaskerError, RequestRejectedError } from './errors';
-import type { MediaProcessor } from './media';
+import { blockReason, type BlockReason, type MediaProcessor } from './media';
 import { collectStringLeaves, isObject, type JsonObject, type Leaf } from './json-leaves';
 
 /** Блоки, которые не трогаем: подпись thinking, служебные результаты сервера. */
@@ -55,6 +56,8 @@ export class RequestWalker {
   passedAttachments = 0;
   /** Сколько вложений обработано через media-masker. */
   maskedAttachments = 0;
+  /** Вложения, замененные пометкой (fail closed): счётчик по причинам из закрытого списка. */
+  readonly blockedReasons: Partial<Record<BlockReason, number>> = {};
 
   constructor(
     private readonly imagePolicy: ImagePolicy,
@@ -176,8 +179,7 @@ export class RequestWalker {
     const source = readSource(block.source);
     if (source === undefined || source.kind !== 'base64') {
       // url, file_id и прочее: байтов нет, проверить содержимое нельзя
-      throw refuseAttachment('attachment_not_base64',
-        'Вложение не в base64 (ссылка или файл): проверить его на ПДн нельзя.');
+      return this.block(parent, index, block, 'not_base64');
     }
     try {
       if (block.type === 'image') {
@@ -188,22 +190,34 @@ export class RequestWalker {
         this.maskedAttachments++;
         return 1;
       }
-      if (source.mediaType !== PDF_MEDIA_TYPE) {
-        throw refuseAttachment('document_type_unsupported',
-          'Документ этого типа нельзя проверить на ПДн: поддерживается только PDF.');
-      }
+      if (source.mediaType !== PDF_MEDIA_TYPE) return this.block(parent, index, block,
+        'unsupported_type');
       const replacement = await this.pdfBlocks(block, source.data, media);
       parent.splice(index, 1, ...replacement.blocks);
       this.leaves.push(...replacement.leaves);
       this.maskedAttachments++;
       return replacement.blocks.length;
     } catch (e) {
-      if (e instanceof MediaMaskerError && e.kind === 'refused') {
-        throw refuseAttachment(`attachment_${e.code}`,
-          'Вложение не удалось замаскировать, отправлять его нельзя.');
-      }
+      // Fail closed: любой отказ или сбой media-masker - вложение не уходит к модели, на его
+      // месте короткая пометка. Запрос целиком не отклоняется: иначе вложение в истории
+      // ломало бы каждый следующий запрос сессии.
+      if (e instanceof MediaMaskerError) return this.block(parent, index, block, blockReason(e));
       throw e;
     }
+  }
+
+  /** Заменить вложение пометкой с причиной из закрытого списка; cache_control сохраняется. */
+  private block(
+    parent: unknown[],
+    index: number,
+    block: JsonObject,
+    reason: BlockReason,
+  ): Consumed {
+    const note: JsonObject = { type: 'text', text: attachmentBlockedText(reason) };
+    if (block.cache_control !== undefined) note.cache_control = block.cache_control;
+    parent[index] = note;
+    this.blockedReasons[reason] = (this.blockedReasons[reason] ?? 0) + 1;
+    return 1;
   }
 
   /** Блоки вместо PDF: text на каждую страницу с текстом, image на растровую страницу. */
@@ -244,10 +258,6 @@ function readSource(source: unknown): AttachmentSource | undefined {
   const mediaType = typeof source.media_type === 'string' ? source.media_type : '';
   const data = typeof source.data === 'string' ? source.data : '';
   return { kind: source.type, mediaType, data };
-}
-
-function refuseAttachment(code: string, message: string): RequestRejectedError {
-  return new RequestRejectedError(STATUS_PII_FOUND, message, code);
 }
 
 function rejectUnknown(type: string): RequestRejectedError {

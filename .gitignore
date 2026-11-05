@@ -39,3 +39,4 @@ bun.lockb.bak
 .DS_Store
 .idea/
 .vscode/
+.local-tesseract/

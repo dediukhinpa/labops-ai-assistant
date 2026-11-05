@@ -13,6 +13,8 @@ export interface LogFields {
   readonly remembered_leaves?: number;
   readonly forgotten_leaves?: number;
   readonly masked_attachments?: number;
+  /** Скрытые пометкой вложения: причина (закрытый список) -> число. Без значений ПДн. */
+  readonly blocked_attachments?: Readonly<Record<string, number>>;
   readonly restored_tokens?: number;
   readonly pii_types?: readonly string[];
 }

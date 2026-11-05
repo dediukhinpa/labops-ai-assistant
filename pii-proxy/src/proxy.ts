@@ -152,7 +152,9 @@ export class PiiProxy {
       const s = await this.masker.mask(parsed, ctx.threadId);
       stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits,
         remembered_leaves: s.rememberedLeaves, forgotten_leaves: s.forgottenLeaves,
-        masked_attachments: s.maskedAttachments };
+        masked_attachments: s.maskedAttachments,
+        ...(Object.keys(s.blockedReasons).length > 0
+          ? { blocked_attachments: s.blockedReasons } : {}) };
       // Эфемерный тред живёт один запрос: его историю никто не вернёт, помнить нечего.
       if (!ctx.ephemeral) {
         remember = (restored, original): void =>

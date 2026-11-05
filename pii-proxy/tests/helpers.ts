@@ -99,7 +99,7 @@ export function startFakeService(dict: Record<string, string> = {}): FakeService
 }
 
 /** Режим отказа фейкового media-masker. */
-export type FakeMediaMode = 'ok' | 'http500' | 'refuse422' | 'hang';
+export type FakeMediaMode = 'ok' | 'http500' | 'refuse422' | 'refuse413' | 'hang';
 
 /** Фейковый media-masker: картинку «закрашивает» префиксом, PDF разбирает по тестовой разметке. */
 export interface FakeMedia {
@@ -133,6 +133,8 @@ export function startFakeMedia(): FakeMedia {
       if (state.mode === 'http500') return new Response('boom', { status: 500 });
       if (state.mode === 'refuse422') return Response.json({ error: 'image_undecodable' },
         { status: 422 });
+      if (state.mode === 'refuse413') return Response.json({ error: 'pdf_too_many_pages' },
+        { status: 413 });
       const body = (await req.json()) as { media_type: string; data: string };
       if (path === '/mask_image') {
         return Response.json({ media_type: body.media_type, data: fakeMaskedData(body.data) });
