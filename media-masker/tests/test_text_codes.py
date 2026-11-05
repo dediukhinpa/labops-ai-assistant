@@ -11,6 +11,7 @@ from PIL import Image
 from pseudonymizer.detector import PiiDetector
 
 from media_masker.codes import CodeFinder, describe_payload
+from media_masker.config import load_settings
 from media_masker.faces import FaceBlurrer
 from media_masker.imaging import ImageMasker
 from media_masker.ocr import TesseractOcr
@@ -200,3 +201,12 @@ def test_scanned_pdf_pages_carry_recognized_text(
     page = body["pages"][0]
     assert page["text"] is None and page["image"] is not None
     assert "912" in page["recognized"]["text"]
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("", True), ("true", True), ("false", False),
+                                               ("0", False), ("no", False)])
+def test_hide_unreadable_setting(raw: str, expected: bool) -> None:
+    env = {"MEDIA_MASKER_API_TOKEN": "t"}
+    if raw:
+        env["MEDIA_MASKER_HIDE_UNREADABLE"] = raw
+    assert load_settings(env).hide_unreadable is expected
