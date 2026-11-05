@@ -695,7 +695,7 @@ say "5b. Маскирование персональных данных (pii-pro
 pii_geo_check
 if pii_enabled; then
   # PII_SRC_DIR: new-agent.sh запускается из копии роя в /opt, где pii-* нет, - код берём отсюда.
-  if [ -d "$REPO_DIR/../pii-proxy" ] && [ -d "$REPO_DIR/../pseudonymizer" ]; then
+  if [ -d "$REPO_DIR/../pii-proxy" ] && [ -d "$REPO_DIR/../vendor/labops-pii" ]; then
     export PII_SRC_DIR="$(cd "$REPO_DIR/.." && pwd)"
   fi
   if ! bash "$REPO_DIR/orchestration/pii-setup.sh" host; then
