@@ -19,7 +19,18 @@ set -euo pipefail
 #   каталоги журналов listener  *.log старше RETENTION_LISTENER_DAYS (там полный вывод
 #                             агента по межагентным задачам)
 #   бэкапы pii-forget          просроченные (метка EXPIRES) удаляются
-# Транскрипты CLI (~/.claude/projects) чистит сам CLI через cleanupPeriodDays.
+# Транскрипты CLI (~/.claude/projects) чистит сам CLI через cleanupPeriodDays; там стоит
+# бессрочное значение (см. settings.json.template).
+#
+# НИКОГДА не чистится (решение владельца 05.11.26: бессрочно хранить данные, влияющие на
+# память о клиенте и контекст работы с агентом). Скрипт не обращается к этим путям вообще,
+# а тест retention-sweep.test.sh проверяет, что они целы при нулевых сроках:
+#   <ws>/raw, <ws>/core (в т.ч. core/hot, журнал recall-событий), <ws>/knowledge,
+#   <ws>/agents, <ws>/CLAUDE.md, <ws>/scenarios,
+#   <ws>/chats/*, <ws>/state/multichat/sessions.json и прочие файлы чатов собеседников
+#   (персона, контекст) - чистятся только очереди inbox, inbox-bad, outbox.
+# logs/verbose-*.jsonl остаются под сроком: память агента - дневник core/active/episodic.md
+# (консолидация читает его, не verbose), а verbose - его дубль-журнал для отладки.
 #
 # Использование:
 #   retention-sweep.sh [--dry-run] [--workspace DIR]... [--state-dir DIR]...
@@ -106,6 +117,7 @@ for ws in "${WORKSPACES[@]}"; do
   rotate_logs "$ws/logs"
   prune_old "$ws/outbox" "$OUTBOX_DAYS" "outbox"
   prune_old "$ws/tmp" "$TMP_DAYS" "tmp"
+  # raw/ - слой памяти: по умолчанию срок 0 (выкл.); включается только явным решением владельца.
   prune_old "$ws/raw" "$RAW_DAYS" "raw"
   for q in "$ws"/state/multichat/chats/*/inbox "$ws"/state/multichat/chats/*/inbox-bad \
            "$ws"/state/multichat/chats/*/outbox; do

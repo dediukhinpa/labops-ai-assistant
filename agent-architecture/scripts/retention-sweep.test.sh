@@ -50,6 +50,25 @@ ls "$WS"/logs/hooks.log.* >/dev/null 2>&1 || fail "нет ротированно
 [ -e "$LD/2_new.log" ] || fail "свежий журнал listener удалён"
 [ ! -e "$BK/old" ] || fail "просроченный бэкап не удалён"
 
+# защищённые пути (память и контекст) целы при нулевых сроках и любом возрасте
+PROT="$TMP/prot"; mkdir -p "$PROT/core/hot" "$PROT/knowledge" "$PROT/agents" "$PROT/scenarios" \
+  "$PROT/raw" "$PROT/state/multichat/chats/42/inbox"
+for f in core/hot/recent.md core/recall-events.jsonl core/active/episodic.md knowledge/k.md \
+  agents/a.md scenarios/s.md raw/r.md CLAUDE.md state/multichat/sessions.json \
+  state/multichat/chats/42/persona.md state/multichat/chats/42/context.md; do
+  mkdir -p "$(dirname "$PROT/$f")"; echo x > "$PROT/$f"; old "$PROT/$f"
+done
+ATT="$PROT/state/multichat/chats/42/inbox/att.jpg"; echo x > "$ATT"; old "$ATT"
+mkdir -p "$PROT/chats/42"; echo x > "$PROT/chats/42/persona.md"; old "$PROT/chats/42/persona.md"
+RETENTION_RAW_DAYS=0 RETENTION_LOG_DAYS=1 RETENTION_OUTBOX_DAYS=1 RETENTION_TMP_DAYS=1 \
+  RETENTION_INBOX_DAYS=1 bash "$SWEEP" --workspace "$PROT" >/dev/null
+for f in core/hot/recent.md core/recall-events.jsonl core/active/episodic.md knowledge/k.md \
+  agents/a.md scenarios/s.md raw/r.md CLAUDE.md state/multichat/sessions.json \
+  state/multichat/chats/42/persona.md state/multichat/chats/42/context.md chats/42/persona.md; do
+  [ -e "$PROT/$f" ] || fail "защищённый путь удалён: $f"
+done
+[ ! -e "$ATT" ] || fail "старое вложение чата не удалено"
+
 # срок raw включается переменной
 RETENTION_RAW_DAYS=30 bash "$SWEEP" --workspace "$WS" >/dev/null
 [ ! -e "$WS/raw/r.md" ] || fail "RETENTION_RAW_DAYS не сработал"
