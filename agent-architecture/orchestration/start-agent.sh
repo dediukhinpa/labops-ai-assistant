@@ -50,6 +50,16 @@ if ! ( resolve_agent_env "$AGENT" >/dev/null ); then
   exit 1
 fi
 
+# Fail closed: у агента настроен pii-proxy (ANTHROPIC_BASE_URL в settings.json), но он не
+# отвечает. Стартовать нельзя: claude без прокси ушёл бы в модель с немаскированными данными
+# либо молча завис на ошибке соединения. Сессию не трогаем (kill ниже не выполнится).
+# shellcheck source=lib/pii.sh
+source "$(dirname "$0")/lib/pii.sh"
+if ! pii_gate "$AGENT"; then
+  echo "[start-agent] ERROR: $AGENT — pii-proxy не отвечает на /health, claude не запускаю" >&2
+  exit 1
+fi
+
 tmux kill-session -t "=$SESSION" 2>/dev/null || true
 
 # Reap any leaked channel-server (bun) for THIS agent. kill-session kills claude,

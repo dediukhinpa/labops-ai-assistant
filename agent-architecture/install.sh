@@ -33,6 +33,8 @@
 #   GITHUB_TOKEN=ghp_xxx      # нужен на чистом VPS для клонирования приватных labops-*
 #   SKIP_SECOND_BRAIN=1       # не клонировать labops-second-brain
 #   SKIP_TG_PLUGIN=1          # не клонировать labops-tg-plugin
+#   SKIP_PII_PROXY=1          # НЕ ставить маскирование ПДн (pii-proxy): агент пойдёт в модель
+#                             # напрямую, с громким предупреждением. По умолчанию - ставится.
 #   SKIP_VOICE=1              # не ставить локальную расшифровку голоса (voice-transcriber)
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
 #   PREFLIGHT_DONE=1          # пропустить проверку доступности внешних хостов
@@ -681,6 +683,28 @@ if [ "$MODE" = "prep" ]; then
   echo "    claude --dangerously-skip-permissions   # один раз, войдите в браузере, затем /exit"
   echo "    bash skills/create-agent/new-agent.sh"
   exit 0
+fi
+
+# ── 5b. Маскирование ПДн перед моделью ───────────────────────────
+# Один pseudonymizer на хост; pii-proxy на агента ставит new-agent.sh. По умолчанию ВКЛЮЧЕНО:
+# агент, установленный из репо, не должен ходить в модель в обход маскирования. Отключение -
+# только явно (SKIP_PII_PROXY=1) и с громким предупреждением.
+# shellcheck source=orchestration/lib/pii.sh
+. "$REPO_DIR/orchestration/lib/pii.sh"
+say "5b. Маскирование персональных данных (pii-proxy)"
+pii_geo_check
+if pii_enabled; then
+  # PII_SRC_DIR: new-agent.sh запускается из копии роя в /opt, где pii-* нет, - код берём отсюда.
+  if [ -d "$REPO_DIR/../pii-proxy" ] && [ -d "$REPO_DIR/../pseudonymizer" ]; then
+    export PII_SRC_DIR="$(cd "$REPO_DIR/.." && pwd)"
+  fi
+  if ! bash "$REPO_DIR/orchestration/pii-setup.sh" host; then
+    warn "сервис маскирования НЕ установлен - агент будет создан БЕЗ маскирования ПДн."
+    warn "Повторить: bash $REPO_DIR/orchestration/pii-setup.sh host  (или SKIP_PII_PROXY=1 осознанно)"
+  fi
+else
+  warn "SKIP_PII_PROXY=1: маскирование ПДн ОТКЛЮЧЕНО. Агент пойдёт в модель напрямую,"
+  warn "персональные данные уйдут провайдеру немаскированными (152-ФЗ)."
 fi
 
 say "6. Первый агент — Developer (Разработчик)"

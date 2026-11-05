@@ -26,6 +26,8 @@ const envSchema = z.object({
   // Падежные метки во входе: просим сервис ставить [PERSON_N|падеж] у ФИО в косвенном падеже.
   // По умолчанию включено (решение владельца); false не шлёт поле: совместимо со старым
   // сервисом.
+  // Файл событий session_stuck для watchdog (JSON-строки без ПДн). Пусто - не писать.
+  PII_PROXY_ALERT_FILE: z.string().min(1).optional(),
   PII_PROXY_CASE_LABELS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
 });
 
@@ -41,6 +43,8 @@ export interface ProxyConfig {
   readonly imagePolicy: ImagePolicy;
   /** Просить у сервиса падежные метки у ФИО во входе (`case_labels`). */
   readonly caseLabels: boolean;
+  /** Файл, куда дописывается событие session_stuck (читает watchdog). */
+  readonly alertFile?: string;
 }
 
 /**
@@ -64,5 +68,6 @@ export function loadConfig(env: Record<string, string | undefined>): ProxyConfig
     timeoutMs: v.PSEUDONYMIZER_TIMEOUT_MS,
     imagePolicy: v.PII_PROXY_IMAGE_POLICY,
     caseLabels: v.PII_PROXY_CASE_LABELS,
+    ...(v.PII_PROXY_ALERT_FILE !== undefined ? { alertFile: v.PII_PROXY_ALERT_FILE } : {}),
   };
 }

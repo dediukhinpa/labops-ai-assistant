@@ -90,6 +90,27 @@ if grep -q '"model"' agent-template/templates/settings.json.template; then
 else
   bad "settings.json.template не задаёт \"model\" — агент стартует на дефолтной модели CLI"
 fi
+# 4a2. Весь трафик агента к модели идёт через pii-proxy, телеметрия CLI выключена (она идёт
+# мимо ANTHROPIC_BASE_URL), срок хранения транскриптов задан.
+for key in ANTHROPIC_BASE_URL DISABLE_TELEMETRY DISABLE_ERROR_REPORTING \
+           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC cleanupPeriodDays; do
+  if grep -q "\"$key\"" agent-template/templates/settings.json.template; then
+    ok "settings.json.template задаёт $key"
+  else
+    bad "settings.json.template не задаёт $key — данные могут уйти мимо pii-proxy / без срока хранения"
+  fi
+done
+unit "pii.sh: порты / gate / session_stuck / геопроверка — юнит-тест зелёный" \
+     "pii.sh: юнит-тест провален (orchestration/lib/pii.test.sh)" bash orchestration/lib/pii.test.sh
+unit "pii-setup.sh: установка прокси агента и правка settings.json — юнит-тест зелёный" \
+     "pii-setup.sh: юнит-тест провален (orchestration/pii-setup.test.sh)" \
+     bash orchestration/pii-setup.test.sh
+if grep -q 'pii-setup.sh" agent' skills/create-agent/new-agent.sh \
+   && grep -q 'pii_gate' orchestration/start-agent.sh && grep -q 'pii_start_allowed' orchestration/watchdog.sh; then
+  ok "new-agent.sh ставит pii-proxy, start-agent.sh и watchdog не стартуют агента без него"
+else
+  bad "pii-proxy не подключён к new-agent.sh / start-agent.sh / watchdog.sh"
+fi
 # 4b. create-agent flow спрашивает и пробрасывает PRIMARY_MODEL
 if grep -qE '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh \
    && grep -qE 'PRIMARY_MODEL="\$PRIMARY_MODEL"' skills/create-agent/new-agent.sh; then

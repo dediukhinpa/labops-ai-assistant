@@ -429,6 +429,26 @@ if [ -n "${AGENT_BEARER:-}" ] && [ "$AGENT_BEARER" != "CHANGE_ME" ]; then
   fi
 fi
 
+# ── 3b. Маскирование ПДн: свой pii-proxy агента ──────────────────
+# По умолчанию ВКЛЮЧЕНО: ANTHROPIC_BASE_URL в settings.json указывает на локальный прокси
+# агента, и watchdog не стартует claude, пока прокси не отвечает. Шаг стоит ДО автостарта
+# (шаг 6), чтобы первый запуск агента уже шёл через прокси. Сбой не обрывает создание, но
+# попадает в список «Что НЕ работает»: иначе агент молча ушёл бы в модель напрямую.
+say "3b. Маскирование ПДн (pii-proxy)"
+# shellcheck source=../../orchestration/lib/pii.sh
+. "$ORCH_DIR/lib/pii.sh"
+if pii_enabled; then
+  if CLAUDE_LAB="$LAB_DIR" bash "$ORCH_DIR/pii-setup.sh" agent "$AGENT_ID"; then
+    ok "агент ходит в модель через pii-proxy"
+  else
+    DEGRADED+=("pii-proxy не установлен: агент пойдёт в модель НАПРЯМУЮ, ПДн не маскируются. Починить: bash $ORCH_DIR/pii-setup.sh host && CLAUDE_LAB=$LAB_DIR bash $ORCH_DIR/pii-setup.sh agent $AGENT_ID")
+  fi
+else
+  warn "SKIP_PII_PROXY=1: маскирование ПДн ОТКЛЮЧЕНО - агент пойдёт в модель напрямую,"
+  warn "персональные данные уйдут провайдеру немаскированными (152-ФЗ)."
+  DEGRADED+=("маскирование ПДн отключено (SKIP_PII_PROXY=1): данные уходят в модель без псевдонимизации")
+fi
+
 # ── 4. Telegram-канал (бот) ─────────────────────────────────────
 say "4. Telegram-канал"
 if [ -n "$TG_PLUGIN_DIR" ]; then
