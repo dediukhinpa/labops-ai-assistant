@@ -16,7 +16,7 @@ SRC="$HERE/../../openai-adapter"
 grep -q -- '--hash=sha256:' "$SRC/requirements.lock" || fail "в lock-файле нет хэшей"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
-for t in bash env cat sed grep install mktemp rm id awk df tr dirname head tail cp touch test chmod; do
+for t in bash env cat sed grep install mktemp rm id awk df tr dirname head tail cp touch test chmod sh; do
   p="$(type -P "$t")" && ln -sf "$p" "$BIN/$t"
 done
 LOG="$TMP/calls.log"; : > "$LOG"
@@ -40,6 +40,7 @@ LOGIN_TOKEN="fake-access-token-9f8e7d6c"
 cat > "$DIR/.venv/bin/python" <<PYSTUB
 #!/usr/bin/env bash
 echo "login \$CHATGPT_TOKEN_DIR" >> "$LOG"
+echo "cwd \$(pwd -P)" >> "$LOG"
 echo "Sign in with ChatGPT using device code: https://auth.openai.com/codex/device CODE-1234"
 [ -z "\${LOGIN_FAIL:-}" ] || exit 1
 [ -n "\${LOGIN_NO_FILE:-}" ] || printf '{"access_token":"$LOGIN_TOKEN"}' > "\$CHATGPT_TOKEN_DIR/auth.json"
@@ -80,6 +81,7 @@ grep -qx 'LITELLM_LOCAL_MODEL_COST_MAP=True' "$ENVF" || fail "адаптер б�
 [ "$(stat -c %a "$STATE")" = "700" ] || fail "каталог токенов не 700: $(stat -c %a "$STATE")"
 [ "$(stat -c %a "$STATE/auth.json")" = "600" ] || fail "токены входа не 600"
 grep -qx "login $STATE" "$LOG" || fail "вход в ChatGPT не запускался в каталоге токенов"
+grep -qx "cwd $(cd "$STATE" && pwd -P)" "$LOG" || fail "вход запущен не из каталога токенов: у службы нет доступа к чужой папке"
 echo "$OUT" | grep -q "CODE-1234" || fail "человеку не показан код входа"
 grep -q -- '--host 127.0.0.1' "$UNIT" || fail "юнит слушает не только 127.0.0.1"
 grep -q -- '--port 4000' "$UNIT" || fail "в юните не тот порт"

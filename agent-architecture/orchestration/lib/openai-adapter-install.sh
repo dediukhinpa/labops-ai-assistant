@@ -131,7 +131,10 @@ llm_login() {
   echo "  откройте ссылку в браузере, где вы вошли в свой аккаунт OpenAI, и введите код."
   echo "  Ждать подтверждения установщик будет до 15 минут."
   echo
-  if ! llm_as_service_user env CHATGPT_TOKEN_DIR="$LABOPS_LLM_STATE" HOME="$LABOPS_LLM_STATE" \
+  # Запуск идёт из каталога токенов: текущая папка установщика (например /root/...) пользователю
+  # службы недоступна, и LiteLLM падает на старте ("Starting path not found").
+  if ! llm_as_service_user sh -c 'cd "$1" && shift && exec "$@"' sh "$LABOPS_LLM_STATE" \
+       env CHATGPT_TOKEN_DIR="$LABOPS_LLM_STATE" HOME="$LABOPS_LLM_STATE" \
        LITELLM_LOCAL_MODEL_COST_MAP=True \
        "$LABOPS_LLM_DIR/.venv/bin/python" -c "$LLM_LOGIN_PY"; then
     warn "вход в ChatGPT не завершён - запустите установку ещё раз"
