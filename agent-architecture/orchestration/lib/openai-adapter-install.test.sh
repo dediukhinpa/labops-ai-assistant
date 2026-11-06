@@ -69,6 +69,9 @@ CONF="$ETC/config.yaml"; ENVF="$ETC/adapter.env"; UNIT="$UNITS/labops-openai-ada
 SHARED="$HOME_A/.claude-lab/shared/secrets/openai-adapter.env"
 grep -q 'model_name: gpt-test-1' "$CONF" || fail "в конфиге нет имени модели"
 grep -q 'model: chatgpt/gpt-test-1' "$CONF" || fail "в конфиге нет chatgpt/<модель>"
+grep -qx '  callbacks: flatten_system.flatten_system' "$CONF" || fail "в конфиге нет хука flatten_system"
+cmp -s "$SRC/flatten_system.py" "$ETC/flatten_system.py" || fail "хук не установлен рядом с конфигом"
+[ "$(stat -c %a "$ETC/flatten_system.py")" = "640" ] || fail "права хука не 640"
 grep -q 'mode: responses' "$CONF" || fail "режим responses не задан: новая модель уйдёт в chat/completions"
 grep -q '__MODEL__' "$CONF" && fail "в конфиге остался плейсхолдер"
 grep -qi 'api_key\|OPENAI_API_KEY' "$CONF" && fail "в конфиге остались следы ключа API"
@@ -117,7 +120,7 @@ echo "$OUT" | grep -q "недопустимые символы" || fail "нет 
 # 4. Без модели и без терминала берётся рекомендуемая: вопрос задать некому.
 rm -rf "$ETC"
 ENV_EXTRA="X=1" OUT="$(run_install 2>&1 </dev/null)" || fail "без модели установка должна взять рекомендуемую: $OUT"
-grep -q 'model: chatgpt/gpt-5.5' "$ETC/config.yaml" || fail "рекомендуемая модель не подставлена"
+grep -q 'model: chatgpt/gpt-6.1-sol' "$ETC/config.yaml" || fail "рекомендуемая модель не подставлена"
 
 # 5. Вход не завершён - установка честно падает и службу не запускает.
 rm -rf "$ETC" "$STATE"; : > "$LOG"
