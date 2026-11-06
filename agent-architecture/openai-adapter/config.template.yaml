@@ -20,3 +20,6 @@ litellm_settings:
   # Параметры, которых нет у модели ChatGPT (thinking, cache_control и т.п.), отбрасываются,
   # а не роняют запрос.
   drop_params: true
+  # Хук flatten_system.py лежит рядом с конфигом: system-блоки Claude Code -> строка,
+  # иначе бэкенд подписки отвечает «System messages are not allowed».
+  callbacks: flatten_system.flatten_system

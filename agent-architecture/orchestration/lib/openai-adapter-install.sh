@@ -73,9 +73,11 @@ sys.exit(0 if sys.version_info[:2] >= (3, $LLM_MIN_PYTHON_MINOR) else 1)" >/dev/
 }
 
 # Рекомендуемая модель и короткий список для выбора. Названия из справочника LiteLLM
-# (chatgpt/*); какие из них доступны на конкретном тарифе, решает OpenAI.
-LLM_DEFAULT_MODEL="gpt-5.5"
-LLM_MODEL_CHOICES=("gpt-5.5" "gpt-5.4" "gpt-5.3-codex")
+# (chatgpt/*). Проверено на живой подписке (ноябрь 2026): эти модели отвечают, а gpt-5.5,
+# gpt-5.4 и gpt-5.3-codex бэкенд отвергает («not supported when using Codex with a ChatGPT
+# account»). Набор зависит от тарифа: при отказе выберите другую из списка.
+LLM_DEFAULT_MODEL="gpt-6.1-sol"
+LLM_MODEL_CHOICES=("gpt-6.1-sol" "gpt-6-sol" "gpt-5.6-sol" "gpt-5.6-luna")
 
 # llm_ask_inputs - модель: из окружения, иначе выбор цифрой (Enter - рекомендуемая).
 # Без терминала берётся рекомендуемая: вопрос там задать некому.
@@ -180,6 +182,9 @@ llm_write_config() {
   $SUDO install -m 640 -o "$LABOPS_LLM_OWNER" -g "$LABOPS_LLM_USER" "$tmp" \
     "$LABOPS_LLM_ETC/config.yaml" || { rm -f "$tmp"; return 1; }
   rm -f "$tmp"
+  # Хук рядом с конфигом: LiteLLM импортирует callbacks из каталога конфига.
+  $SUDO install -m 640 -o "$LABOPS_LLM_OWNER" -g "$LABOPS_LLM_USER" \
+    "$LABOPS_LLM_SRC/flatten_system.py" "$LABOPS_LLM_ETC/flatten_system.py" || return 1
 }
 
 # llm_master_key - локальный ключ шлюза: прежний, если env-файл уже есть, иначе новый.

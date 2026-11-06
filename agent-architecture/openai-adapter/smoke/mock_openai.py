@@ -3,6 +3,7 @@
 Только stdlib. Журнал запросов — JSONL. Логика: есть function_call_output в input — отвечает
 текстом; в сообщениях пользователя есть RUN_TOOL и есть tools — просит вызвать Bash;
 иначе отвечает текстом.
+Сообщения с ролью system во входе отвергаются (400), как в бэкенде подписки.
 """
 import json
 import sys
@@ -73,6 +74,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))) or b"{}")
         items = req.get("input") if isinstance(req.get("input"), list) else []
+        if any(i.get("role") == "system" for i in items):
+            # Как настоящий бэкенд подписки: system во входе недопустим (нужен instructions).
+            body = b'{"detail":"System messages are not allowed"}'
+            self.send_response(400)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         user_texts = [texts(i) for i in items if i.get("role") == "user"]
         has_result = any(i.get("type") == "function_call_output" for i in items)
         with open(LOG, "a", encoding="utf-8") as f:

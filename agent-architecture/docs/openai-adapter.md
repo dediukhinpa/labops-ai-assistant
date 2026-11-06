@@ -57,13 +57,13 @@ AGENT_OS_USER=<пользователь агентов> bash install.sh --openai
 Команда запускается от root (или с sudo). `AGENT_OS_USER` нужен, чтобы ключ шлюза лёг в
 лабораторию агентов, а не в `/root`; без него берётся тот, кто запустил команду.
 
-Установщик предложит модель (Enter - рекомендуемая; либо `LABOPS_OPENAI_MODEL=<имя>`), затем
+Установщик предложит модель (Enter - рекомендуемая `gpt-6.1-sol`; на проверенной подписке отвечали также `gpt-6-sol`, `gpt-5.6-sol`, `gpt-5.6-luna`, а `gpt-5.5`, `gpt-5.4`, `gpt-5.3-codex` бэкенд отвергал; набор зависит от тарифа; либо `LABOPS_OPENAI_MODEL=<имя>`), затем
 покажет ссылку и код: откройте ссылку в браузере, где вы вошли в аккаунт OpenAI, введите код и
 подтвердите вход. Он:
 
 - ставит LiteLLM в `/opt/labops-openai-adapter` по `requirements.lock` с хэшами;
 - входит в ChatGPT от имени службы, токены - в `/var/lib/labops-openai-adapter` (700);
-- пишет `/etc/labops-openai-adapter/{config.yaml,adapter.env}` (без секретов подписки);
+- пишет `/etc/labops-openai-adapter/{config.yaml,adapter.env,flatten_system.py}` (без секретов подписки; `flatten_system.py` - хук, превращающий system-промпт Claude Code в строку, иначе бэкенд отвечает «System messages are not allowed»);
 - запускает `labops-openai-adapter.service` на `127.0.0.1:4000` от отдельного пользователя;
 - кладёт локальный ключ шлюза в `<лаборатория>/shared/secrets/openai-adapter.env` (600).
 

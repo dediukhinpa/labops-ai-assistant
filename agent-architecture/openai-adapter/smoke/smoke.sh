@@ -25,6 +25,7 @@ cleanup() { for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || 
 trap cleanup EXIT
 
 sed "s|__MODEL__|$MODEL|g" "$HERE/../config.template.yaml" > "$TMP/config.yaml"
+cp "$HERE/../flatten_system.py" "$TMP/flatten_system.py"
 
 # Подставные токены входа: живые на сутки, настоящему бэкенду они не подойдут.
 mkdir -p "$TMP/tokens"
