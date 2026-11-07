@@ -1,31 +1,71 @@
 #!/usr/bin/env bash
 # Смоук-тест цепочки Claude Code -> LiteLLM (провайдер chatgpt/) -> «ChatGPT» БЕЗ подписки.
 # Поднимает заглушку Responses API (mock_openai.py) вместо бэкенда ChatGPT и LiteLLM по
-# настоящему config-шаблону с подставными токенами входа (auth.json), затем гоняет настоящий
-# Claude Code: запрос -> вызов инструмента Bash -> результат -> ответ.
+# настоящему config-шаблону с подставными токенами входа (auth.json), затем:
+#   1. гоняет юнит-тесты хука (если есть каталог ../tests);
+#   2. проверяет SSE-поток /v1/messages на уровне протокола (check_stream.py);
+#   3. гоняет настоящий Claude Code по сценариям: запрос -> вызовы Bash -> результаты -> ответ.
 # Подписка Claude не используется: пустой HOME и подставной токен шлюза.
 #
 #   bash smoke.sh <путь к litellm> [путь к claude]
 #
-# Не входит в test.sh: нужны установленные LiteLLM и Claude Code.
+# Переменные окружения:
+#   SMOKE_MOCK_PORT, SMOKE_LLM_PORT — порты мока и шлюза (по умолчанию 18081 и 18000);
+#   SMOKE_MODEL — имя модели (по умолчанию gpt-smoke; мок принимает любое);
+#   SMOKE_HOOK — путь к хуку (по умолчанию ../flatten_system.py), для мутационной проверки.
+# Не останавливается на первом провале: печатает итог по всем сценариям, код выхода 1,
+# если упал хоть один. Не входит в test.sh: нужны установленные LiteLLM и Claude Code.
 set -euo pipefail
 
 LITELLM="${1:?использование: smoke.sh <путь к litellm> [путь к claude]}"
 CLAUDE="${2:-$(command -v claude)}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOOK="${SMOKE_HOOK:-$HERE/../flatten_system.py}"
 TMP="$(mktemp -d)"
-MOCK_PORT=18081
-LLM_PORT=18000
-MODEL="gpt-smoke"
+MOCK_PORT="${SMOKE_MOCK_PORT:-18081}"
+LLM_PORT="${SMOKE_LLM_PORT:-18000}"
+MODEL="${SMOKE_MODEL:-gpt-smoke}"
 KEY="sk-smoke-local-key"
+FINAL_TEXT="ГОТОВО: цепочка работает"
 STARTUP_TRIES=60
+STARTUP_SLEEP=2
+CLAUDE_TIMEOUT=180
+# Сценарии, которые гоняются через настоящий Claude Code (EMPTY — только поток).
+CLAUDE_SCENARIOS=(RUN_TOOL PARALLEL_NODELTA PARALLEL_DELTA MIXED LONG)
+MIN_BACKEND_REQUESTS=2
+LOG_TAIL=10
 PIDS=()
+FAILS=0
 
-cleanup() { for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done; rm -rf "$TMP"; }
+cleanup() {
+  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null || true; done
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
 
+fail() { echo "FAIL: $*"; FAILS=$((FAILS + 1)); }
+ok() { echo "OK: $*"; }
+
+[ -f "$HOOK" ] || { echo "FAIL: нет файла хука: $HOOK"; exit 1; }
+PYBIN="$(dirname "$LITELLM")/python"
+[ -x "$PYBIN" ] || PYBIN="python3"
+
+# --- 1. Юнит-тесты хука (их каталог появляется вместе с исправлением хука) ---
+TESTS_DIR="$HERE/../tests"
+if [ -d "$TESTS_DIR" ]; then
+  echo "== юнит-тесты хука =="
+  if "$PYBIN" -c 'import pytest' 2>/dev/null; then
+    (cd "$HERE/.." && "$PYBIN" -m pytest -q tests) || fail "юнит-тесты хука (pytest)"
+  else
+    (cd "$HERE/.." && "$PYBIN" -m unittest discover -s tests -t .) \
+      || fail "юнит-тесты хука (unittest)"
+  fi
+else
+  echo "SKIP: каталога openai-adapter/tests нет, юнит-тесты хука пропущены"
+fi
+
 sed "s|__MODEL__|$MODEL|g" "$HERE/../config.template.yaml" > "$TMP/config.yaml"
-cp "$HERE/../flatten_system.py" "$TMP/flatten_system.py"
+cp "$HOOK" "$TMP/flatten_system.py"
 
 # Подставные токены входа: живые на сутки, настоящему бэкенду они не подойдут.
 mkdir -p "$TMP/tokens"
@@ -42,23 +82,72 @@ LITELLM_MASTER_KEY="$KEY" LITELLM_LOCAL_MODEL_COST_MAP=True HOME="$TMP/home" \
   "$LITELLM" --config "$TMP/config.yaml" --host 127.0.0.1 --port "$LLM_PORT" \
   >"$TMP/litellm.log" 2>&1 & PIDS+=("$!")
 
+LIVE_URL="http://127.0.0.1:$LLM_PORT/health/liveliness"
 for ((i = 0; i < STARTUP_TRIES; i++)); do
-  curl -fsS -m 2 "http://127.0.0.1:$LLM_PORT/health/liveliness" >/dev/null 2>&1 && break
-  sleep 2
+  curl -fsS -m 2 "$LIVE_URL" >/dev/null 2>&1 && break
+  sleep "$STARTUP_SLEEP"
 done
-curl -fsS -m 2 "http://127.0.0.1:$LLM_PORT/health/liveliness" >/dev/null || { echo "FAIL: LiteLLM не поднялся"; tail -5 "$TMP/litellm.log"; exit 1; }
+if ! curl -fsS -m 2 "$LIVE_URL" >/dev/null; then
+  echo "FAIL: LiteLLM не поднялся"
+  tail -5 "$TMP/litellm.log"
+  exit 1
+fi
 
-cd "$TMP/work"
-OUT="$(env -i PATH="$PATH" HOME="$TMP/home" TERM=dumb \
-  ANTHROPIC_BASE_URL="http://127.0.0.1:$LLM_PORT" ANTHROPIC_AUTH_TOKEN="$KEY" \
-  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 \
-  timeout 120 "$CLAUDE" -p "RUN_TOOL выполни команду" --model "$MODEL" --allowedTools Bash \
-  --output-format json 2>/dev/null)"
+# --- 2. Поток /v1/messages на уровне протокола ---
+echo "== поток SSE (протокол) =="
+"$PYBIN" "$HERE/check_stream.py" "http://127.0.0.1:$LLM_PORT" "$KEY" \
+  || FAILS=$((FAILS + 1))
+: > "$TMP/mock.jsonl"  # запросы проверки потока не нужны сценариям Claude Code
 
-echo "$OUT" | grep -q '"is_error":false' || { echo "FAIL: Claude Code вернул ошибку: $OUT"; exit 1; }
-echo "$OUT" | grep -q 'ГОТОВО: цепочка работает' || { echo "FAIL: нет итогового ответа: ${OUT:0:600}"; tail -15 "$TMP/litellm.log"; cat "$TMP/mock.jsonl"; exit 1; }
-[ "$(wc -l < "$TMP/mock.jsonl")" -ge 2 ] || { echo "FAIL: нужно минимум 2 запроса к модели (инструмент и ответ)"; cat "$TMP/mock.jsonl"; exit 1; }
-grep -q '"function_call_output"' "$TMP/mock.jsonl" || { echo "FAIL: результат инструмента не дошёл до модели"; exit 1; }
-grep -q '"path": "/responses"' "$TMP/mock.jsonl" || { echo "FAIL: запросы ушли не на /responses бэкенда подписки"; exit 1; }
-grep -q '"auth": "Bearer fake"' "$TMP/mock.jsonl" || { echo "FAIL: токен входа не передан бэкенду"; exit 1; }
-echo "OK: Claude Code -> LiteLLM (chatgpt/) -> Responses API: запрос, вызов Bash, результат, ответ"
+# --- 3. Настоящий Claude Code ---
+# Прогон одного сценария: ключевое слово в промпте выбирает ответ мока.
+run_claude_scenario() {
+  local name="$1" start out log marker bad=0
+  start="$(wc -l < "$TMP/mock.jsonl")"
+  out="$(cd "$TMP/work" && env -i PATH="$PATH" HOME="$TMP/home" TERM=dumb \
+    ANTHROPIC_BASE_URL="http://127.0.0.1:$LLM_PORT" ANTHROPIC_AUTH_TOKEN="$KEY" \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 \
+    timeout "$CLAUDE_TIMEOUT" "$CLAUDE" -p "$name выполни команду" --model "$MODEL" \
+    --allowedTools Bash --output-format json 2>/dev/null)" || true
+  log="$TMP/mock.$name.jsonl"
+  tail -n "+$((start + 1))" "$TMP/mock.jsonl" > "$log"
+
+  if ! echo "$out" | grep -q '"is_error":false'; then
+    fail "сценарий $name: Claude Code вернул ошибку: ${out:0:300}"; return
+  fi
+  echo "$out" | grep -q "$FINAL_TEXT" \
+    || { fail "сценарий $name: нет итогового ответа: ${out:0:300}"; return; }
+  if [ "$(wc -l < "$log")" -lt "$MIN_BACKEND_REQUESTS" ]; then
+    fail "сценарий $name: нужно минимум $MIN_BACKEND_REQUESTS запроса к модели"; return
+  fi
+  grep -q '"function_call_output"' "$log" \
+    || { fail "сценарий $name: результат инструмента не дошёл до модели"; return; }
+  grep -q '"path": "/responses"' "$log" \
+    || { fail "сценарий $name: запросы ушли не на /responses бэкенда подписки"; return; }
+  grep -q '"auth": "Bearer fake"' "$log" \
+    || { fail "сценарий $name: токен входа не передан бэкенду"; return; }
+  if grep -q 'InputValidationError' "$log" || echo "$out" | grep -q 'InputValidationError'; then
+    fail "сценарий $name: InputValidationError (инструмент вызван с пустым input)"; bad=1
+  fi
+  while IFS= read -r marker; do
+    [ -n "$marker" ] || continue
+    grep -qF -- "$marker" "$log" \
+      || { fail "сценарий $name: в результатах Bash нет «$marker» (команда не выполнена)"; bad=1; }
+  done < <(python3 "$HERE/mock_openai.py" --markers "$name")
+  [ "$bad" -eq 0 ] && ok "Claude Code, сценарий $name: вызовы Bash выполнены, ответ получен"
+  return 0
+}
+
+echo "== Claude Code =="
+for scenario in "${CLAUDE_SCENARIOS[@]}"; do
+  run_claude_scenario "$scenario"
+done
+
+echo "== итог =="
+if [ "$FAILS" -gt 0 ]; then
+  echo "FAIL: провалено проверок: $FAILS"
+  echo "--- строки хука в логе LiteLLM (патч установлен или нет) ---"
+  grep -i 'flatten_system' "$TMP/litellm.log" | tail -n "$LOG_TAIL" || true
+  exit 1
+fi
+echo "OK: Claude Code -> LiteLLM (chatgpt/) -> Responses API: все сценарии прошли"
