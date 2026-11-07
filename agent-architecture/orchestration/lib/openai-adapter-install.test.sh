@@ -72,6 +72,10 @@ grep -q 'model: chatgpt/gpt-test-1' "$CONF" || fail "в конфиге нет ch
 grep -qx '  callbacks: flatten_system.flatten_system' "$CONF" || fail "в конфиге нет хука flatten_system"
 cmp -s "$SRC/flatten_system.py" "$ETC/flatten_system.py" || fail "хук не установлен рядом с конфигом"
 [ "$(stat -c %a "$ETC/flatten_system.py")" = "640" ] || fail "права хука не 640"
+# На сервер ставится только сам хук: юнит-тесты и смоук остаются в репозитории.
+STRAY="$(find "$ETC" "$DIR" -path "$DIR/.venv" -prune -o \( -name tests -o -name smoke \) -print)"
+[ -z "$STRAY" ] || fail "в /etc или каталог адаптера попали tests/ или smoke/"
+[ "$(find "$ETC" -name '*.py' | wc -l)" -eq 1 ] || fail "в каталоге конфига лишние .py, кроме хука"
 grep -q 'mode: responses' "$CONF" || fail "режим responses не задан: новая модель уйдёт в chat/completions"
 grep -q '__MODEL__' "$CONF" && fail "в конфиге остался плейсхолдер"
 grep -qi 'api_key\|OPENAI_API_KEY' "$CONF" && fail "в конфиге остались следы ключа API"
