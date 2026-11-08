@@ -23,14 +23,30 @@
      выдаётся атомарно: чанк output_item.added откладывается и уходит одним tool_call
      (id + имя + аргументы), когда аргументы известны.
 
-   Non-stream путь, текстовые блоки и reasoning не затрагиваются. patch_status() показывает,
-   какие патчи стоят.
+   Non-stream путь, текстовые блоки и reasoning не затрагиваются.
+
+3. Токен подписки: сервер ChatGPT перестаёт принимать access_token раньше, чем срок `exp`
+   внутри него (на практике через ~2 суток при `exp` в 10 суток), а LiteLLM обновляет токен
+   только по `exp` и на 401 не реагирует. Поэтому get_access_token оборачивается
+   (install_token_refresh_patch): токен старше MAX_TOKEN_AGE_H часов (по `iat`) обновляется
+   по refresh_token заранее, а при 401 token_expired хук async_post_call_failure_hook
+   принудительно обновляет его, чтобы повтор запроса клиентом прошёл. Обновления идут
+   под одной блокировкой с перечиткой auth.json: refresh_token одноразовый, два
+   параллельных обмена сломали бы друг другу вход.
+
+   patch_status() показывает, какие патчи стоят.
 """
+import asyncio
+import base64
 import copy
 import functools
 import importlib
 import importlib.metadata
+import json
 import logging
+import os
+import threading
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -101,6 +117,14 @@ class FlattenSystem(CustomLogger):
                     and isinstance(msg.get("content"), list)):
                 msg["content"] = _flatten(msg["content"])
         return data
+
+    async def async_post_call_failure_hook(
+        self, request_data, original_exception, user_api_key_dict, traceback_str=None
+    ):
+        """401 token_expired от ChatGPT: обновляет токен, чтобы повтор клиента прошёл."""
+        if _is_token_expired_error(original_exception):
+            await asyncio.to_thread(force_token_refresh)
+        return None
 
 
 flatten_system = FlattenSystem()
@@ -589,6 +613,166 @@ def install_chat_bridge_patch() -> bool:
     return True
 
 
+# --------------------------------------------------------------------------------------
+# Токен подписки: обновление по возрасту и после 401
+# --------------------------------------------------------------------------------------
+
+AUTH_MODULE_PATH = "litellm.llms.chatgpt.authenticator"
+AUTH_CLASS_NAME = "Authenticator"
+AUTH_METHOD_NAME = "get_access_token"
+AUTH_REFRESH_METHOD = "_refresh_tokens"
+AUTH_READ_METHOD = "_read_auth_file"
+AUTH_MARKER = "_flatten_system_token_patch"
+AUTH_ORIGINAL_ATTR = "_flatten_system_token_original"
+
+# Переменная окружения с предельным возрастом токена (часы) и значение по умолчанию.
+# Сервер отвергал токен через ~53 ч после выпуска; 12 ч дают большой запас.
+MAX_TOKEN_AGE_ENV = "LABOPS_CHATGPT_MAX_TOKEN_AGE_H"
+DEFAULT_MAX_TOKEN_AGE_H = 12.0
+SECONDS_PER_HOUR = 3600
+# Не чаще одного принудительного обновления за это время: пачка запросов с 401 даёт
+# один обмен refresh_token, а не десяток.
+FORCE_COOLDOWN_SECONDS = 30
+# Коды ответа OAuth, при которых refresh_token уже не поможет.
+RELOGIN_STATUS_CODES = (400, 401, 403)
+HTTP_UNAUTHORIZED = 401
+TOKEN_EXPIRED_MARKER = "token_expired"
+
+# Одна блокировка на процесс: перечитывание файла и обмен refresh_token идут вместе.
+_refresh_lock = threading.Lock()
+_last_refresh_at = 0.0
+
+
+def _max_token_age_seconds() -> float:
+    """Предельный возраст токена в секундах (из окружения, иначе по умолчанию)."""
+    raw = os.environ.get(MAX_TOKEN_AGE_ENV, "")
+    try:
+        hours = float(raw) if raw else DEFAULT_MAX_TOKEN_AGE_H
+    except ValueError:
+        logger.warning("flatten_system: %s=%r не число, беру %s ч",
+                       MAX_TOKEN_AGE_ENV, raw, DEFAULT_MAX_TOKEN_AGE_H)
+        hours = DEFAULT_MAX_TOKEN_AGE_H
+    return max(hours, 0.0) * SECONDS_PER_HOUR
+
+
+def _token_issued_at(access_token: object) -> float | None:
+    """Момент выпуска токена (`iat` из JWT) или None, если разобрать не удалось."""
+    if not isinstance(access_token, str):
+        return None
+    try:
+        payload = access_token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        iat = claims.get("iat")
+        return float(iat) if isinstance(iat, (int, float)) else None
+    except Exception:  # noqa: BLE001 - не JWT = возраст неизвестен
+        return None
+
+
+def _is_token_expired_error(exc: object) -> bool:
+    """Это отказ ChatGPT «токен истёк» (HTTP 401 или код token_expired в тексте)?"""
+    if getattr(exc, "status_code", None) == HTTP_UNAUTHORIZED:
+        return True
+    return TOKEN_EXPIRED_MARKER in str(exc)
+
+
+def _refresh_locked(authenticator: Any, force: bool) -> None:
+    """Обновляет токен, если он стар (или force). Вызывать только под _refresh_lock.
+
+    Файл перечитывается уже под блокировкой: если токены обновил другой поток, возраст
+    свежий и обмен не нужен. Ошибки не пробрасываются, чтобы запрос шёл по исходной
+    логике LiteLLM (она сама напишет понятную ошибку входа).
+    """
+    global _last_refresh_at
+    read = getattr(authenticator, AUTH_READ_METHOD)
+    auth = read()
+    if not isinstance(auth, dict):
+        return
+    refresh_token = auth.get("refresh_token")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        return
+    now = time.time()
+    if force:
+        if now - _last_refresh_at < FORCE_COOLDOWN_SECONDS:
+            return
+    else:
+        issued = _token_issued_at(auth.get("access_token"))
+        if issued is None or now - issued <= _max_token_age_seconds():
+            return
+    try:
+        getattr(authenticator, AUTH_REFRESH_METHOD)(refresh_token)
+    except Exception as exc:  # noqa: BLE001
+        status = getattr(exc, "status_code", None)
+        if status in RELOGIN_STATUS_CODES:
+            logger.warning(
+                "flatten_system: refresh_token отклонён (HTTP %s): нужен повторный вход по коду "
+                "(install.sh --openai-adapter). %s", status, exc,
+            )
+        else:
+            logger.warning("flatten_system: токен подписки не обновился: %s", exc)
+        return
+    _last_refresh_at = time.time()
+    logger.info("flatten_system: токен подписки обновлён (%s)",
+                "после 401" if force else "по возрасту")
+
+
+def force_token_refresh() -> None:
+    """Принудительное обновление после 401 (синхронно; зовите через asyncio.to_thread)."""
+    try:
+        module = importlib.import_module(AUTH_MODULE_PATH)
+        authenticator = getattr(module, AUTH_CLASS_NAME)()
+    except Exception:  # noqa: BLE001
+        logger.warning("flatten_system: нет %s, обновить токен нельзя", AUTH_MODULE_PATH,
+                       exc_info=True)
+        return
+    with _refresh_lock:
+        _refresh_locked(authenticator, force=True)
+
+
+def _make_patched_get_access_token(
+    original: Callable[[Any], str],
+) -> Callable[[Any], str]:
+    """Обёртка get_access_token: сначала обновление по возрасту, затем исходная логика."""
+
+    @functools.wraps(original)
+    def patched(self: Any) -> str:
+        with _refresh_lock:
+            try:
+                _refresh_locked(self, force=False)
+            except Exception:  # noqa: BLE001 - обновление не должно ронять запрос
+                logger.warning("flatten_system: сбой проверки возраста токена", exc_info=True)
+        return original(self)
+
+    setattr(patched, AUTH_MARKER, True)
+    setattr(patched, AUTH_ORIGINAL_ATTR, original)
+    return patched
+
+
+def install_token_refresh_patch() -> bool:
+    """Оборачивает Authenticator.get_access_token (идемпотентно).
+
+    Returns:
+        True, если патч установлен (или уже стоял); False, если в LiteLLM нет нужных имён.
+    """
+    try:
+        cls = getattr(importlib.import_module(AUTH_MODULE_PATH), AUTH_CLASS_NAME, None)
+    except Exception:  # noqa: BLE001
+        logger.warning("flatten_system: не удалось импортировать %s, патч токена не установлен",
+                       AUTH_MODULE_PATH, exc_info=True)
+        return False
+    method = getattr(cls, AUTH_METHOD_NAME, None) if cls is not None else None
+    if (cls is None or not callable(method)
+            or not callable(getattr(cls, AUTH_REFRESH_METHOD, None))
+            or not callable(getattr(cls, AUTH_READ_METHOD, None))):
+        logger.warning("flatten_system: нет %s.%s/%s/%s в %s, патч токена не установлен",
+                       AUTH_CLASS_NAME, AUTH_METHOD_NAME, AUTH_REFRESH_METHOD,
+                       AUTH_READ_METHOD, AUTH_MODULE_PATH)
+        return False
+    if getattr(method, AUTH_MARKER, False):
+        return True
+    setattr(cls, AUTH_METHOD_NAME, _make_patched_get_access_token(method))
+    return True
+
+
 def patch_status() -> dict[str, bool]:
     """Какие патчи стоят сейчас (живая проверка по классам LiteLLM).
 
@@ -612,21 +796,25 @@ def patch_status() -> dict[str, bool]:
         "chat_bridge": installed(
             BRIDGE_MODULE_PATH, BRIDGE_CLASS_NAME, BRIDGE_METHOD_NAME, BRIDGE_MARKER
         ),
+        "token_refresh": installed(
+            AUTH_MODULE_PATH, AUTH_CLASS_NAME, AUTH_METHOD_NAME, AUTH_MARKER
+        ),
     }
 
 
 def install_patches() -> dict[str, bool]:
-    """Ставит оба патча и пишет одну итоговую строку.
+    """Ставит все патчи и пишет одну итоговую строку.
 
     Уровень info при успехе (в журнале юнита он не виден без LITELLM_LOG), warning, если
     что-то не встало.
 
     Returns:
-        Результат install_stream_args_patch и install_chat_bridge_patch по именам.
+        Результат install_stream_args_patch, install_chat_bridge_patch и install_token_refresh_patch по именам.
     """
     result = {
         "stream_args": install_stream_args_patch(),
         "chat_bridge": install_chat_bridge_patch(),
+        "token_refresh": install_token_refresh_patch(),
     }
     if all(result.values()):
         logger.info("flatten_system: патчи стрима установлены: %s", result)

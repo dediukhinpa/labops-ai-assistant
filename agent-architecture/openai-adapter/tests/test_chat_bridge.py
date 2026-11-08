@@ -191,7 +191,7 @@ class BridgeScenarioTest(BridgeCase):
 
     def test_installed(self) -> None:
         self.assertTrue(getattr(Parser.chunk_parser, fs.BRIDGE_MARKER, False))
-        self.assertEqual(fs.patch_status(), {"stream_args": True, "chat_bridge": True})
+        self.assertEqual(fs.patch_status(), {"stream_args": True, "chat_bridge": True, "token_refresh": True})
 
     def test_1_single_call_with_deltas_matches_original(self) -> None:
         events = [created(), *full_call(0, 1, '{"a":"Ё"}', ['{"a":', '"Ё"}']),
@@ -454,14 +454,14 @@ class BridgeInstallTest(unittest.TestCase):
                 self.assertFalse(fs.install_stream_args_patch())
             self.assertTrue(fs.install_chat_bridge_patch())
             status = fs.patch_status()
-        self.assertEqual(status, {"stream_args": False, "chat_bridge": True})
+        self.assertEqual(status, {"stream_args": False, "chat_bridge": True, "token_refresh": True})
 
     def test_install_patches_summary_levels(self) -> None:
         with mock.patch.object(fs, "install_stream_args_patch", return_value=True), \
                 mock.patch.object(fs, "install_chat_bridge_patch", return_value=False):
             with self.assertLogs(fs.LOGGER_NAME, level="WARNING") as logs:
                 result = fs.install_patches()
-        self.assertEqual(result, {"stream_args": True, "chat_bridge": False})
+        self.assertEqual(result, {"stream_args": True, "chat_bridge": False, "token_refresh": True})
         self.assertEqual(len(logs.records), 1)
         self.assertEqual(logs.records[0].levelname, "WARNING")
         with mock.patch.object(fs, "install_stream_args_patch", return_value=True), \
