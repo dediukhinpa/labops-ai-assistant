@@ -23,3 +23,8 @@ litellm_settings:
   # Хук flatten_system.py лежит рядом с конфигом: system-блоки Claude Code -> строка,
   # иначе бэкенд подписки отвечает «System messages are not allowed».
   callbacks: flatten_system.flatten_system
+
+# Модель одна, поэтому «остывание» развёртывания после ошибки бессмысленно: после 401 оно
+# давало бы клиенту 429 на 5 секунд, хотя токен уже обновлён хуком flatten_system.
+router_settings:
+  disable_cooldowns: true

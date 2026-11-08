@@ -70,6 +70,7 @@ SHARED="$HOME_A/.claude-lab/shared/secrets/openai-adapter.env"
 grep -q 'model_name: gpt-test-1' "$CONF" || fail "в конфиге нет имени модели"
 grep -q 'model: chatgpt/gpt-test-1' "$CONF" || fail "в конфиге нет chatgpt/<модель>"
 grep -qx '  callbacks: flatten_system.flatten_system' "$CONF" || fail "в конфиге нет хука flatten_system"
+grep -qx '  disable_cooldowns: true' "$CONF" || fail "в конфиге нет disable_cooldowns: после 401 клиент получит 429"
 cmp -s "$SRC/flatten_system.py" "$ETC/flatten_system.py" || fail "хук не установлен рядом с конфигом"
 [ "$(stat -c %a "$ETC/flatten_system.py")" = "640" ] || fail "права хука не 640"
 # На сервер ставится только сам хук: юнит-тесты и смоук остаются в репозитории.
