@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { ATTACHMENT_STRIPPED_TEXT, SYSTEM_INSERT_TEXT } from '@labops/pii';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { ATTACHMENT_STRIPPED_TEXT, RequestMasker, SYSTEM_INSERT_TEXT } from '@labops/pii';
 import { startRig, post, textStream, type Rig } from './helpers';
 
 const DICT = { 'Иван Петров': '[PERSON_1]', '+7 900 000-00-01': '[PHONE_1]' };
@@ -253,6 +253,26 @@ describe('маршруты и треды', () => {
     await (await post(rig.base, '/v1/messages', body)).text();
     expect(rig.service.state.deleted.length).toBe(1);
     expect(rig.service.state.batches.at(-1)?.threadId).toBe('dev:s1');
+  });
+
+  test('удалённый эфемерный тред забывается и в кэше масок прокси', async () => {
+    const forget = spyOn(RequestMasker.prototype, 'forgetThread');
+    try {
+      rig = startRig(DICT, textStream(['ок']));
+      const body = { messages: [{ role: 'user', content: 'Иван Петров' }] };
+      await (await fetch(`${rig.base}/v1/messages`,
+        { method: 'POST', body: JSON.stringify(body) })).text();
+      await Bun.sleep(50);
+      const dropped = rig.service.state.deleted[0];
+      expect(dropped).toMatch(/^dev:req-/);
+      expect(forget).toHaveBeenCalledWith(dropped as string);
+      // Сессионный тред сервис не удаляет, и кэш его не забывается
+      forget.mockClear();
+      await (await post(rig.base, '/v1/messages', body)).text();
+      expect(forget).not.toHaveBeenCalled();
+    } finally {
+      forget.mockRestore();
+    }
   });
 
   test('GET проксируется как есть, заголовки авторизации доходят', async () => {

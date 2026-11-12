@@ -313,6 +313,9 @@ export class PiiProxy {
   private async dropThread(ctx: RequestContext): Promise<void> {
     try {
       await this.service.deleteThread(ctx.threadId);
+      // labops-pii 1.0.2: после удаления треда на сервисе кэш масок треда забывается, иначе
+      // старая маска совпала бы с новой нумерацией сервиса.
+      this.masker.forgetThread(ctx.threadId);
     } catch (e) {
       this.deps.logger.log('thread_delete_failed', { route: ctx.route,
         code: e instanceof PseudonymizerError ? e.code : 'unknown' });
