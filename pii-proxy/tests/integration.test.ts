@@ -56,7 +56,10 @@ describe.skipIf(!RUN)('сквозной тест с настоящим серв�
     serviceUrl = `http://127.0.0.1:${port}`;
     proc = Bun.spawn([PYTHON, '-m', 'labops_pii'], { cwd: LIB_DIR, stdout: 'ignore',
       stderr: 'ignore', env: { PATH: process.env.PATH ?? '', PYTHONPATH: LIB_DIR,
-        LABOPS_PII_PROFILE: 'labops', PSEUDONYMIZER_API_TOKEN: token,
+        PSEUDONYMIZER_API_TOKEN: token,
+        // Маршруты, которые нужны прокси; так же их включает юнит pseudonymizer
+        PSEUDONYMIZER_ENABLE_DELETE_THREADS: 'on', PSEUDONYMIZER_ENABLE_EXPOSE_BOOT_ID: 'on',
+        PSEUDONYMIZER_ENABLE_CASE_LABELS: 'on',
         // Адреса маскируются по решению владельца; так же пишет pii-setup.sh
         PSEUDONYMIZER_ADDRESS_MASK: 'true',
         PSEUDONYMIZER_PORT: String(port), PSEUDONYMIZER_HOST: '127.0.0.1' } });

@@ -1,6 +1,6 @@
 # media-masker (labops-pii)
 
-> Код сервиса теперь в общей библиотеке `labops-pii` (вендорится в `vendor/labops-pii/`, модуль `labops_pii`, профиль `labops`: `LABOPS_PII_PROFILE=labops`). Собственных копий `pseudonymizer/` и `media-masker/` в репозитории нет; тесты и README библиотеки - в репозитории `labops-pii`. Ниже - описание поведения сервиса; имена модулей: `pseudonymizer.*` -> `labops_pii.*`, `media_masker.*` -> `labops_pii.media.mask.*`. Имена переменных окружения `PSEUDONYMIZER_*` и `MEDIA_MASKER_*` сохранены. Адреса (`ADDRESS`) маскируются при `PSEUDONYMIZER_ADDRESS_MASK=true` (его пишет `pii-setup.sh`).
+> Код сервиса теперь в общей библиотеке `labops-pii` (вендорится в `vendor/labops-pii/`, модуль `labops_pii`; с 1.0.0 профилей нет, настройка только переменными окружения, см. `docs/MIGRATION.md` библиотеки). Собственных копий `pseudonymizer/` и `media-masker/` в репозитории нет; тесты и README библиотеки - в репозитории `labops-pii`. Ниже - описание поведения сервиса; имена модулей: `pseudonymizer.*` -> `labops_pii.*`, `media_masker.*` -> `labops_pii.media.mask.*`. Имена переменных окружения `PSEUDONYMIZER_*` и `MEDIA_MASKER_*` сохранены. Адреса (`ADDRESS`) маскируются при `PSEUDONYMIZER_ADDRESS_MASK=true` (его пишет `pii-setup.sh`).
 
 Сервис маскирования фото и PDF перед отправкой модели. Работает локально, наружу ничего не
 ходит. Клиент - `pii-proxy` (политика `PII_PROXY_IMAGE_POLICY=mask`).
@@ -24,7 +24,7 @@
 ```bash
 # Хост: bash agent-architecture/orchestration/pii-setup.sh host (ставит и media-masker)
 # Вручную из корня монорепо (venv и зависимости - как в pseudonymizer.md):
-export PYTHONPATH="$PWD/vendor/labops-pii" LABOPS_PII_PROFILE=labops
+export PYTHONPATH="$PWD/vendor/labops-pii"
 export MEDIA_MASKER_API_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 .venv/bin/python -m labops_pii.media.mask  # 127.0.0.1:8320
 # тесты сервиса - в репозитории labops-pii (python/tests/media)

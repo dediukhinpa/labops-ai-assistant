@@ -13,10 +13,9 @@ WorkingDirectory=__INSTALL_DIR__
 # API-токен и пути Tesseract -- файл с правами 600, вне репозитория.
 # Образец: media-masker.env.example
 # Код - вендоренная labops-pii (vendor/labops-pii), без pip-пакета: подключается через
-# PYTHONPATH. Профиль labops - значения по умолчанию проекта; адреса включает
-# PSEUDONYMIZER_ADDRESS_MASK в env-файле.
+# PYTHONPATH. С labops-pii 1.0.0 профилей нет (LABOPS_PII_PROFILE - ошибка старта);
+# адреса - MEDIA_MASKER_ADDRESS_MASK или PSEUDONYMIZER_ADDRESS_MASK, по умолчанию вкл.
 Environment=PYTHONPATH=__INSTALL_DIR__
-Environment=LABOPS_PII_PROFILE=labops
 EnvironmentFile=__ENV_FILE__
 ExecStart=__INSTALL_DIR__/.venv/bin/python -m labops_pii.media.mask
 Restart=on-failure

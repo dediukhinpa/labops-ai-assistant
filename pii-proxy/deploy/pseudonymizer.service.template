@@ -13,10 +13,14 @@ WorkingDirectory=__INSTALL_DIR__
 # Секреты (API-токен, при store=sqlite ещё ключ) -- файл с правами 600, вне репозитория.
 # Образец: pseudonymizer.env.example
 # Код - вендоренная labops-pii (vendor/labops-pii), без pip-пакета: подключается через
-# PYTHONPATH. Профиль labops - значения по умолчанию проекта; адреса включает
-# PSEUDONYMIZER_ADDRESS_MASK в env-файле.
+# PYTHONPATH. С labops-pii 1.0.0 профилей нет: маршруты, которые нужны pii-proxy
+# (удаление треда, boot_id в /health, падежные метки), включаются явно ниже;
+# env-файл читается позже и может их переопределить. Адреса - PSEUDONYMIZER_ADDRESS_MASK
+# в env-файле.
 Environment=PYTHONPATH=__INSTALL_DIR__
-Environment=LABOPS_PII_PROFILE=labops
+Environment=PSEUDONYMIZER_ENABLE_DELETE_THREADS=on
+Environment=PSEUDONYMIZER_ENABLE_EXPOSE_BOOT_ID=on
+Environment=PSEUDONYMIZER_ENABLE_CASE_LABELS=on
 EnvironmentFile=__ENV_FILE__
 ExecStart=__INSTALL_DIR__/.venv/bin/python -m labops_pii
 Restart=on-failure
