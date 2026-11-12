@@ -1,6 +1,6 @@
 # Сервис псевдонимизации (labops-pii)
 
-> Код сервиса теперь в общей библиотеке `labops-pii` (вендорится в `vendor/labops-pii/`, модуль `labops_pii`, профиль `labops`: `LABOPS_PII_PROFILE=labops`). Собственных копий `pseudonymizer/` и `media-masker/` в репозитории нет; тесты и README библиотеки - в репозитории `labops-pii`. Ниже - описание поведения сервиса; имена модулей: `pseudonymizer.*` -> `labops_pii.*`, `media_masker.*` -> `labops_pii.media.mask.*`. Имена переменных окружения `PSEUDONYMIZER_*` и `MEDIA_MASKER_*` сохранены. Адреса (`ADDRESS`) маскируются при `PSEUDONYMIZER_ADDRESS_MASK=true` (его пишет `pii-setup.sh`).
+> Код сервиса теперь в общей библиотеке `labops-pii` (вендорится в `vendor/labops-pii/`, модуль `labops_pii`; с 1.0.0 профилей нет, настройка только переменными окружения, см. `docs/MIGRATION.md` библиотеки). Собственных копий `pseudonymizer/` и `media-masker/` в репозитории нет; тесты и README библиотеки - в репозитории `labops-pii`. Ниже - описание поведения сервиса; имена модулей: `pseudonymizer.*` -> `labops_pii.*`, `media_masker.*` -> `labops_pii.media.mask.*`. Имена переменных окружения `PSEUDONYMIZER_*` и `MEDIA_MASKER_*` сохранены. Адреса (`ADDRESS`) маскируются при `PSEUDONYMIZER_ADDRESS_MASK=true` (его пишет `pii-setup.sh`).
 
 Сервис псевдонимизации персональных данных (ПДн) в русском тексте. Заменяет ПДн токенами
 вида `[PERSON_1]`, `[PHONE_2]`, `[EMAIL_1]` перед отправкой текста в модель и возвращает
@@ -18,7 +18,8 @@ web-app v2, SQLite). Тред — это `<префикс>:<id сессии>`; �
 python3.12 -m venv .venv
 .venv/bin/pip install -r pii-proxy/deploy/labops-pii.requirements.txt \
   -c pii-proxy/deploy/labops-pii.constraints.txt
-export PYTHONPATH="$PWD/vendor/labops-pii" LABOPS_PII_PROFILE=labops
+export PYTHONPATH="$PWD/vendor/labops-pii" PSEUDONYMIZER_ENABLE_DELETE_THREADS=on \
+  PSEUDONYMIZER_ENABLE_EXPOSE_BOOT_ID=on PSEUDONYMIZER_ENABLE_CASE_LABELS=on
 export PSEUDONYMIZER_API_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 .venv/bin/python -m labops_pii             # слушает 127.0.0.1:8300
 ```

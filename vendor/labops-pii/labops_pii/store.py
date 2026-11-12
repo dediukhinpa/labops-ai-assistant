@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import hmac
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -20,7 +21,36 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from labops_pii.profiles import KEY_SCHEME_V2, KEY_SCHEME_V3, get_profile
+from labops_pii.errors import ConfigError
+
+ENV_KEY_SCHEME = "PSEUDONYMIZER_KEY_SCHEME"
+# Схема шифрования строк SQLite при записи. v2: ключи не зависят от префикса треда, файл
+# читается и прежним кодом исходных копий. v3: ключи выводятся по префиксу треда (labops).
+KEY_SCHEME_V2 = "v2"
+KEY_SCHEME_V3 = "v3"
+KEY_SCHEMES = (KEY_SCHEME_V2, KEY_SCHEME_V3)
+
+
+def resolve_key_scheme(raw: str | None) -> str:
+    """Схема ключей записи из значения PSEUDONYMIZER_KEY_SCHEME.
+
+    Args:
+        raw: Значение переменной (None или пусто - не задана).
+
+    Returns:
+        "v2" или "v3".
+
+    Raises:
+        ConfigError: Не задана или не из v2/v3. Умолчания нет намеренно: молчаливая запись в
+            формате, который другая версия кода не прочтёт, необратима без перешифрования.
+    """
+    value = (raw or "").strip().lower()
+    if value not in KEY_SCHEMES:
+        raise ConfigError(
+            f"Не задана или неверна переменная {ENV_KEY_SCHEME} (нужна одна из: "
+            f"{', '.join(KEY_SCHEMES)}): при store=sqlite сервис не стартует без схемы ключей"
+        )
+    return value
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +79,11 @@ SECONDS_PER_DAY = 86_400
 # Метку последнего обращения к треду пишем не чаще раза в этот интервал: запись на диск
 # на каждый запрос не нужна, а точность до часа для ретенции в днях достаточна.
 ACTIVITY_TOUCH_INTERVAL_SECONDS = 3_600
+# Метка отстаёт от настоящего обращения не больше интервала записи, поэтому интервал не должен
+# быть сравним со сроком хранения: при сроке 1 ч активный тред с меткой часовой давности
+# удалялся посреди разговора. purge_idle сжимает интервал до доли срока и прибавляет его к сроку.
+ACTIVITY_TOUCH_RETENTION_SHARE = 4
+ACTIVITY_TOUCH_MIN_SECONDS = 60
 # Сколько пар (тред, тип) держит кэш расшифрованных ключей list_keys. Кэш только ускоряет
 # повторные чтения и перестраивается из таблицы; хранит нормализованные ключи в памяти
 # процесса так же, как их держит сам запрос при разборе текста.
@@ -164,6 +199,10 @@ class ReplacementStore(Protocol):
         """Удаляет все замены треда; True, если тред был. Нет треда — не ошибка."""
         ...
 
+    def touch(self, thread_id: str) -> None:
+        """Отмечает обращение к существующему треду, даже если в запросе не было ПДн."""
+        ...
+
 
 class SqliteReplacementStore:
     """SQLite-хранилище для разработки. Ключи и значения шифруются Fernet."""
@@ -175,6 +214,7 @@ class SqliteReplacementStore:
         clock: Callable[[], float] = time.time,
         key_cache_entries: int = DEFAULT_KEY_CACHE_ENTRIES,
         key_scheme: str | None = None,
+        read_only: bool = False,
     ) -> None:
         """Открывает (создаёт) базу.
 
@@ -184,11 +224,22 @@ class SqliteReplacementStore:
             clock: Источник времени в секундах (подменяется в тестах).
             key_cache_entries: Размер кэша расшифрованных ключей list_keys.
             key_scheme: Схема ключей при ЗАПИСИ: "v3" (ключи по префиксу треда, labops) или
-                "v2" (общий ключ, формат Прагматики: файл читается и прежним кодом).
-                По умолчанию из профиля. Читаются всегда все схемы (v3, v2, v1).
+                "v2" (общий ключ, прежний формат: файл читается и прежним кодом).
+                По умолчанию из PSEUDONYMIZER_KEY_SCHEME (нет переменной - ConfigError).
+                Читаются всегда все схемы (v3, v2, v1).
+            read_only: Открыть существующий файл только на чтение (пробный прогон rekey):
+                без создания таблиц и меток активности. Запись в такое хранилище - ошибка
+                sqlite3.
+
+        Raises:
+            ConfigError: Схема не задана ни аргументом, ни окружением.
+            ValueError: Схема не из v2/v3.
         """
-        scheme = key_scheme or get_profile().key_scheme
-        if scheme not in (KEY_SCHEME_V2, KEY_SCHEME_V3):
+        if key_scheme is None:
+            scheme = resolve_key_scheme(os.environ.get(ENV_KEY_SCHEME))
+        else:
+            scheme = key_scheme
+        if scheme not in KEY_SCHEMES:
             raise ValueError(f"key_scheme должна быть v2 или v3, получено {scheme!r}")
         self._write_v2 = scheme == KEY_SCHEME_V2
         master = base64.urlsafe_b64decode(fernet_key.encode())
@@ -201,19 +252,33 @@ class SqliteReplacementStore:
         # v3: наборы ключей по префиксам тредов, выводятся лениво
         self._master = master
         self._prefix_keys: dict[str, _PrefixKeys] = {}
-        if str(path) != ":memory:":
+        if str(path) != ":memory:" and not read_only:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._in_batch = False
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        if read_only:
+            uri = f"{Path(path).resolve().as_uri()}?mode=ro"
+            self._conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        else:
+            self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._clock = clock
         self._key_cache_entries = max(1, key_cache_entries)
         self._key_cache: OrderedDict[tuple[str, str], list[tuple[str, str]]] = OrderedDict()
         self._touched: dict[str, int] = {}
+        # Интервал записи метки активности; purge_idle сжимает его под срок хранения
+        self._touch_interval = ACTIVITY_TOUCH_INTERVAL_SECONDS
         # Счётчики строк по (тред, тип); значение всегда равно COUNT(*) либо записи нет.
         # Версия файла нужна, чтобы увидеть запись другим соединением/процессом.
         self._counts: OrderedDict[tuple[str, str], int] = OrderedDict()
         self._counts_version: int | None = None
+        # Файл без таблицы замен (новый или пустой) открытый только на чтение: читать нечего,
+        # а запросы к таблице падали бы с «no such table» (rekey --dry-run на пустой базе)
+        self._has_table = True
+        if read_only:
+            self._has_table = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='replacements'"
+            ).fetchone() is not None
+            return
         self._conn.execute(SCHEMA)
         self._conn.execute(ACTIVITY_SCHEMA)
         # Удалённые строки с ПДн затираются на странице, а не остаются в свободном месте
@@ -292,7 +357,7 @@ class SqliteReplacementStore:
         """Отмечает обращение к треду (не чаще интервала); вызывать под self._lock."""
         now = int(self._clock())
         last = self._touched.get(thread_id)
-        if last is not None and now - last < ACTIVITY_TOUCH_INTERVAL_SECONDS:
+        if last is not None and now - last < self._touch_interval:
             return
         if len(self._touched) >= TOUCHED_MAP_LIMIT:
             self._touched.clear()
@@ -305,10 +370,32 @@ class SqliteReplacementStore:
         if not self._in_batch:
             self._conn.commit()
 
+    def touch(self, thread_id: str) -> None:
+        """Отмечает обращение к треду, у которого уже есть замены (не чаще интервала).
+
+        Метка раньше обновлялась только при чтении или записи ПДн: сессия без ПДн в новых
+        сообщениях удалялась по сроку хранения, хотя шла, и нумерация начиналась заново поверх
+        кэша клиента. Новый тред без замен метку не получает (ему нечего хранить).
+        """
+        now = int(self._clock())
+        with self._lock:
+            last = self._touched.get(thread_id)
+            if last is not None and now - last < self._touch_interval:
+                return
+            cursor = self._conn.execute(
+                "UPDATE thread_activity SET last_seen=? WHERE thread_id=?", (now, thread_id)
+            )
+            if cursor.rowcount:
+                if len(self._touched) >= TOUCHED_MAP_LIMIT:
+                    self._touched.clear()
+                self._touched[thread_id] = now
+                if not self._in_batch:
+                    self._conn.commit()
+
     def find_token(self, thread_id: str, pii_type: str, key: str) -> str | None:
         with self._lock:
             # Сначала индекс схемы записи, затем остальные (v3, v2, v1): строки, ещё не прошедшие
-            # rekey, и файлы другого профиля остаются находимыми
+            # rekey, и файлы другой схемы ключей остаются находимыми
             for key_hash in dict.fromkeys((
                 self._hash(thread_id, key),
                 self._v3_hash(thread_id, key),
@@ -488,10 +575,19 @@ class SqliteReplacementStore:
         """
         if max_idle_seconds <= 0:
             return 0
-        cutoff = int(self._clock() - max_idle_seconds)
         with self._lock:
             if self._in_batch:
                 return 0
+            # Интервал записи метки - не больше доли срока; к сроку прибавляется сам интервал,
+            # на который метка может отставать от последнего обращения
+            self._touch_interval = max(
+                ACTIVITY_TOUCH_MIN_SECONDS,
+                min(
+                    ACTIVITY_TOUCH_INTERVAL_SECONDS,
+                    int(max_idle_seconds) // ACTIVITY_TOUCH_RETENTION_SHARE,
+                ),
+            )
+            cutoff = int(self._clock() - max_idle_seconds - self._touch_interval)
             expired = [
                 str(row[0]) for row in self._conn.execute(
                     "SELECT thread_id FROM thread_activity WHERE last_seen < ?", (cutoff,)
@@ -538,6 +634,8 @@ class SqliteReplacementStore:
 
     def legacy_row_count(self) -> int:
         """Сколько строк ещё в схеме v1 (индекс без метки v2 или шифртекст без метки v2)."""
+        if not self._has_table:
+            return 0
         with self._lock:
             row = self._conn.execute(
                 "SELECT COUNT(*) FROM replacements WHERE "
@@ -565,6 +663,8 @@ class SqliteReplacementStore:
             cryptography.fernet.InvalidToken: Неверный ключ или повреждённая строка
                 (база не изменена).
         """
+        if not self._has_table:
+            return RekeyReport(0, 0, 0, dry_run)
         with self._lock:
             rows = self._conn.execute(
                 "SELECT thread_id, token, key_hash, key_enc, value_enc FROM replacements"
@@ -652,6 +752,13 @@ class MemoryReplacementStore:
     def _touch_locked(self, thread: _MemoryThread) -> None:
         """Отмечает обращение к треду; под self._lock."""
         thread.last_seen = self._clock()
+
+    def touch(self, thread_id: str) -> None:
+        """Отмечает обращение к существующему треду (см. SqliteReplacementStore.touch)."""
+        with self._lock:
+            thread = self._threads.get(thread_id)
+            if thread is not None:
+                self._touch_locked(thread)
 
     def find_token(self, thread_id: str, pii_type: str, key: str) -> str | None:
         with self._lock:

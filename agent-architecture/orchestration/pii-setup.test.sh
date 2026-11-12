@@ -60,8 +60,13 @@ grep -q '"@labops/pii": \["../vendor/labops-pii/ts/src/index.ts"\]' \
 grep -q 'python -m labops_pii$' "$TMP/units/labops-pseudonymizer.service" || fail "ExecStart сервиса"
 grep -q "^Environment=PYTHONPATH=$TMP/runtime/labops-pii$" "$TMP/units/labops-pseudonymizer.service" \
   || fail "PYTHONPATH юнита"
-grep -qx 'Environment=LABOPS_PII_PROFILE=labops' "$TMP/units/labops-pseudonymizer.service" \
-  || fail "профиль labops в юните"
+# labops-pii 1.0.0: профилей нет; с LABOPS_PII_PROFILE сервис не стартует
+! grep -q '^Environment=LABOPS_PII_PROFILE' "$TMP/units/labops-pseudonymizer.service" \
+  || fail "в юните сервиса остался LABOPS_PII_PROFILE"
+for flag in DELETE_THREADS EXPOSE_BOOT_ID CASE_LABELS; do
+  grep -qx "Environment=PSEUDONYMIZER_ENABLE_${flag}=on" "$TMP/units/labops-pseudonymizer.service" \
+    || fail "маршрут ${flag} не включён в юните (нужен pii-proxy)"
+done
 grep -qx 'PSEUDONYMIZER_ADDRESS_MASK=true' "$TMP/cfg/pseudonymizer.env" || fail "адреса не включены"
 # старый env-файл (до перехода на labops-pii): ключ дописывается, значение оператора сохраняется
 sed -i '/^PSEUDONYMIZER_ADDRESS_MASK=/d' "$TMP/cfg/pseudonymizer.env"
@@ -86,6 +91,8 @@ grep -q "^MEDIA_MASKER_TESSERACT_CMD=$TMP/tesseract" "$TMP/cfg/media-masker.env"
 grep -qx 'MEDIA_MASKER_ADDRESS_MASK=true' "$TMP/cfg/media-masker.env" || fail "адреса в маскере"
 [ -f "$TMP/units/labops-media-masker.service" ] || fail "нет юнита маскера"
 grep -q '__' "$TMP/units/labops-media-masker.service" && fail "плейсхолдеры в юните маскера"
+! grep -q '^Environment=LABOPS_PII_PROFILE' "$TMP/units/labops-media-masker.service" \
+  || fail "в юните media-masker остался LABOPS_PII_PROFILE"
 grep -q 'python -m labops_pii.media.mask$' "$TMP/units/labops-media-masker.service" \
   || fail "ExecStart маскера"
 grep -q 'enable --now labops-media-masker.service' "$TMP/systemctl.log" || fail "маскер не включён"
