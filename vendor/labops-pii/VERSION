@@ -1,33 +1,34 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: v0.8.0
-tag: v0.8.0
-commit: e2b7d5371e7fda94cb22ebace8fb254ee74e8541
+ref: v1.0.3
+tag: v1.0.3
+commit: e8fe352423cc561bf6bc61c7f193962132c83461
 parts: media,service,ts
-vendored_at: 2026-11-05T15:51:00Z
+vendored_at: 2026-11-12T12:28:15Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
-  1efe29dd7d9f7289e6d0b5e7d684d6f9130042bc384e212277681263ecd0f310  labops_pii/__init__.py
+  a418302b8ba342ec2aa54efc26d52daa1a97b2d2ade5f590cdb192849ed6588c  labops_pii/__init__.py
   356ad6a8aee34e5cbcb7e75d1ff954d7391fe8a511484ad71877fde0389a514b  labops_pii/__main__.py
-  7dfe44b0e133bb7abed8a71477e2e9b8a2f7bce7b7f074cf398dbe2c45981784  labops_pii/allowlist.py
-  b798852aba623900bb1fc736c88a9789819d9b71f27e4cd1be0ba90324192767  labops_pii/api.py
+  ceb82bb6e1bf70ebd2d8435bbabe91acad194ce04fab62e7ee055f68774a673c  labops_pii/allowlist.py
+  81f12c1eaaae7468fd5a26a62be7e16a3bc3f77018363f9abb895b11e0f79e8b  labops_pii/api.py
   fc9b9cef86099a9999a9423daa03306ee694bd4f2aea090e300f27d0b9ed5189  labops_pii/body_guard.py
   027288d8b935ffce3096ede3689c69ee88c7370f78073286561ed54b8bc08763  labops_pii/checksums.py
-  6ac24f0270b58b39af28cfe5370cca9418a6bd9f6b8d7e026e91d55262bcf28a  labops_pii/config.py
-  1137dbd337ac7e4fe8f31f85b13c97f2dae946b1c17ec888f12374f08c81278f  labops_pii/detector.py
+  a964090bf6ed0b80fd4633c8c6c9018d9325f3411226b6583af7601b755264f9  labops_pii/config.py
+  b58030d9ca450b2d1076ae5bba794a3e35cd85a827d9684912134bf4e58300c7  labops_pii/detector.py
+  5f29384a9c7dade20f12992cf9a4cedde0d0e7dd704bd7aac64ebe20f261d9dc  labops_pii/errors.py
   d67189690e9f239b1e93c76ff43943a08d85b278f3f78a7881df249ff872058d  labops_pii/inflect.py
-  f4908d51b6fd46a5c098760b5299f43967a356fb0bda90f53782f24bbadc0b50  labops_pii/jsonlog.py
+  25a6d3fa10ef26a0804971f13e92793d9cd0ad83604bfeb31d8014a242b4f0b7  labops_pii/jsonlog.py
   d10ed85e67bbabf1b461b5fa7dc214ce7478bdae3cc43ac0b677a92ee47c0fe4  labops_pii/media/__init__.py
   34716bdc85a68dc17c4c3544c1a454f3cf250a039756a2c3bd5f0b61d4c26d43  labops_pii/media/gate/__init__.py
-  d6205541701e9b751621aab31a4c6dfb069d606d919c6e16ef1513ce3737f543  labops_pii/media/gate/api.py
+  0616211af2dc86738032e4f170a61cd6360496213ef84cbd9a780d9c34e2d904  labops_pii/media/gate/api.py
   371fa33cbdf074fe8fd4c07da4deda7db7015c5ccba8ca123919e756cffa2885  labops_pii/media/gate/detect.py
   eaeb017b9eef67f6628e165ea8dfe486e3b54037dffbef60f7a25a8611dfbb22  labops_pii/media/gate/normalize.py
   0bf3056e2a852ee1ef34ccd78554f8e636e4dc3e08882725d93d7ba7c2196003  labops_pii/media/mask/__init__.py
   a3b38c4fc7effc00e8dc3eabef099a4f502087e7ac582853ed7b79962e235d7f  labops_pii/media/mask/__main__.py
-  969e780f7afe4f484ad875901c502eeca6b06a3e148755fe7541484c573a0a27  labops_pii/media/mask/api.py
+  7a146b639a5a347fb8a423aa2471ec31cf396fe57f11ee376385a2beba597891  labops_pii/media/mask/api.py
   c40d65518719f40faaeb5ad6c776096219ef77a99684b3c9ea279c65f4226e05  labops_pii/media/mask/codes.py
-  621da8b7627c05325769bb061017409a0e6e3942f404ad38470c1208021d858b  labops_pii/media/mask/config.py
+  34a243a0c40b2e8617800f99c6eed7542892d38a18ffb0894a19d2e17ea8cc7b  labops_pii/media/mask/config.py
   1ebb74afa00c68a7862d01755b7f2526a51d78df1f580353fec9f5117755045a  labops_pii/media/mask/faces.py
   fc7068bbac4d0a0f5105ede5c4c69147813794564771409ae9a45e270376f372  labops_pii/media/mask/imaging.py
   7a6daa70f0952cca1291f7fce8d2a96935a2411f205db11844d23093e32c63ef  labops_pii/media/mask/jsonlog.py
@@ -35,41 +36,39 @@ files:
   6195c61dbb35a7a3a3d46d4373daeae8c5267804fc88d1ec2d2e446abfc2da9c  labops_pii/media/mask/pdfdoc.py
   c6eab763d5cbf8291f8fe791f8b386ce142035b85c0c2c671d5cd4569117c9a9  labops_pii/media/mask/unreadable.py
   e2d7f9527316e32059067708f0d8c926b989ba8954aa90587bbf327ef372c46c  labops_pii/morph.py
-  408ed930c8e0f9f086c895e2bbb67b18175d35a5740ab9b24ca9a817abd8c9da  labops_pii/pii_patterns.py
-  0c8940f9aca3b09ada9e41610b65015703531005df321061b0fe107c1f04fdc6  labops_pii/profiles.py
-  f8b79b3643f49fd2762cc284e20c6506a271178e5e1a3154d1e77c71a3aa746b  labops_pii/rekey.py
-  4cbfe1a749cf27cc81f0099f652eb7363fcc89eddec701379d2a0d40dd8cdf30  labops_pii/service.py
-  59ec1b8f05717bad3c9c748488c2ba10602f3ab65067b0f762ac3876512676f1  labops_pii/store.py
+  bbd65b1a007d71656e81fca9f08592b94fdc8453c0ee997f591726f1b0f2c5c3  labops_pii/pii_patterns.py
+  b0f193133e70224e94c8524c4991197114f29fa4b1c8f770d1644824b7ebbb34  labops_pii/rekey.py
+  0273a495f092d6cd0e15f9be00299d4b42e54f2abd3343723d3809bca2876139  labops_pii/service.py
+  715a64572429758b434a9e062f41ce7112c8a19a4b5b7063b1f1d11c6d1d536c  labops_pii/store.py
   06256424fe301305c468d43f2e56dbc9fbf99aed9d6dc06e4d521201d6437b14  labops_pii/tech_tokens.py
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  ts/LICENSE
   a99699e44cc5dc561973aca532fb059c3345cb0c4a6c3eed9ed2a845000e97a3  ts/bun.lock
-  23a767c7ada6cd2f77c28190e4bb973ff960cd6f9bae2aa7bf0a16bc25ed5b6a  ts/package.json
+  e912d6f44e404cde37160150a09d1f43890dd29592215b6e7425a7966208acfe  ts/package.json
   371dc33274c468cb29394ae8e555382dbd4af912bc78ef4b43f473416d92bed1  ts/src/constants.ts
-  bd6923c810bc282a560244792952ede4a130e6eb0f6347de53ecb581e255fdf0  ts/src/detector/address-patterns.ts
+  0528858775883fd26b3fe462046d928fedde8273fc2df9dd96acaeb4e89b0b9c  ts/src/detector/address-patterns.ts
   f53c2a4725568adf851c514501d44a753a4833eb78372d0124f9bdcfdf532b08  ts/src/detector/addresses.ts
-  33627434d2d07a4c518ed6b3f5cb9f5bf3e5e0609d95f32a418da6fe01d810d0  ts/src/detector/allowlist.ts
+  e9775efc3b4617653f59a0cbe1823b84bc4da96d13b3011586ff6974dd30e71f  ts/src/detector/allowlist.ts
   02f22fd4b5213a19e39bd62657b0181de0017dfcb6d6b0bcf0cf2b38db1f4a59  ts/src/detector/dictionary/name-dictionary-data.ts
-  db2994bb85302717615fb69128d1fdd600505e54615e77de2883c82ce1c568f2  ts/src/detector/index.ts
+  6e732602bdf988d850a791f20ea71d8c58017a7007e4b821f9e852ba1eef928e  ts/src/detector/index.ts
   870dc9cfca077841a9421d5475818203c8a6044e01344aea7b5eb1a1684c16e6  ts/src/detector/name-dictionary.ts
   593859312ea4cdfd2d8665653a27d395d70864bc94533211e510b2d70c545140  ts/src/detector/normalize.ts
-  33e2ff14ed2d7a4ea8564cb1dd36880a343958ec3198e34086a16add40917adf  ts/src/detector/person-words.ts
-  10d8e488f67a0d417c11e38632f3860ea4952bbef0c511b969ab2ac35bcae712  ts/src/detector/persons.ts
-  3d16b080f520d354c812084aba138330df9e31bbcb3447e880242410f54a6d1e  ts/src/detector/profiles.ts
+  d6d9234e1f20ed6ad8225a4820ad8a0554241977f2e2ce7eac1b65c64b174463  ts/src/detector/person-words.ts
+  f6704b03d7269ebd145ef31d2c00820f394c3e98f73a1cd432eb13f98b418783  ts/src/detector/persons.ts
   3aef85af4029a557caecebe87ab2a78d4ac1d7d57543f14aa6cb15d2d52fe7a3  ts/src/detector/regex-utils.ts
-  1ace31c06cc60fe1afba35d66cbc0be86386b7138b5f0d148e57bfbb2a2afc5d  ts/src/detector/types.ts
-  36bc9e0221ccdc30e0920506304b443b783bc357b6942f1d67feec0703e4b017  ts/src/errors.ts
+  15d074384b8a6614111aab7cc28779d3db581d07823ecc49b2e21a7dadd06a1e  ts/src/detector/types.ts
+  12066e95c67935ce29f6d19590d0f91db7061496310a1f5ccfd3b27350d85a40  ts/src/errors.ts
   534fafa377bfe1043ab580e74df170a3fe98e73e280b44d2a52f047857934245  ts/src/image-policy.ts
   285fa2366650a72512344267c7f8f4400564c690081d19c92b733ad408d050fc  ts/src/index.ts
   d49f514a831812a6cf88f885eb7de0e8b9e97905e141fcd670ef5b3c2fd7c5ba  ts/src/json-leaves.ts
   bae5d57410acd13d76f60792d563e4ba0a7370a3edc5fa5b9843fb6c9bfa800c  ts/src/json-restore.ts
   17ca13991d5690831e07198c59de8c962d30d685fcdbf6e820b0cd96cfc88442  ts/src/log.ts
   135ac727107806ea94b33f4d292593e00043d749c2970fb7b7d127704f41cc4b  ts/src/mask-cache.ts
-  88f8a923e5b42f7da133d3147c05a0267af1a24d33f109f5dbc5cab2ae9a55e0  ts/src/masker.ts
+  1386f3a46ef5b0e88c19109e6ee3b057d9327d68b7a186b6e15b4655669d82e6  ts/src/masker.ts
   1c68c9ef9b0b3fadd490b1fa8cdf27e75f8aa4d7c9f2904df466a09a3c2bb292  ts/src/media-client.ts
   6d5e44b4d4f00f674f999c3e215150d897093e5542e7627b3b4338539f37f340  ts/src/media-text.ts
   2aa235004b59312cc345d593222859258710f5f09cdb271a84817312861dc315  ts/src/media.ts
   2d33215f725e502342380531a4f561da84cf79d1e28608dd3c5afcd081981430  ts/src/pseudonymizer-client.ts
-  d019f61b3170c4021139d7e5386b43695b238d9a876ae7f221bbbd87dbc0944d  ts/src/request-walker.ts
+  b98929047c6b9e941f0b29e39e658b15e0dbaaff50f7f63f8c294ae9105704ed  ts/src/request-walker.ts
   439aa1eef8d56dc344a93277bb087078b55e2aab38eb11760527329b3ddfa8bc  ts/src/restorer.ts
   4fe503eef2b859e24c77f8b7f7b3d645290c722f32511ee08aebe0758b017028  ts/src/sse.ts
   9064c0f2171d840b0ca5a7a14445ec73c5098211201fe02d6bf40e2abd7e5fa7  ts/src/stream-restore.ts
