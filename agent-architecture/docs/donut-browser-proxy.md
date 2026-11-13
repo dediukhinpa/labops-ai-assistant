@@ -19,7 +19,10 @@ bash install.sh --proxy-only
 Что делает шаг (`orchestration/lib/proxy-install.sh`):
 
 - ставит `squid` и `apache2-utils`;
-- пишет `/etc/squid/squid.conf` (прежний конфиг сохраняет как `*.labops-bak-<время>`);
+- пишет `/etc/squid/squid.conf`. Если Squid уже стоял и настроен не установщиком, шаг
+  пропускается и ничего не трогает: конфиг, пароли и сервис остаются как были. Заменить такой
+  конфиг нашим — `LABOPS_PROXY_REPLACE_CONF=1 bash install.sh --proxy-only` (прежний
+  сохраняется как `*.labops-bak-<время>`);
 - создаёт пользователя `labops` и **случайный** пароль, хэш кладёт в `/etc/squid/labops-passwd`;
 - записывает адрес, порт, логин и пароль в `~/proxy-credentials.txt` (права 600) — **в вывод
   установщика пароль не печатается**; прочитать: `cat ~/proxy-credentials.txt`;
