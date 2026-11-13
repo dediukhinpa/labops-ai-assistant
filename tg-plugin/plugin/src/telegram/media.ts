@@ -18,6 +18,7 @@
 import { escapeHtmlAttr } from '../format/html.js'
 import { z } from 'zod'
 import type { AppConfig } from '../config.js'
+import { downloadViaLocalApi, type LocalApiConfig } from './local-api.js'
 
 // ─────────────────────────────────────────────────────────────────────
 // MediaDescriptor — discriminated union over the eight media kinds the
@@ -397,6 +398,9 @@ export interface BotApiForDownload {
 }
 
 export interface DownloadPhotoDeps {
+  // Локальный Bot API (TELEGRAM_API_ROOT): файл берётся с диска сервера или
+  // по его URL, потолка 20 МБ нет. Не задан -- прежнее облачное поведение.
+  localApi?: LocalApiConfig
   fetchImpl?: typeof fetch
   writeFile?: (path: string, data: Uint8Array) => Promise<void>
   mkdir?: (path: string) => Promise<void>
@@ -414,6 +418,21 @@ export async function downloadPhotoToInbox(
   try {
     const file = await bot.api.getFile(fileId)
     if (!file.file_path) return undefined
+
+    if (deps.localApi !== undefined) {
+      const saved = await downloadViaLocalApi(
+        { file_path: file.file_path, file_unique_id: file.file_unique_id },
+        token,
+        inboxDir,
+        deps.localApi,
+        {
+          ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+          ...(deps.now !== undefined ? { now: deps.now } : {}),
+        },
+        'photo',
+      )
+      return saved.path
+    }
 
     // 20MB Bot API download cap — matches Telegram's documented limit
     // and gateway.py:873 TG_MAX_FILE_MB default.
