@@ -26,6 +26,7 @@ import { writeDeadLetter } from '../state/store.js'
 import {
   AskUserQuestionAnswerSchema,
   AskUserQuestionRequestSchema,
+  FallbackReplyRouteRequestSchema,
   ReactRouteRequestSchema,
   WebhookPayloadSchema,
   type AskUserQuestionAnswer,
@@ -39,6 +40,7 @@ import type {
   AskUserQuestionResult,
 } from '../channel/ask-user-question.js'
 import { isShortId } from '../channel/short-id.js'
+import type { FallbackReplyService } from '../channel/fallback-reply.js'
 import type { MemoryWriter } from '../memory/writer.js'
 import type { ProgressReporter } from '../status/progress-reporter.js'
 import type { TaskMirror } from '../status/task-mirror.js'
@@ -54,6 +56,8 @@ const ASK_BODY_LIMIT_BYTES = 64 * 1024
 // Read-receipt bodies are tiny ({chat_id, message_id, emoji}); 4 KB is
 // generous and keeps the route cheap to abuse-proof.
 const REACT_BODY_LIMIT_BYTES = 4 * 1024
+// Fallback-reply: тело = путь транскрипта + session_id, 4 КБ с запасом.
+const FALLBACK_REPLY_BODY_LIMIT_BYTES = 4 * 1024
 const DEFAULT_AGENT_ID = 'labops-channel'
 
 // Margin added on top of the configured AskUserQuestion timeout to set
@@ -170,6 +174,10 @@ export interface WebhookDeps {
   // plugin". Optional so tests/legacy paths can omit; when absent the route
   // answers 503 and the hook degrades to a no-op (no read receipt, no crash).
   reactToMessage?: (chatId: string, messageId: number, emoji: string) => Promise<void>
+  // Fallback-reply: сервис решает по транскрипту, нужен ли ответ вместо
+  // молчащего агента. Опционален; без него (или при выключенном флаге
+  // TELEGRAM_FALLBACK_REPLY) роут отвечает 503 и ничего не делает.
+  fallbackReply?: FallbackReplyService
 }
 
 export interface WebhookServerHandle {
@@ -333,6 +341,13 @@ async function handleRequest(
   // bearer + chat allowlist, then sets 👀 via deps.reactToMessage.
   if (method === 'POST' && path === '/hooks/react') {
     await handleReact(req, res, deps, webhookToken)
+    return
+  }
+
+  // Fallback-reply: Stop-хук присылает путь транскрипта, сервер решает сам.
+  // Loopback + bearer; адресат берётся из транскрипта и проходит allowlist.
+  if (method === 'POST' && path === '/hooks/fallback-reply') {
+    await handleFallbackReply(req, res, deps, webhookToken)
     return
   }
 
@@ -733,6 +748,51 @@ function authGate(
     return false
   }
   return true
+}
+
+// POST /hooks/fallback-reply — Stop-хук сообщает «ход закончился» (путь
+// транскрипта + session_id). Токен проверяется ДО проверки флага, чтобы
+// неверный токен всегда давал 401. Ответ 200 {status} — исход решения
+// (sent / replied / not_telegram / no_text / duplicate / ...); 503 — функция
+// выключена или не подключена (хук молча ничего не делает).
+async function handleFallbackReply(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: WebhookDeps,
+  webhookToken: string | undefined,
+): Promise<void> {
+  const { log, fallbackReply } = deps
+
+  if (!authGate(req, res, webhookToken)) return
+
+  if (!fallbackReply || !fallbackReply.enabled) {
+    reply(res, 503, { status: 'fallback_reply_disabled' })
+    return
+  }
+
+  const parsed = await readJsonBody(
+    req,
+    res,
+    log,
+    FALLBACK_REPLY_BODY_LIMIT_BYTES,
+    FallbackReplyRouteRequestSchema,
+    'fallback-reply',
+  )
+  if (!parsed.ok) return
+
+  try {
+    const result = await fallbackReply.handle({
+      transcript_path: parsed.value.transcript_path,
+      session_id: parsed.value.session_id,
+    })
+    reply(res, 200, { status: result.status })
+  } catch (err) {
+    // Сбой fallback не должен ломать хук: логируем и отвечаем 200 с ошибкой.
+    log.warn('fallback-reply handler failed', {
+      error: err instanceof Error ? redactToken(err.message) : String(err),
+    })
+    reply(res, 200, { status: 'error' })
+  }
 }
 
 // fix/eyes-on-read (2026-05-28): POST /hooks/react — set the 👀 read

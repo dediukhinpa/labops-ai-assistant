@@ -90,6 +90,12 @@ import {
   recoverPendingAlbums,
 } from './telegram/album-persistence.js'
 import type { BotIdentity } from './prompt/build.js'
+import {
+  DEFAULT_FALLBACK_PREFIX,
+  FallbackReplyService,
+  defaultTranscriptRoots,
+} from './channel/fallback-reply.js'
+import { assertAllowedChat } from './telegram/gate.js'
 
 const INSTRUCTIONS_TEMPLATE = [
   'The sender reads Telegram, not this session. Anything you want them to see must go through the reply tool — your transcript output never reaches their chat.',
@@ -992,6 +998,28 @@ try {
 // — ports the behaviour from gateway.py:3531-3589.
 // ─────────────────────────────────────────────────────────────────────
 
+// Fallback-reply (страховка от «тишины»): создаём всегда, но при выключенном
+// флаге сервис ничего не читает и не шлёт, а роут отвечает 503.
+const fallbackReply = new FallbackReplyService({
+  enabled: config.fallback_reply?.enabled ?? false,
+  transcriptRoots: defaultTranscriptRoots(process.env, homedir()),
+  statePath: join(statePaths.root, 'fallback-reply', 'state.json'),
+  prefix: config.fallback_reply?.prefix ?? DEFAULT_FALLBACK_PREFIX,
+  log,
+  sendMessage: (chatId, text, opts) => telegramApi.sendMessage(chatId, text, opts),
+  // Тот же шлюз, что у инструмента reply (учитывает multichat-политику).
+  isChatAllowed: (chatId) => {
+    try {
+      assertAllowedChat(chatId, config, multichatPolicy)
+      return true
+    } catch {
+      return false
+    }
+  },
+  afterSend: (chatId) => statusManager.complete(chatId),
+})
+if (config.fallback_reply?.enabled) log.info('fallback-reply enabled')
+
 try {
   webhookHandle = await startWebhookServer(config, {
     mcpServer: mcp,
@@ -1015,6 +1043,7 @@ try {
     // call goes through, so 👀 reactions share the per-chat rate budget.
     reactToMessage: (chatId, messageId, emoji) =>
       telegramApi.setMessageReaction(chatId, messageId, emoji),
+    fallbackReply,
   })
 } catch (err) {
   log.error('webhook server failed to start', {

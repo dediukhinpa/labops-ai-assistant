@@ -49,6 +49,17 @@ export const ReactRouteRequestSchema = z.object({
 })
 export type ReactRouteRequest = z.infer<typeof ReactRouteRequestSchema>
 
+// Webhook route body - POST /hooks/fallback-reply (Stop-хук fallback-reply →
+// плагин). Хук передаёт только то, что получил на stdin Stop-хука:
+// путь транскрипта и id сессии. Решение «нужен ли fallback» и адресата
+// определяет сервер по самому транскрипту — тело не несёт ни chat_id, ни
+// текста, поэтому утёкший токен не даёт писать произвольный текст в чат.
+export const FallbackReplyRouteRequestSchema = z.object({
+  transcript_path: z.string().min(1).max(4096),
+  session_id: z.string().max(256).optional(),
+})
+export type FallbackReplyRouteRequest = z.infer<typeof FallbackReplyRouteRequestSchema>
+
 // Tool args - download_attachment. chat_id is required so the tool can
 // gate the download through the chat allowlist — without it, Claude could
 // be tricked into fetching an arbitrary file_id (e.g. one leaked into a

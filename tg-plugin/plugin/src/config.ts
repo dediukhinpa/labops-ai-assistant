@@ -293,6 +293,17 @@ export const AppConfigSchema = z.object({
     allowed_user_ids: z.array(z.number().int().positive()).optional(),
     max_preview_chars: z.number().int().positive().default(1000),
   }).default({}),
+  // Fallback-reply (страховка от «тишины» агента). Если ход закончился без
+  // вызова reply/edit_message, последний текст ассистента из транскрипта
+  // уходит в чат входящего сообщения. По умолчанию ВЫКЛЮЧЕНО: поведение
+  // плагина не меняется, пока оператор явно не поставит TELEGRAM_FALLBACK_REPLY=1.
+  // `prefix` — пометка перед текстом (пустая строка = без пометки).
+  // Блок необязательный (без .default): тип AppConfig не меняется для кода и
+  // тестов, которые собирают конфиг вручную; читать через `?.` / `?? false`.
+  fallback_reply: z.object({
+    enabled: z.boolean().default(false),
+    prefix: z.string().max(120).default('⚠ ответ без reply:'),
+  }).optional(),
 })
 export type AppConfig = z.infer<typeof AppConfigSchema>
 
@@ -399,6 +410,12 @@ export const RuntimeEnvSchema = z.object({
   TELEGRAM_ASK_USER_QUESTION_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
   TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS: z.string().optional(), // CSV
   TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS: z.coerce.number().int().positive().optional(),
+  // Fallback-reply: тот же формат флага, что у остальных (1/true/yes/on).
+  TELEGRAM_FALLBACK_REPLY: z
+    .string()
+    .transform((v) => /^(1|true|yes|on)$/i.test(v))
+    .optional(),
+  TELEGRAM_FALLBACK_REPLY_PREFIX: z.string().max(120).optional(),
 })
 export type RuntimeEnv = z.infer<typeof RuntimeEnvSchema>
 
@@ -584,6 +601,18 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     askUserQuestion.max_preview_chars = parsedEnv.TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS
   }
   if (Object.keys(askUserQuestion).length > 0) merged.ask_user_question = askUserQuestion
+
+  // Fallback-reply env overrides: тот же приём слоения, что у блоков выше.
+  const fallbackReply = (merged.fallback_reply && typeof merged.fallback_reply === 'object'
+    ? merged.fallback_reply
+    : {}) as Record<string, unknown>
+  if (parsedEnv.TELEGRAM_FALLBACK_REPLY !== undefined) {
+    fallbackReply.enabled = parsedEnv.TELEGRAM_FALLBACK_REPLY
+  }
+  if (parsedEnv.TELEGRAM_FALLBACK_REPLY_PREFIX !== undefined) {
+    fallbackReply.prefix = parsedEnv.TELEGRAM_FALLBACK_REPLY_PREFIX
+  }
+  if (Object.keys(fallbackReply).length > 0) merged.fallback_reply = fallbackReply
 
   try {
     return AppConfigSchema.parse(merged)

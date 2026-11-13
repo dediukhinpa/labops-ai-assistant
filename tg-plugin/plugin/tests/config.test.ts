@@ -464,3 +464,30 @@ describe('loadConfig', () => {
     expect(paths.logs.ask_user_question).toBe(join(stateDir, 'logs', 'ask-user-question.jsonl'))
   })
 })
+
+describe('fallback_reply config', () => {
+  const base = { TELEGRAM_BOT_TOKEN: '123456789:AAH-fake_test_token_with_at_least_thirty_chars' }
+
+  test('по умолчанию блока нет (функция выключена)', () => {
+    expect(loadConfig(base).fallback_reply?.enabled ?? false).toBe(false)
+  })
+
+  test('при любом переопределении пометка по умолчанию стандартная', () => {
+    expect(loadConfig({ ...base, TELEGRAM_FALLBACK_REPLY: '0' }).fallback_reply).toEqual({
+      enabled: false,
+      prefix: '⚠ ответ без reply:',
+    })
+  })
+
+  test('TELEGRAM_FALLBACK_REPLY=1 включает, 0 и мусор — нет', () => {
+    expect(loadConfig({ ...base, TELEGRAM_FALLBACK_REPLY: '1' }).fallback_reply?.enabled).toBe(true)
+    expect(loadConfig({ ...base, TELEGRAM_FALLBACK_REPLY: 'true' }).fallback_reply?.enabled).toBe(true)
+    expect(loadConfig({ ...base, TELEGRAM_FALLBACK_REPLY: '0' }).fallback_reply?.enabled).toBe(false)
+    expect(loadConfig({ ...base, TELEGRAM_FALLBACK_REPLY: 'maybe' }).fallback_reply?.enabled).toBe(false)
+  })
+
+  test('TELEGRAM_FALLBACK_REPLY_PREFIX переопределяет пометку, пустая допустима', () => {
+    expect(loadConfig({ ...base, TELEGRAM_FALLBACK_REPLY_PREFIX: 'no reply sent:' }).fallback_reply?.prefix).toBe('no reply sent:')
+    expect(loadConfig({ ...base, TELEGRAM_FALLBACK_REPLY_PREFIX: '' }).fallback_reply?.prefix).toBe('')
+  })
+})
