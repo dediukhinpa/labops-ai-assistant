@@ -40,6 +40,8 @@
 #   SKIP_PII_PROXY=1          # НЕ ставить маскирование ПДн (pii-proxy): агент пойдёт в модель
 #                             # напрямую, с громким предупреждением. По умолчанию - ставится.
 #   SKIP_VOICE=1              # не ставить локальную расшифровку голоса (voice-transcriber)
+#   SKIP_OCR=1                # не ставить Tesseract: фото и PDF не маскируются, а вырезаются
+#                             # из запросов к модели (по SKIP_PII_PROXY=1 тоже не ставится)
 #   SKIP_PROXY=1              # НЕ ставить HTTP-прокси (Squid) для Donut Browser. По умолчанию
 #                             # ставится: пароль случайный, лежит в ~/proxy-credentials.txt;
 #                             # порт 3128 открывается наружу (LABOPS_PROXY_ALLOW_FROM=<IP> —
@@ -70,6 +72,9 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # proxy_install: Squid для Donut Browser, ставится по умолчанию (SKIP_PROXY=1 — не ставить).
 # shellcheck source=orchestration/lib/proxy-install.sh
 . "$REPO_DIR/orchestration/lib/proxy-install.sh"
+# ocr_install: Tesseract для media-masker, ставится, пока у установки есть root.
+# shellcheck source=orchestration/lib/ocr-install.sh
+. "$REPO_DIR/orchestration/lib/ocr-install.sh"
 # openai_adapter_install: адаптер Claude Code -> OpenAI, только по --openai-adapter.
 # shellcheck source=orchestration/lib/openai-adapter-install.sh
 . "$REPO_DIR/orchestration/lib/openai-adapter-install.sh"
@@ -202,6 +207,23 @@ run_proxy_step() {
   echo "  сервер. Доступ — по логину и случайному паролю; пароль в вывод не печатается."
   proxy_install "$1" "$2" \
     || warn "прокси не настроен — повторите: bash install.sh --proxy-only (подробности выше)"
+}
+
+# run_ocr_step — шаг «OCR для маскирования вложений». Шаг 5b (pii-setup.sh host) идёт уже
+# от пользователя агентов без apt, поэтому Tesseract ставим здесь, пока есть root, — иначе
+# media-masker не ставится и фото/PDF вырезаются из запросов (strip). Сбой не останавливает
+# установку: текст маскируется и без OCR.
+run_ocr_step() {
+  export LABOPS_OCR_DONE=1
+  if [ "${SKIP_PII_PROXY:-0}" = "1" ] || [ "${SKIP_OCR:-0}" = "1" ]; then
+    note "Tesseract пропущен (SKIP_OCR/SKIP_PII_PROXY) — фото и PDF не будут маскироваться"
+    return 0
+  fi
+  say "2e. OCR для маскирования вложений"
+  echo "  Tesseract распознаёт текст на фото и в PDF, чтобы персональные данные на них"
+  echo "  маскировались до отправки в модель. Без него вложения модели не передаются."
+  ocr_install \
+    || warn "Tesseract не поставлен — вложения будут вырезаться; повторите установку (пропустить: SKIP_OCR=1)"
 }
 
 # write_runtime_conf <владелец> <checkout монорепо> <лаборатория> — записать от
@@ -479,6 +501,7 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
     fi
     run_voice_step "$AGENT_OS_USER" "$NEW_HOME"
     run_proxy_step "$AGENT_OS_USER" "$NEW_HOME"
+    run_ocr_step
     ok "продолжаю установку от имени $AGENT_OS_USER"
     # Флаги установщика (REUSE_EXISTING=1, SKIP_TG_PLUGIN, PREFLIGHT_DONE,
     # TG_PLUGIN_DIR, INSTALL_TG_LOCAL, ...) должны дойти до install.sh под
@@ -553,6 +576,17 @@ fi
 # окружением). Здесь — установка от root без отдельного пользователя и от обычного с sudo.
 if [ "$MODE" != "test" ] && [ "${LABOPS_PROXY_DONE:-0}" != "1" ]; then
   run_proxy_step "$(id -un)" "$HOME"
+fi
+
+# ── 2e. OCR для маскирования вложений ─────────────────────────────
+# Под root с отдельным пользователем шаг уже выполнен выше (LABOPS_OCR_DONE пришёл с
+# окружением). Здесь — установка от root без отдельного пользователя и от обычного с sudo.
+if [ "$MODE" != "test" ] && [ "${LABOPS_OCR_DONE:-0}" != "1" ]; then
+  if [ "$(id -u)" -eq 0 ] || [ -n "$SUDO" ]; then
+    run_ocr_step
+  else
+    warn "нет sudo — Tesseract не поставить (нужен root); фото и PDF не будут маскироваться"
+  fi
 fi
 
 LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"

@@ -874,6 +874,19 @@ unit "install.sh ставит сервис голоса и раздаёт ток
 unit "install.sh ставит Squid для Donut Browser, пароль не светится, повтор его не меняет — юнит-тест зелёный" \
      "proxy-install: юнит-тест провален (orchestration/lib/proxy-install.test.sh)" \
      bash orchestration/lib/proxy-install.test.sh
+# Tesseract для media-masker ставится, пока у install.sh есть root: шаг 5b идёт от пользователя
+# агентов без apt, и раньше фото/PDF молча вырезались из запросов (lib/ocr-install.sh).
+unit "install.sh ставит Tesseract (rus+eng), повтор apt не трогает — юнит-тест зелёный" \
+     "ocr-install: юнит-тест провален (orchestration/lib/ocr-install.test.sh)" \
+     bash orchestration/lib/ocr-install.test.sh
+# Шаг OCR должен идти до перехода на пользователя агентов — после него apt недоступен.
+_ocr_line="$(grep -n '^    run_ocr_step$' install.sh | head -n1 | cut -d: -f1)"
+_exec_line="$(grep -n 'exec sudo -u "\$AGENT_OS_USER"' install.sh | head -n1 | cut -d: -f1)"
+if [ -n "$_ocr_line" ] && [ -n "$_exec_line" ] && [ "$_ocr_line" -lt "$_exec_line" ]; then
+  ok "Tesseract ставится до перехода на пользователя агентов (строка $_ocr_line < $_exec_line)"
+else
+  bad "run_ocr_step не вызывается на этапе root до exec sudo -u — apt там уже недоступен"
+fi
 # Адаптер Claude Code -> OpenAI (LiteLLM): зависимости только по lock-файлу с хэшами, ключи не
 # светятся, повтор не меняет ключ шлюза; перевод агента обратим (openai-adapter-wire.sh).
 unit "openai-adapter-install: установка по lock с хэшами, ключи не светятся — юнит-тест зелёный" \
