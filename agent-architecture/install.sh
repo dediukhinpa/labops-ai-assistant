@@ -204,6 +204,41 @@ run_proxy_step() {
     || warn "прокси не настроен — повторите: bash install.sh --proxy-only (подробности выше)"
 }
 
+# write_runtime_conf <владелец> <checkout монорепо> <лаборатория> — записать от
+# root, из какого checkout хелпер labops-runtime-deploy собирает копию роя в
+# $LABOPS_RUNTIME_DIR. Источник решает root, а не тот, кто зовёт хелпер через sudo.
+write_runtime_conf() {
+  local owner="$1" source="$2" lab="$3" tmp branch
+  tmp="$(mktemp)"
+  printf '# Автосоздано labops-agent-architecture/install.sh.\n' > "$tmp"
+  printf '# Источник копии роя для %s.\n' "$LABOPS_RUNTIME_HELPER" >> "$tmp"
+  printf 'SOURCE=%s\nOWNER=%s\nLAB=%s\n' "$source" "$owner" "$lab" >> "$tmp"
+  # Хелпер по умолчанию собирает копию только с main, иначе переключённый на
+  # фичу checkout молча уехал бы во весь рой. Если ставят с другой ветки —
+  # запоминаем её здесь (решение root, не вызывающего) и говорим об этом.
+  branch="$(git -C "$source" symbolic-ref --short -q HEAD 2>/dev/null || true)"
+  if [ -n "$branch" ] && [ "$branch" != "main" ]; then
+    printf 'BRANCH=%s\n' "$branch" >> "$tmp"
+    warn "копия роя закреплена за веткой $branch — смените ветку и перезапустите install.sh, чтобы вернуться на main"
+  fi
+  if $SUDO install -d -m 755 "$(dirname "$LABOPS_RUNTIME_CONF")" \
+     && $SUDO install -m 644 -o root -g root "$tmp" "$LABOPS_RUNTIME_CONF"; then
+    rm -f "$tmp"
+    ok "копия роя будет собираться из $source ($LABOPS_RUNTIME_CONF)"
+    return 0
+  fi
+  rm -f "$tmp"
+  warn "не записан $LABOPS_RUNTIME_CONF — агенты будут работать из checkout"
+  return 1
+}
+
+# runtime_conf_source — SOURCE из записанных настроек копии (пусто, если нет).
+runtime_conf_source() {
+  { grep -E '^SOURCE=' "$LABOPS_RUNTIME_CONF" 2>/dev/null || true; } \
+    | tail -n 1 | sed 's/^SOURCE=//'
+}
+
+
 # ── --proxy-only ──────────────────────────────────────────────────
 # Прокси нужен ДО аккаунта Claude (через него аккаунт и регистрируют), поэтому его можно
 # поставить отдельно, не начиная остальную установку: ни preflight, ни агента, ни Claude Code.

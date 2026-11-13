@@ -1375,6 +1375,14 @@ else
        "labops-runtime-deploy: юнит-тест провален (orchestration/labops-runtime-deploy.test.sh)" \
        bash orchestration/labops-runtime-deploy.test.sh
 fi
+# Вызов write_runtime_conf без определения уже проходил гейт: 001ed48 удалил функцию,
+# а проверка ниже искала только вызов, и установка падала на «command not found».
+if grep -qE '^write_runtime_conf\(\) \{' install.sh \
+   && grep -qE '^runtime_conf_source\(\) \{' install.sh; then
+  ok "install.sh: write_runtime_conf и runtime_conf_source определены"
+else
+  bad "install.sh зовёт write_runtime_conf/runtime_conf_source, но не определяет их"
+fi
 if grep -q 'install -m 755 "\$RUNTIME_HELPER_SRC" "\$LABOPS_RUNTIME_HELPER"' install.sh \
    && grep -q 'write_runtime_conf "\$AGENT_OS_USER" "\$DEST_ROOT"' install.sh \
    && grep -q 'bash "\$RUNTIME_ARCH/skills/create-agent/new-agent.sh"' install.sh \
