@@ -121,9 +121,20 @@ HOME_X="$HOME_B" run_install >/dev/null 2>&1 || fail "установка из д
 [ "$(stat -c %a "$TMP/squid/labops-credentials")" = "600" ] || fail "права общего экземпляра не 600"
 grep -q "^htpasswd" "$LOG" && fail "пароль пересоздан при установке из другого дома"
 
-# 3. Чужой конфиг сохраняется до замены, а не теряется.
+# 3а. squid уже стоял с чужим конфигом — по умолчанию не трогаем ничего (13.11.2026
+#     установка переписала рабочий прокси клиента): код 2, конфиг прежний, без бэкапа и рестарта.
 echo "http_port 9999" > "$CONF"; : > "$LOG"
-OUT="$(run_install 2>&1)" || fail "установка поверх чужого конфига не прошла: $OUT"
+OUT="$(run_install 2>&1)"; RC=$?
+[ "$RC" = "2" ] || fail "чужой конфиг без флага: ожидался код 2, получен $RC: $OUT"
+grep -qx "http_port 9999" "$CONF" || fail "чужой конфиг заменён без LABOPS_PROXY_REPLACE_CONF=1"
+ls "$CONF".labops-bak-* >/dev/null 2>&1 && fail "без флага появился бэкап — значит, конфиг трогали"
+grep -q "^systemctl restart" "$LOG" && fail "без флага перезапущен чужой squid"
+printf '%s' "$OUT" | grep -q "LABOPS_PROXY_REPLACE_CONF=1" || fail "не подсказан флаг замены: $OUT"
+
+# 3б. С LABOPS_PROXY_REPLACE_CONF=1 чужой конфиг сохраняется до замены, а не теряется.
+: > "$LOG"
+OUT="$(LABOPS_PROXY_REPLACE_CONF=1 run_install 2>&1)" \
+  || fail "установка поверх чужого конфига с флагом не прошла: $OUT"
 ls "$CONF".labops-bak-* >/dev/null 2>&1 || fail "чужой конфиг не сохранён"
 grep -qx "http_port 9999" "$CONF".labops-bak-* || fail "в бэкапе не тот конфиг"
 grep -qx "http_port 3128" "$CONF" || fail "конфиг не заменён нашим"
@@ -197,5 +208,12 @@ env PATH="$BIN" bash -c '
   ok() { :; }; warn() { :; }; note() { :; }
   . "'"$HERE"'/proxy-install.sh"; proxy_show_credentials /nonexistent' >/dev/null 2>&1 \
   && fail "показ реквизитов без файла должен падать"
+
+# 13. squid ставим сами в этом запуске — конфиг из пакета (без метки) заменяется и без флага.
+rm -f "$BIN/squid" "$BIN/htpasswd"
+echo "# конфиг из пакета squid" > "$CONF"; : > "$LOG"
+OUT="$(run_install 2>&1)" || fail "свежая установка squid упёрлась в конфиг из пакета: $OUT"
+grep -q "apt-get .*install" "$LOG" || fail "13: squid не ставился — сценарий не тот"
+grep -qx "http_port 3128" "$CONF" || fail "конфиг из пакета не заменён при свежей установке"
 
 echo "OK: proxy-install.sh — все проверки пройдены"

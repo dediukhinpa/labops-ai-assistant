@@ -7,7 +7,9 @@
 #
 # Что ставится (всё вне домашних каталогов, правит только root):
 #   squid + apache2-utils                      пакеты (htpasswd для файла паролей)
-#   /etc/squid/squid.conf                      наш конфиг; чужой сохраняется как *.labops-bak-*
+#   /etc/squid/squid.conf                      наш конфиг. Если squid стоял до нас с чужим
+#                                              конфигом — НЕ трогаем (шаг пропускается); заменить
+#                                              с бэкапом *.labops-bak-*: LABOPS_PROXY_REPLACE_CONF=1
 #   /etc/squid/labops-passwd                   bcrypt-хэш, root:proxy 640
 #   /etc/squid/labops-credentials              общий экземпляр реквизитов, root, 600
 #   <дом пользователя>/proxy-credentials.txt   копия: адрес, логин и пароль, 600
@@ -16,7 +18,8 @@
 # идемпотентен: пароль и конфиг остаются, сервис перезапускается только при смене конфига.
 # Подключается через source; ждёт ok/warn/note из ui.sh и $SUDO (пусто под root).
 #
-#   proxy_install <пользователь> <его домашний каталог>  -> 0 прокси работает
+#   proxy_install <пользователь> <его домашний каталог>  -> 0 прокси работает,
+#     2 — пропущен: squid уже настроен не нами (чужой конфиг оставлен как есть)
 
 # shellcheck shell=bash
 
@@ -36,11 +39,16 @@
 : "${LABOPS_PROXY_GROUP:=proxy}"
 # Необязательно: пускать порт только с этого адреса/подсети (правило ufw).
 : "${LABOPS_PROXY_ALLOW_FROM:=}"
+# Заменить чужой конфиг уже стоявшего squid (с бэкапом). По умолчанию — нет: 13.11.2026
+# установка молча переписала рабочий прокси клиента со своими пользователями.
+: "${LABOPS_PROXY_REPLACE_CONF:=0}"
 # Куда ходит проверка: заодно видно, не режет ли регион сторона Anthropic.
 : "${LABOPS_PROXY_PROBE_URL:=https://api.anthropic.com}"
 : "${LABOPS_PROXY_IP_URL:=https://api.ipify.org}"
 
 PROXY_MARKER="# managed-by: labops proxy-install"
+# Код возврата proxy_install, когда шаг сознательно пропущен из-за чужого конфига.
+PROXY_RC_SKIPPED_FOREIGN=2
 # 16 байт = 128 бит случайности; hex безопасен для URL и конфига curl.
 PROXY_PASSWORD_BYTES=16
 PROXY_HTTP_AUTH_REQUIRED=407
@@ -67,10 +75,13 @@ proxy_can_install() {
 
 # proxy_install_packages — squid и htpasswd; уже стоящие не переустанавливает.
 proxy_install_packages() {
+  PROXY_PKGS_FRESH=0
   if command -v squid >/dev/null 2>&1 && command -v htpasswd >/dev/null 2>&1; then
     ok "squid и htpasswd уже установлены"
     return 0
   fi
+  # squid ставим сами — его конфиг из пакета наш по праву, заменять можно без флага.
+  command -v squid >/dev/null 2>&1 || PROXY_PKGS_FRESH=1
   echo "  ставлю squid и apache2-utils (apt-get)"
   $SUDO apt-get update -y >/dev/null || return 1
   $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y squid apache2-utils >/dev/null \
@@ -267,11 +278,23 @@ proxy_verify() {
 }
 
 # proxy_install <пользователь> <дом> — вся установка по шагам; на первом сбое возвращает 1.
+# proxy_conf_is_foreign — конфиг squid есть и написан не нами (нет метки PROXY_MARKER).
+proxy_conf_is_foreign() {
+  $SUDO test -f "$LABOPS_PROXY_CONF" && ! $SUDO grep -qF "$PROXY_MARKER" "$LABOPS_PROXY_CONF"
+}
+
 proxy_install() {
   local user="$1" home="$2" ip
   PROXY_CONF_STATE="same"
   proxy_can_install || return 1
   proxy_install_packages || { warn "не удалось установить squid"; return 1; }
+  if proxy_conf_is_foreign && [ "${PROXY_PKGS_FRESH:-0}" != "1" ] \
+     && [ "$LABOPS_PROXY_REPLACE_CONF" != "1" ]; then
+    note "squid уже настроен не нами ($LABOPS_PROXY_CONF) — конфиг, пароли и сервис не трогаю,"
+    note "прокси для Donut Browser не ставлю. Заменить своим (старый уйдёт в *.labops-bak-*):"
+    note "LABOPS_PROXY_REPLACE_CONF=1 bash install.sh --proxy-only"
+    return "$PROXY_RC_SKIPPED_FOREIGN"
+  fi
   proxy_write_conf || return 1
   proxy_ensure_credentials "$user" "$home" || { warn "пароль прокси не создан"; return 1; }
   proxy_open_firewall || warn "порт в ufw не открыт — клиент может не достучаться"
