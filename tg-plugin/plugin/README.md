@@ -96,6 +96,7 @@ bash plugin/scripts/install-hooks.sh \
 | `TELEGRAM_EXPECTED_BOT_ID` | Защита от подмены: при несовпадении с `getMe()` плагин падает. |
 | `TELEGRAM_ALLOWED_USER_IDS` | CSV — кто имеет право писать боту (legacy DM-режим). |
 | `TELEGRAM_WORKSPACE_ROOT` | Корень agent workspace (где CLAUDE.md). |
+| `TELEGRAM_API_ROOT` / `TELEGRAM_API_LOCAL_DIR` | Опционально: локальный сервер Bot API (`--local`) и его каталог данных (абсолютный путь). Файлы до 2000 МБ вместо 50/20 МБ. http только для loopback, иначе https. Не заданы — облако, поведение прежнее. См. корневой README, раздел «Локальный сервер Bot API». |
 | `TELEGRAM_WEBHOOK_HOST` / `TELEGRAM_WEBHOOK_PORT` / `TELEGRAM_WEBHOOK_TOKEN` | Bind для webhook-сервера хуков. |
 | `TELEGRAM_CHANNEL_ENV_FILE` | Путь до env-файла плагина — read-receipt хук (`Stop`) берёт из него `WEBHOOK_PORT/HOST/TOKEN`, чтобы ставить `👀` даже из per-chat сессии с очищенным env. См. секцию «Read receipts». |
 | `TELEGRAM_READ_RECEIPT_URL` | Явный URL роута `/hooks/react` (альтернатива выводу из `HOST`+`PORT`). |
