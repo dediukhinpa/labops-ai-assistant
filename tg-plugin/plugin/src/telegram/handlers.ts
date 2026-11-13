@@ -46,6 +46,7 @@ import {
   type BotApiForDownload,
   type MediaDescriptor,
 } from './media.js'
+import type { LocalApiConfig } from './local-api.js'
 import {
   executeOobResult,
   handleOobCommand,
@@ -151,6 +152,8 @@ export interface HandlerDeps {
   // Telegram bot token, used to build file-CDN URLs. Redacted in logs by
   // config.redactToken before any error escapes the process.
   botToken: string
+  // Локальный Bot API (TELEGRAM_API_ROOT); не задан -- облако, как раньше.
+  localApi?: LocalApiConfig
   // Minimal env subset — address and token of the local voice transcriber.
   env: { VOICE_TRANSCRIBER_URL?: string; VOICE_TRANSCRIBER_TOKEN?: string }
   // Permission relay hooks — when present, the text handler intercepts
@@ -1301,6 +1304,7 @@ export async function handleInboundPhoto(ctx: Context, deps: HandlerDeps): Promi
       deps.botToken,
       largest.file_id,
       deps.statePaths.inbox,
+      deps.localApi !== undefined ? { localApi: deps.localApi } : {},
     )
 
     const md: MediaDescriptor = {

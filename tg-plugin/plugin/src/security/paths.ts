@@ -18,6 +18,9 @@ import type { AppConfig } from '../config.js'
 
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 
+// Потолок отправки через ЛОКАЛЬНЫЙ Bot API (TELEGRAM_API_ROOT): 2000 МБ.
+export const LOCAL_ATTACHMENT_MAX_BYTES = 2000 * 1024 * 1024
+
 // Extensions that send as photos (inline preview in Telegram) instead of
 // documents. Kept here so tools.ts and any future caller share one truth.
 export const PHOTO_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp'])
@@ -84,7 +87,7 @@ export interface SendableFileChecks {
 //   1. workspace_root configured (else clear error)
 //   2. path resolves inside workspace (no escapes)
 //   3. target is a regular file (not a directory)
-//   4. size <= MAX_ATTACHMENT_BYTES
+//   4. size <= MAX_ATTACHMENT_BYTES (LOCAL_ATTACHMENT_MAX_BYTES при local_api)
 // Returns the canonical resolved path; callers should use this when
 // invoking Telegram sendDocument/sendPhoto so we ship the canonical file,
 // not the user-supplied path.
@@ -110,10 +113,13 @@ export function assertSendableFile({ filePath, config }: SendableFileChecks): st
     throw new Error(`files attachment rejected: ${filePath} is a directory`)
   }
 
-  if (st.size > MAX_ATTACHMENT_BYTES) {
+  // Лимит зависит от режима: 50 МБ у облака, 2000 МБ у локального сервера.
+  const maxBytes =
+    config.local_api !== undefined ? LOCAL_ATTACHMENT_MAX_BYTES : MAX_ATTACHMENT_BYTES
+  if (st.size > maxBytes) {
     throw new Error(
       `files attachment rejected: ${filePath} is ${(st.size / 1024 / 1024).toFixed(1)}MB (max ${
-        MAX_ATTACHMENT_BYTES / 1024 / 1024
+        maxBytes / 1024 / 1024
       }MB)`,
     )
   }

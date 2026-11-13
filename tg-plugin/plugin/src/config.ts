@@ -7,6 +7,8 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { z } from 'zod'
 
+import { assertAbsoluteLocalDir, normalizeApiRoot } from './telegram/local-api.js'
+
 // ─────────────────────────────────────────────────────────────────────
 // AppConfig — the merged, validated runtime config.
 // ─────────────────────────────────────────────────────────────────────
@@ -59,6 +61,13 @@ export const AppConfigSchema = z.object({
   // иначе main (см. resolveDmRoutingMode).
   dm_routing: z.enum(['main', 'per_person']).optional(),
   workspace_root: z.string().optional(),
+  // Локальный сервер Telegram Bot API (--local). Не задан -- облако, лимиты
+  // 50 МБ на отправку и 20 МБ на скачивание, как раньше. Заполняется из
+  // TELEGRAM_API_ROOT / TELEGRAM_API_LOCAL_DIR (см. loadConfig).
+  local_api: z.object({
+    api_root: z.string().min(1),
+    local_dir: z.string().min(1).optional(),
+  }).optional(),
   status: z.object({
     enabled: z.boolean().default(true),
     interval_ms: z.number().int().positive().default(700),
@@ -306,6 +315,37 @@ export const RuntimeEnvSchema = z.object({
   TELEGRAM_OPERATOR_USER_IDS: z.string().optional(), // CSV
   TELEGRAM_DM_ROUTING: z.enum(['main', 'per_person']).optional(),
   TELEGRAM_WORKSPACE_ROOT: z.string().optional(),
+  // Локальный Bot API (tdlib/telegram-bot-api --local). Пустая строка = не задано
+  // (так channel.env выглядит после «TELEGRAM_API_ROOT=»). Значение валидирует
+  // normalizeApiRoot: http(s)-origin, голый http только для loopback.
+  TELEGRAM_API_ROOT: z
+    .string()
+    .transform((v) => v.trim())
+    .transform((v, ctx) => {
+      if (v === '') return undefined
+      try {
+        return normalizeApiRoot(v)
+      } catch (err) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: err instanceof Error ? err.message : String(err) })
+        return z.NEVER
+      }
+    })
+    .optional(),
+  // Каталог данных локального сервера: только из него разрешено читать файлы
+  // с диска по абсолютному file_path из getFile.
+  TELEGRAM_API_LOCAL_DIR: z
+    .string()
+    .transform((v) => v.trim())
+    .transform((v, ctx) => {
+      if (v === '') return undefined
+      try {
+        return assertAbsoluteLocalDir(v)
+      } catch (err) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: err instanceof Error ? err.message : String(err) })
+        return z.NEVER
+      }
+    })
+    .optional(),
   TELEGRAM_STATUS_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   TELEGRAM_ALBUM_FLUSH_MS: z.coerce.number().int().positive().optional(),
   // Локальный сервис расшифровки голоса (voice-transcriber): адрес и Bearer-токен.
@@ -479,6 +519,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   }
   if (parsedEnv.TELEGRAM_WORKSPACE_ROOT !== undefined) {
     merged.workspace_root = parsedEnv.TELEGRAM_WORKSPACE_ROOT
+  }
+  if (parsedEnv.TELEGRAM_API_ROOT !== undefined) {
+    const localApi: Record<string, unknown> = { api_root: parsedEnv.TELEGRAM_API_ROOT }
+    if (parsedEnv.TELEGRAM_API_LOCAL_DIR !== undefined) {
+      localApi.local_dir = parsedEnv.TELEGRAM_API_LOCAL_DIR
+    }
+    merged.local_api = localApi
   }
 
   // Nested overrides: status.interval_ms, album.flush_ms, webhook.{host,port}
