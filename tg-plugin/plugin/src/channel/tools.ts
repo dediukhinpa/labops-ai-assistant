@@ -33,7 +33,12 @@ import {
   markdownToTelegramHtml,
 } from '../format/html.js'
 import { splitMessage } from '../format/chunk.js'
-import { assertSendableFile, isPhotoExtension } from '../security/paths.js'
+import {
+  LOCAL_ATTACHMENT_MAX_BYTES,
+  assertSendableFile,
+  isPhotoExtension,
+} from '../security/paths.js'
+import { downloadViaLocalApi, type LocalApiConfig } from '../telegram/local-api.js'
 
 /** Права на каталог и файлы скачанных вложений: только владелец. */
 export const ATTACHMENT_DIR_MODE = 0o700
@@ -137,7 +142,11 @@ export interface TelegramApi {
 
 // Thin wrapper around grammY bot.api. Keeps the rest of the system free of
 // grammy-specific quirks (reply_parameters vs reply_to_message_id, etc).
-export function createTelegramApi(bot: Bot, token: string): TelegramApi {
+//
+// `localApi` задан только при TELEGRAM_API_ROOT: тогда скачивание идёт через
+// локальный сервер Bot API (чтение с диска или поток по HTTP, без лимита 20 МБ).
+// Без него ветка скачивания остаётся прежней.
+export function createTelegramApi(bot: Bot, token: string, localApi?: LocalApiConfig): TelegramApi {
   return {
     async sendMessage(chatId, text, opts) {
       const other: Record<string, unknown> = {}
@@ -191,6 +200,14 @@ export function createTelegramApi(bot: Bot, token: string): TelegramApi {
     async downloadFile(fileId, destDir) {
       const file = await bot.api.getFile(fileId)
       if (!file.file_path) throw new Error('Telegram returned no file_path — file may have expired')
+      if (localApi !== undefined) {
+        return downloadViaLocalApi(
+          { file_path: file.file_path, file_unique_id: file.file_unique_id },
+          token,
+          destDir,
+          localApi,
+        )
+      }
       const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`
       const res = await fetch(url)
       if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`)
@@ -317,9 +334,39 @@ const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ]
 
-export function listTools(): ToolDefinition[] {
+// Тексты лимитов в описаниях инструментов. Облачные формулировки -- в
+// TOOL_DEFINITIONS, локальные подставляются, только если задан локальный Bot API.
+const CLOUD_SEND_LIMIT_NOTE = 'Max 50MB each.'
+const LOCAL_SEND_LIMIT_NOTE = `Max ${LOCAL_ATTACHMENT_MAX_BYTES / 1024 / 1024}MB each (local Bot API server).`
+const CLOUD_DOWNLOAD_LIMIT_NOTE = 'Telegram caps bot downloads at 20MB.'
+const LOCAL_DOWNLOAD_LIMIT_NOTE =
+  `The local Bot API server has no 20MB download cap (files up to ${LOCAL_ATTACHMENT_MAX_BYTES / 1024 / 1024}MB).`
+
+function withLocalLimits(tool: ToolDefinition): ToolDefinition {
+  if (tool.name === 'download_attachment') {
+    return { ...tool, description: tool.description.replace(CLOUD_DOWNLOAD_LIMIT_NOTE, LOCAL_DOWNLOAD_LIMIT_NOTE) }
+  }
+  if (tool.name === 'reply') {
+    const files = tool.inputSchema.properties.files as { description?: string } | undefined
+    if (files?.description === undefined) return tool
+    return {
+      ...tool,
+      inputSchema: {
+        ...tool.inputSchema,
+        properties: {
+          ...tool.inputSchema.properties,
+          files: { ...files, description: files.description.replace(CLOUD_SEND_LIMIT_NOTE, LOCAL_SEND_LIMIT_NOTE) },
+        },
+      },
+    }
+  }
+  return tool
+}
+
+export function listTools(localApi?: LocalApiConfig): ToolDefinition[] {
   // Return a shallow copy so callers cannot mutate our canonical list.
-  return TOOL_DEFINITIONS.map(t => ({ ...t }))
+  const tools = TOOL_DEFINITIONS.map(t => ({ ...t }))
+  return localApi === undefined ? tools : tools.map(withLocalLimits)
 }
 
 // ─────────────────────────────────────────────────────────────────────

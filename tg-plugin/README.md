@@ -200,6 +200,34 @@ This is noticeably more responsive than "eyes-on-read" on the actual read event.
 - **Photos/documents/albums** are buffered (`album-buffer.ts`) and passed as turn attachments.
 - Voice replies are optional (TTS is plugged in on the agent side).
 
+## Local Bot API server (files up to 2 GB)
+
+The cloud Bot API caps bot uploads at 50 MB and downloads at 20 MB. A **local** [`telegram-bot-api`](https://github.com/tdlib/telegram-bot-api) server (`--local` mode) lifts both to 2000 MB. The channel supports it through an optional env variable; **when `TELEGRAM_API_ROOT` is not set, nothing changes** (cloud endpoint, 50/20 MB limits, same code paths).
+
+1. Get `api_id` / `api_hash` at <https://my.telegram.org> (API development tools).
+2. Build and run the server on the agent's host, bound to loopback only:
+   ```bash
+   telegram-bot-api --local --api-id="$API_ID" --api-hash="$API_HASH" \
+     --http-ip-address=127.0.0.1 --http-port=8081 \
+     --dir=/var/lib/telegram-bot-api --temp-dir=/var/tmp/telegram-bot-api
+   ```
+   Run it as a systemd unit under its own user.
+3. A bot token can be bound to one server at a time. **Before switching, log the bot out of the cloud** (once; returning to the cloud with that token is then blocked for ~10 minutes): `curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/logOut"`. To go back, call `close` on the local server and unset the variable.
+4. File access. In `--local` mode `getFile` returns an **absolute path** inside the server's `--dir` (it contains a per-bot subdirectory named after the token; never log it). The plugin runs as another user, so make `--dir` readable for the agent user (shared group + `chmod 750`, or run both under one user). Downloads are copied into the agent's inbox (`0600`), so clean the server's directory periodically.
+5. Add to `channel.env` (not written there by `new-agent.sh`) and restart the agent:
+   ```bash
+   TELEGRAM_API_ROOT=http://127.0.0.1:8081
+   TELEGRAM_API_LOCAL_DIR=/var/lib/telegram-bot-api
+   ```
+
+Rules (validated at start by Zod, `src/telegram/local-api.ts`):
+
+- `TELEGRAM_API_ROOT` — bare `http(s)://host[:port]`, no path/query/credentials. Plain `http` is accepted **only for loopback** (`127.0.0.0/8`, `localhost`, `::1`) because the token is part of every URL; a remote server needs `https`. `api.telegram.org` is rejected. Empty = unset.
+- `TELEGRAM_API_LOCAL_DIR` — absolute path of the server's `--dir`. A file path from `getFile` is read from disk only if its real path (symlinks resolved) is inside this directory; without the variable such a path is refused. A relative path is downloaded over HTTP from `${TELEGRAM_API_ROOT}/file/bot<token>/<path>`.
+- With the root set: the `reply` tool accepts files up to 2000 MB (tool description updated accordingly), `download_attachment` has no 20 MB cap, and the plugin's own fetch timeouts also cover this host (30 min for `getFile`/`send*`/file downloads, because the server downloads/uploads the file before it answers). The voice transcriber keeps its own 20 MB limit.
+- Videos are sent as documents (as before), so they arrive as files, not inline players.
+- The token is redacted from errors and logs.
+
 ## Multichat
 
 One server routes several chats/threads through a session pool (`router/multichat-router.ts`, `router/tmux-session-pool.ts`). Enabling it and adding your own `user_id` — see `docs/01-what-is-this.md` and `examples/channel.env.example` (`TELEGRAM_ALLOWED_USER_IDS` / `TELEGRAM_ALLOWED_CHAT_IDS`).
@@ -245,6 +273,7 @@ Full example — [`examples/channel.env.example`](examples/channel.env.example).
 | `SUPPORT_FOLLOWUP_URL` / `SUPPORT_FOLLOWUP_TOKEN` | optional client-support relay: private messages from users outside the allowlist are POSTed (Bearer token) to this endpoint instead of being dropped; no agent session is started on this path. Both must be set, otherwise the branch is off (`src/telegram/client-relay.ts`) |
 | `TELEGRAM_COMMAND_MENU` | `off` clears the bot's «/» command menu at every start instead of registering it (a support bot whose DMs serve clients); unset = menu on (`src/telegram/command-menu.ts`) |
 | `TELEGRAM_WORKSPACE_ROOT` | the agent's workspace root (where `CLAUDE.md`, `core/`, `.mcp.json` live) |
+| `TELEGRAM_API_ROOT` / `TELEGRAM_API_LOCAL_DIR` | optional local Bot API server (`--local`) and its data dir: files up to 2000 MB, see [Local Bot API server](#local-bot-api-server-files-up-to-2-gb). Unset = cloud, 50/20 MB |
 | `AGENT_ID` | agent identifier (routing in multi-agent + logs) |
 | `TELEGRAM_STATE_DIR` | agent state: `bot.pid`, `config.json`, inbox, logs (isolate per agent) |
 | `TELEGRAM_WEBHOOK_HOST` / `_PORT` | local host/port for Claude hooks (a dedicated port per agent, `6000+`) |
@@ -324,6 +353,7 @@ External endpoints actually used:
 | Endpoint | Purpose | When |
 |---|---|---|
 | `api.telegram.org` | Telegram Bot API — send/receive messages, download attachments | While the channel is running |
+| `TELEGRAM_API_ROOT` (e.g. `127.0.0.1:8081`) | Local Bot API server instead of `api.telegram.org` | Only when the variable is set |
 | `127.0.0.1:8310` (local `voice-transcriber`) | Voice transcription (faster-whisper) | Only when a voice message arrives and `VOICE_TRANSCRIBER_TOKEN` is set; never leaves the host |
 | `127.0.0.1` (internal webhook) | Local IPC between Claude Code hooks and the channel server (read-receipts, progress, ask-user) | Local only — bound to loopback, never exposed off-host |
 

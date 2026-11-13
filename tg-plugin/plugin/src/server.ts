@@ -82,6 +82,7 @@ import {
   type HandlerDeps,
 } from './telegram/handlers.js'
 import { createClientRelayFromEnv } from './telegram/client-relay.js'
+import { createTimedTelegramFetch } from './telegram/timed-fetch.js'
 import { syncCommandMenu } from './telegram/command-menu.js'
 import { AlbumBuffer } from './telegram/album-buffer.js'
 import {
@@ -263,6 +264,8 @@ const env = RuntimeEnvSchema.parse({
   ...(process.env.TELEGRAM_EXPECTED_BOT_ID !== undefined ? { TELEGRAM_EXPECTED_BOT_ID: process.env.TELEGRAM_EXPECTED_BOT_ID } : {}),
   ...(process.env.TELEGRAM_ALLOWED_USER_IDS !== undefined ? { TELEGRAM_ALLOWED_USER_IDS: process.env.TELEGRAM_ALLOWED_USER_IDS } : {}),
   ...(process.env.TELEGRAM_WORKSPACE_ROOT !== undefined ? { TELEGRAM_WORKSPACE_ROOT: process.env.TELEGRAM_WORKSPACE_ROOT } : {}),
+  ...(process.env.TELEGRAM_API_ROOT !== undefined ? { TELEGRAM_API_ROOT: process.env.TELEGRAM_API_ROOT } : {}),
+  ...(process.env.TELEGRAM_API_LOCAL_DIR !== undefined ? { TELEGRAM_API_LOCAL_DIR: process.env.TELEGRAM_API_LOCAL_DIR } : {}),
   ...(process.env.TELEGRAM_STATUS_INTERVAL_MS !== undefined ? { TELEGRAM_STATUS_INTERVAL_MS: process.env.TELEGRAM_STATUS_INTERVAL_MS } : {}),
   ...(process.env.TELEGRAM_ALBUM_FLUSH_MS !== undefined ? { TELEGRAM_ALBUM_FLUSH_MS: process.env.TELEGRAM_ALBUM_FLUSH_MS } : {}),
   ...(process.env.VOICE_TRANSCRIBER_URL !== undefined ? { VOICE_TRANSCRIBER_URL: process.env.VOICE_TRANSCRIBER_URL } : {}),
@@ -442,87 +445,22 @@ setGlobalDispatcher(new UndiciAgent({
   connect: { timeout: 8_000 },
 }))
 
-// 2. Per-method HTTP timeouts — grammY defaults to 500 s for everything.
-//    Without this, a hung sendChatAction / setMessageReaction blocks the
-//    plugin for up to 8 minutes. We patch globalThis.fetch (Undici-backed)
-//    so timeouts apply only to api.telegram.org, leaving all other fetch
-//    calls (webhook server, loopback) untouched.
-const TG_TIMEOUTS_MS: Record<string, number> = {
-  // Long-poll: Telegram holds the connection for LONG_POLL_TIMEOUT_SEC (25s);
-  // add 10 s buffer for network jitter before aborting at the HTTP layer.
-  getUpdates:           35_000,
-  // Fire-and-forget signals — user sees these immediately; fail fast.
-  sendChatAction:        5_000,
-  setMessageReaction:    5_000,
-  deleteMessage:         5_000,
-  answerCallbackQuery:   5_000,
-  getMe:                 5_000,
-  setMyCommands:         5_000,
-  // Regular messages and edits — short enough to notice a hang.
-  sendMessage:           8_000,
-  editMessageText:       6_000,
-  editMessageCaption:    6_000,
-  forwardMessage:        8_000,
-  copyMessage:           8_000,
-  getFile:               8_000,
-  // Media uploads — allow more time for larger payloads.
-  sendPhoto:            20_000,
-  sendDocument:         20_000,
-  sendVoice:            20_000,
-  sendVideo:            20_000,
-}
-const TG_DEFAULT_TIMEOUT_MS = 10_000
+// 2. Таймауты HTTP по методам Bot API (grammY по умолчанию ждёт 500 с на всё).
+//    Подменяем globalThis.fetch: таймауты действуют только для Bot API,
+//    остальные вызовы (webhook-сервер, loopback) идут как есть. Таблица и
+//    логика — в telegram/timed-fetch.ts; для локального сервера (если задан
+//    TELEGRAM_API_ROOT) обёртка применяется и к его хосту.
+const localApi = config.local_api
+globalThis.fetch = createTimedTelegramFetch(
+  globalThis.fetch.bind(globalThis),
+  globalThis.fetch.preconnect,
+  localApi !== undefined ? { apiRoot: localApi.api_root } : {},
+)
 
-function tgMethodFromUrl(url: string | URL | Request): string {
-  const href =
-    typeof url === 'string' ? url
-    : url instanceof URL    ? url.href
-    : (url as Request).url
-  const m = /\/bot[^/]+\/([A-Za-z]+)/.exec(href)
-  return m?.[1] ?? ''
-}
-
-const _nativeFetch = globalThis.fetch.bind(globalThis)
-// `preconnect` — расширение Bun поверх fetch, часть типа globalThis.fetch.
-// bind() свойства функции не переносит, поэтому подменяющая функция обязана
-// пробросить его сама: иначе присваивание не проходит по типу (TS2741), а в
-// рантайме любой вызов fetch.preconnect() падал бы на undefined.
-const _nativePreconnect = globalThis.fetch.preconnect
-function timedTelegramFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  const href =
-    typeof input === 'string' ? input
-    : input instanceof URL    ? input.href
-    : (input as Request).url
-
-  // Only intercept Telegram Bot API calls.
-  if (!href.includes('api.telegram.org')) return _nativeFetch(input, init)
-
-  const method     = tgMethodFromUrl(href)
-  const timeoutMs  = TG_TIMEOUTS_MS[method] ?? TG_DEFAULT_TIMEOUT_MS
-  const controller = new AbortController()
-  const timer      = setTimeout(
-    () => controller.abort(new DOMException(`TG API timeout: ${method} (${timeoutMs} ms)`, 'TimeoutError')),
-    timeoutMs,
-  )
-
-  // Merge with grammY's own signal (e.g. its 500 s fallback or caller signal).
-  const existing = (init as RequestInit & { signal?: AbortSignal })?.signal
-  if (existing?.aborted) {
-    clearTimeout(timer)
-    controller.abort(existing.reason)
-  } else {
-    existing?.addEventListener('abort', () => controller.abort(existing.reason), { once: true })
-  }
-
-  return _nativeFetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer))
-}
-timedTelegramFetch.preconnect = _nativePreconnect
-globalThis.fetch = timedTelegramFetch
-
-const bot = new Bot(env.TELEGRAM_BOT_TOKEN)
+// Без TELEGRAM_API_ROOT клиент создаётся ровно как раньше (облако).
+const bot = localApi !== undefined
+  ? new Bot(env.TELEGRAM_BOT_TOKEN, { client: { apiRoot: localApi.api_root } })
+  : new Bot(env.TELEGRAM_BOT_TOKEN)
 // Raw API talks to grammy. Safe wrapper sits in front of every downstream
 // consumer (StatusManager, oob, handlers, poller, webhook). The wrapper:
 //   1. redactSecrets(text, logSecrets) before delegating to raw API.
@@ -531,7 +469,7 @@ const bot = new Bot(env.TELEGRAM_BOT_TOKEN)
 // No call site can bypass — the raw `telegramApi` reference is shadowed
 // after this line. Anything that imports TelegramApi from channel/tools
 // receives the wrapped instance via toolDeps / handlerDeps / StatusManager.
-const rawTelegramApi = createTelegramApi(bot, env.TELEGRAM_BOT_TOKEN)
+const rawTelegramApi = createTelegramApi(bot, env.TELEGRAM_BOT_TOKEN, localApi)
 // Composition: caller → safeTelegramApi (sanitize) → rateLimitedTelegramApi
 // (queue + 429 retry) → rawTelegramApi (grammY). Sanitize runs FIRST so the
 // queue holds already-redacted/validated payloads (no secret leak if a
@@ -652,7 +590,7 @@ const toolDeps: ToolDeps = {
 }
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: listTools(),
+  tools: listTools(localApi),
 }))
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req): Promise<ServerResult> => {
@@ -896,6 +834,7 @@ const handlerDeps: HandlerDeps = {
   // so the media module never reaches into grammY internals.
   botApi: { api: bot.api },
   botToken: env.TELEGRAM_BOT_TOKEN,
+  ...(localApi !== undefined ? { localApi } : {}),
   env: {
     ...(env.VOICE_TRANSCRIBER_URL !== undefined
       ? { VOICE_TRANSCRIBER_URL: env.VOICE_TRANSCRIBER_URL }
