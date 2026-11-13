@@ -67,6 +67,8 @@ cp "$HERE/orchestration/lib/plugin.sh" "$REPO/orchestration/lib/plugin.sh"
 cp "$HERE/orchestration/lib/voice-install.sh" "$REPO/orchestration/lib/voice-install.sh"
 # proxy-install.sh даёт proxy_install (шаг «Прокси»): install.sh сорсит его при старте.
 cp "$HERE/orchestration/lib/proxy-install.sh" "$REPO/orchestration/lib/proxy-install.sh"
+# ocr-install.sh даёт ocr_install (шаг «OCR»): install.sh сорсит его при старте.
+cp "$HERE/orchestration/lib/ocr-install.sh" "$REPO/orchestration/lib/ocr-install.sh"
 # openai-adapter-install.sh даёт openai_adapter_install: install.sh сорсит его при старте.
 cp "$HERE/orchestration/lib/openai-adapter-install.sh" "$REPO/orchestration/lib/openai-adapter-install.sh"
 
