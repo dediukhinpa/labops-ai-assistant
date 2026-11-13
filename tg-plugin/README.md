@@ -194,6 +194,48 @@ So the user can see the agent is alive and working:
 
 This is noticeably more responsive than "eyes-on-read" on the actual read event. The ✅/❌ symbols are **not** in Telegram's reaction whitelist — we use 👀/👌.
 
+## Fallback reply (optional, off by default)
+
+Protection against a silent agent. The agent answers through the channel's `reply` tool (or edits its own message with `edit_message`). If a turn ends (`Stop` hook) without a single call to either, the user would get nothing even though the transcript holds a final answer. With the fallback enabled, the plugin sends that last assistant text to the chat the inbound message came from, as a reply to it.
+
+How it works:
+
+1. A thin `Stop` hook, `plugin/scripts/fallback-reply-hook.ts`, takes `transcript_path` and `session_id` from the hook's stdin and POSTs them (Bearer `TELEGRAM_WEBHOOK_TOKEN`, loopback only) to `/hooks/fallback-reply` on the plugin's internal webhook.
+2. **The server decides.** It reads the tail of the transcript (only from `~/.claude/projects` / `$CLAUDE_CONFIG_DIR/projects`, `*.jsonl`, symlinks resolved) and walks the *current turn* — from the last real user message to the end. Nothing is sent when:
+   - the turn called `mcp__labops-channel__reply` or `mcp__labops-channel__edit_message` (a `react`-only turn still counts as unanswered);
+   - the turn was not started from Telegram — its user message does not *begin* with `<channel source="telegram" chat_id="…" message_id="…">` (task-poller tasks, reminders, task notifications, text typed in tmux);
+   - the final segment of the turn (after the last tool result) has no assistant text, or the chat is not allowed (same gate as `reply`, including the multichat policy);
+   - this turn was already forwarded: dedup by `chat_id:message_id` of the inbound message, kept per session in `<state>/fallback-reply/state.json` (survives restarts).
+3. The text is sent like the `reply` tool does: markdown to Telegram HTML, split at 4000 chars, `reply_to` only on the first part, plain-text retry if Telegram rejects the HTML. Tokens are redacted by the standard outbound wrapper. Text longer than 16 000 chars is cut with a `…[обрезано]` marker. The message starts with a short note so the user can tell it apart from a deliberate reply: `⚠ ответ без reply:` (change with `TELEGRAM_FALLBACK_REPLY_PREFIX`; empty = no note).
+
+If the final text is not in the transcript yet when `Stop` fires, the hook retries a few times (`FALLBACK_REPLY_RETRY_ATTEMPTS`, default 4, `FALLBACK_REPLY_RETRY_DELAY_MS`, default 150). The hook always exits 0 with empty stdout.
+
+**Enable** (both steps are required; without the variable nothing changes and the route answers 503):
+
+1. Add to the agent's `channel.env` and restart the agent's unit: `TELEGRAM_FALLBACK_REPLY=1`.
+2. Add a `Stop` hook to the `settings.json` the session actually reads (see [Hook placement](docs/05-troubleshooting.md): usually the global `~/.claude/settings.json`; back it up first), next to the read-receipt hook:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "marker": "labops-channel-fallback-reply",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "TELEGRAM_CHANNEL_ENV_FILE='/abs/path/to/channel.env' bun '/abs/path/to/plugin/scripts/fallback-reply-hook.ts'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The path to `plugin/scripts/` is the agent's private plugin copy (`~/.claude-lab/<agent>/.claude/labops-tg-plugin/plugin/...`) — re-provision the copy first, a monorepo edit does not reach it. The token never goes into `settings.json`: the hook reads it from `channel.env`.
+
 ## Voice and media
 
 - **Incoming voice/audio** is downloaded into the state dir's inbox and transcribed; the agent receives the text. Transcription is done by the local `voice-transcriber` service (faster-whisper on the same host, see `voice-transcriber/` in the monorepo); audio is never sent to an external service. Without the service the message carries a short "transcription unavailable" note.
@@ -277,6 +319,7 @@ Full example — [`examples/channel.env.example`](examples/channel.env.example).
 | `AGENT_ID` | agent identifier (routing in multi-agent + logs) |
 | `TELEGRAM_STATE_DIR` | agent state: `bot.pid`, `config.json`, inbox, logs (isolate per agent) |
 | `TELEGRAM_WEBHOOK_HOST` / `_PORT` | local host/port for Claude hooks (a dedicated port per agent, `6000+`) |
+| `TELEGRAM_FALLBACK_REPLY` | `1` enables the fallback reply for turns that ended without `reply` (off by default); needs the `Stop` hook, see [Fallback reply](#fallback-reply-optional-off-by-default). `TELEGRAM_FALLBACK_REPLY_PREFIX` — the note before the text |
 | `TELEGRAM_MEMORY_ENABLED` | write turns to `active/episodic.md` + verbose-jsonl |
 | `TELEGRAM_MEMORY_WORKSPACE` / `_AGENT_LABEL` / `_SOURCE_TAG` | turn-memory write parameters |
 

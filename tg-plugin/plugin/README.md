@@ -84,6 +84,48 @@ bash plugin/scripts/install-hooks.sh \
 
 Хук всегда exit 0 и не пишет в stdout — read receipt никогда не блокирует и не загрязняет контекст модели. Если роут недоступен (или реакция не вписана в деплой) — хук тихо ничего не делает.
 
+## Fallback-ответ (необязательно, по умолчанию выключено)
+
+Защита от «тишины» агента. Агент отвечает инструментом канала `reply` (или правит своё сообщение через `edit_message`). Если ход закончился (`Stop`-хук) без единого такого вызова, пользователь не получит ничего, хотя финальный ответ есть в транскрипте. С включённым fallback плагин сам отправляет последний текст ассистента в чат, из которого пришло входящее сообщение, как reply на него.
+
+Как работает:
+
+1. Тонкий `Stop`-хук `plugin/scripts/fallback-reply-hook.ts` берёт `transcript_path` и `session_id` из stdin хука и POST'ит их (Bearer `TELEGRAM_WEBHOOK_TOKEN`, только loopback) в `/hooks/fallback-reply` внутреннего webhook плагина.
+2. **Решает сервер.** Он читает хвост транскрипта (только из `~/.claude/projects` / `$CLAUDE_CONFIG_DIR/projects`, файлы `*.jsonl`, симлинки раскрываются) и идёт по *текущему ходу* — от последнего настоящего сообщения пользователя до конца. Ничего не отправляется, если:
+   - в ходе был вызов `mcp__labops-channel__reply` или `mcp__labops-channel__edit_message` (ход только с `react` считается без ответа);
+   - ход начат не из Telegram: пользовательское сообщение не *начинается* с `<channel source="telegram" chat_id="…" message_id="…">` (задачи task-poller, напоминания, task-notification, текст, набранный в tmux);
+   - в финальном сегменте хода (после последнего результата инструмента) нет текста ассистента, либо чат не разрешён (тот же шлюз, что у `reply`, включая политику multichat);
+   - этот ход уже отправлялся: дедуп по `chat_id:message_id` входящего сообщения, на сессию, в `<state>/fallback-reply/state.json` (переживает рестарт).
+3. Текст уходит так же, как у `reply`: markdown в Telegram HTML, разбиение по 4000 символов, `reply_to` только на первой части, повтор простым текстом, если Telegram отверг HTML. Токены вычищает штатная обёртка исходящих. Текст длиннее 16 000 символов обрезается с маркером `…[обрезано]`. В начале стоит короткая пометка, чтобы отличать от осознанного ответа: `⚠ ответ без reply:` (меняется через `TELEGRAM_FALLBACK_REPLY_PREFIX`; пустая строка — без пометки).
+
+Если на момент `Stop` финального текста в транскрипте ещё нет, хук делает несколько повторов (`FALLBACK_REPLY_RETRY_ATTEMPTS`, по умолчанию 4, `FALLBACK_REPLY_RETRY_DELAY_MS`, по умолчанию 150). Хук всегда завершается с кодом 0 и пустым stdout.
+
+**Включение** (нужны оба шага; без переменной ничего не меняется, роут отвечает 503):
+
+1. В `channel.env` агента добавить `TELEGRAM_FALLBACK_REPLY=1` и перезапустить юнит агента.
+2. В `settings.json`, который реально читает сессия (см. [где регистрировать хуки](../docs/05-troubleshooting.md): обычно глобальный `~/.claude/settings.json`, сначала бэкап), добавить `Stop`-хук рядом с read-receipt:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "marker": "labops-channel-fallback-reply",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "TELEGRAM_CHANNEL_ENV_FILE='/abs/path/to/channel.env' bun '/abs/path/to/plugin/scripts/fallback-reply-hook.ts'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Путь до `plugin/scripts/` — приватная копия плагина агента (`~/.claude-lab/<agent>/.claude/labops-tg-plugin/plugin/...`): сначала передеплойте копию, правка в монорепо до неё не доходит. Токен в `settings.json` не пишется: хук берёт его из `channel.env`.
+
 ## Environment variables
 
 Полный список — `plugin/src/config.ts` (`RuntimeEnvSchema`). Минимум:
@@ -101,6 +143,8 @@ bash plugin/scripts/install-hooks.sh \
 | `TELEGRAM_CHANNEL_ENV_FILE` | Путь до env-файла плагина — read-receipt хук (`Stop`) берёт из него `WEBHOOK_PORT/HOST/TOKEN`, чтобы ставить `👀` даже из per-chat сессии с очищенным env. См. секцию «Read receipts». |
 | `TELEGRAM_READ_RECEIPT_URL` | Явный URL роута `/hooks/react` (альтернатива выводу из `HOST`+`PORT`). |
 | `TELEGRAM_READ_RECEIPT_STATE` | Явный путь до дедуп-лога (single-writer). По умолчанию — пер-сессионный `<state>/read-receipts/<session_id>.log` в `TELEGRAM_STATE_DIR` (или `MULTICHAT_STATE_DIR`). |
+| `TELEGRAM_FALLBACK_REPLY` / `TELEGRAM_FALLBACK_REPLY_PREFIX` | Fallback-ответ: `1` включает отправку последнего текста ассистента, если ход закончился без `reply`/`edit_message` (по умолчанию выключено); пометка перед текстом. См. секцию «Fallback-ответ». |
+| `TELEGRAM_FALLBACK_REPLY_URL` | Явный URL роута `/hooks/fallback-reply` для хука (альтернатива выводу из `HOST`+`PORT`). |
 | `TELEGRAM_MEMORY_*` | Memory hook config (см. секцию ниже). |
 | `TELEGRAM_MULTICHAT_*` | Multichat router config (см. секцию ниже). |
 | `VOICE_TRANSCRIBER_TOKEN` | Bearer-токен локального сервиса расшифровки голосовых (опционально; без него — пометка «расшифровка недоступна»). |
