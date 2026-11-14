@@ -74,11 +74,17 @@ for name, srv in (cfg.get("mcpServers") or {}).items():
 ' 2>/dev/null || true
 }
 
+# Почему последняя фраза в BODY: воркер agent_router подставляет к любой
+# побудке шаблон "пришли владельцу подробный отчёт в чат", и консолидация
+# превращалась в служебные сообщения клиенту, а её отчёт в episodic кормил
+# следующий разбор. Фраза в самом теле плюс правило в SKILL.md гасят это,
+# не трогая код воркера.
 BODY="Reflection nudge (${REASON}). Run the memory-consolidate skill: read new \
 core/active/episodic.md entries since core/passive/.consolidated-at, distil \
 insights (decisions/errors/preferences/facts) into core/passive/*, add \
 provenance + decay frontmatter, dual-write important ones to second_brain \
-(recall-before-write), then update the watermark."
+(recall-before-write), then update the watermark. \
+Silent maintenance: do NOT message the owner or the chat; when done just ack."
 
 # Build a valid agent_router.notify payload.
 # Полноценный JSON-RPC: без "jsonrpc"/"id" и с методом "agent_router.notify"
