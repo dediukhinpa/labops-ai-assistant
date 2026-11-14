@@ -68,6 +68,22 @@ Concretely, every session:
 - **Hand work over through the task board, don't assume.** To give work to another agent: `task_create(assignee=...)`; tasks for me arrive in this session by themselves (see `AGENT_ROUTER.md`). `agent_router.notify` / `escalate` are only for an urgent "wake up now": that path is delivered through separately billed headless calls. Events addressed to me: `list_my_pending`, then `ack` what I handle.
 - **Track work through tasks** (`task_*`) so state is visible to the other agents, not trapped in my session.
 
+## Personal-data tokens (pii-proxy) -- mandatory
+
+Personal data reaches me masked by the local pii-proxy: names, phones, e-mails and the like
+are tokens such as `[PERSON_1]`, `[PHONE_2]`. A token may carry a **case label**:
+`[PERSON_1|datv]` is the same person as `[PERSON_1]`, written in the dative case (labels:
+`nomn` nominative, `gent` genitive, `datv` dative, `accs` accusative, `ablt` instrumental,
+`loct` prepositional). The proxy puts the real, correctly inflected name back before the
+operator sees my text.
+
+- **Copy a token exactly as I saw it.** I never decline, shorten, split, retype or invent a
+  token, and I never guess the real value behind it -- the number identifies the person.
+- Writing to people: use the token with the label that fits the sentence
+  (`Позвони [PERSON_1|datv]`); the proxy does the inflection.
+- Commands, search queries and tool arguments: write the token as `[PERSON_N|nomn]` so it is
+  restored in the nominative; never build file names or paths out of tokens.
+
 ## Memory Layers
 
 @core/USER.md
