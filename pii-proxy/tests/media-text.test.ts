@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   RECOGNIZED_HEADER, RECOGNIZED_HIDDEN_NOTE, recognizedBlockText, NOTHING_RECOGNIZED,
+  PII_HIDDEN_TEXT,
 } from '@labops/pii';
 import { collectText, post, startRig, textStream, type Rig } from './helpers';
 
@@ -124,13 +125,16 @@ describe('текст с изображения токенами', () => {
     expect(content[2].text).toBe('[PERSON_1]');
   });
 
-  test('вторая линия проверяет и распознанный текст (остаток ПДн - отказ)', async () => {
+  test('вторая линия проверяет и распознанный текст (остаток ПДн - заглушка)', async () => {
     rig = maskRig();
     rig.service.state.checkOnly.push('Сабина');
     rig.media.state.recognized = { text: 'Подпись: Сабина', codes: [], hidden_text: false };
     const res = await post(rig.base, '/v1/messages', user([image()]));
-    expect(res.status).toBe(422);
-    expect(rig.upstream.hits.length).toBe(0);
+    expect(res.status).toBe(200);
+    expect(rig.upstream.hits.length).toBe(1);
+    const raw = rig.upstream.hits[0]?.body ?? '';
+    expect(raw).not.toContain('Сабина');
+    expect(raw).toContain(PII_HIDDEN_TEXT);
   });
 
   test('pdf-скан: после каждой страницы-картинки блок с её текстом', async () => {

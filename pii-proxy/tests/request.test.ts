@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { ATTACHMENT_STRIPPED_TEXT, RequestMasker, SYSTEM_INSERT_TEXT } from '@labops/pii';
+import {
+  ATTACHMENT_STRIPPED_TEXT, PII_HIDDEN_TEXT, RequestMasker, SYSTEM_INSERT_TEXT,
+} from '@labops/pii';
 import { startRig, post, textStream, type Rig } from './helpers';
 
 const DICT = { 'Иван Петров': '[PERSON_1]', '+7 900 000-00-01': '[PHONE_1]' };
@@ -223,19 +225,39 @@ describe('fail closed и вторая линия', () => {
     });
   }
 
-  test('после маскирования /check нашёл ПДн: 422 с видами, без значений', async () => {
+  test('после маскирования /check нашёл ПДн: второй проход закрывает остаток, не 422', async () => {
+    rig = startRig(DICT, textStream(['ок']));
+    rig.service.state.checkOnly = ['Сидоров'];
+    rig.service.state.remaskRoute = true;
+    const res = await post(rig.base, '/v1/messages',
+      { messages: [{ role: 'user', content: 'пишет Сидоров' }] });
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(rig.service.state.calls).toContain('POST /remask_batch');
+    expect(rig.upstream.hits.length).toBe(1);
+    const sent = JSON.stringify(upstreamBody(rig));
+    expect(sent).not.toContain('Сидоров');
+    expect(sent).toContain('[PERSON_9]');
+    const fixed = rig.logger.lines.find((l) => l.event === 'pii_after_mask_fixed');
+    expect(fixed?.fields.remasked_leaves).toBe(1);
+    expect(fixed?.fields.hidden_leaves).toBe(0);
+    expect(JSON.stringify(rig.logger.lines)).not.toContain('Сидоров');
+  });
+
+  test('сервис без /remask_batch (старый): лист заменяется заглушкой, не 422', async () => {
     rig = startRig(DICT, textStream(['ок']));
     rig.service.state.checkOnly = ['Сидоров'];
     const res = await post(rig.base, '/v1/messages',
       { messages: [{ role: 'user', content: 'пишет Сидоров' }] });
-    expect(res.status).toBe(422);
-    const j = (await res.json()) as any;
-    expect(j.error.type).toBe('invalid_request_error');
-    expect(j.error.message).toContain('PERSON');
-    expect(j.error.message).not.toContain('Сидоров');
-    expect(rig.upstream.hits.length).toBe(0);
-    const logged = JSON.stringify(rig.logger.lines);
-    expect(logged).not.toContain('Сидоров');
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(rig.upstream.hits.length).toBe(1);
+    const sent = JSON.stringify(upstreamBody(rig));
+    expect(sent).not.toContain('Сидоров');
+    expect(sent).toContain(PII_HIDDEN_TEXT);
+    const fixed = rig.logger.lines.find((l) => l.event === 'pii_after_mask_fixed');
+    expect(fixed?.fields.hidden_leaves).toBe(1);
+    expect(JSON.stringify(rig.logger.lines)).not.toContain('Сидоров');
   });
 });
 

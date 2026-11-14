@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { PII_HIDDEN_TEXT } from '@labops/pii';
 import {
   startRig, post, sse, textStream, collectText, type Rig, type UpstreamReply,
 } from './helpers';
@@ -111,15 +112,19 @@ describe('память восстановлений', () => {
     expect(sentAssistant(1).text).toBe('Позвонить [PERSON_1]: [PHONE_1]');
   });
 
-  test('лист из памяти с ПДн по /check: 422', async () => {
+  test('лист из памяти с ПДн по /check: скрывается заглушкой, сессия не встаёт (не 422)', async () => {
     const leaked = 'Позвонить [PERSON_1|datv] СЕКРЕТ';
     rig = startRig(DICT, textStream([leaked]));
     rig.service.state.checkOnly = ['СЕКРЕТ'];
     const first = await collectText(await post(rig.base, '/v1/messages', FIRST));
     expect(first.text).toContain('СЕКРЕТ');
     const res = await post(rig.base, '/v1/messages', history(first.text, undefined));
-    expect(res.status).toBe(422);
-    expect(rig.upstream.hits.length).toBe(1);
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(rig.upstream.hits.length).toBe(2);
+    const sent = rig.upstream.hits[1]?.body ?? '';
+    expect(sent).not.toContain('СЕКРЕТ');
+    expect(sent).toContain(PII_HIDDEN_TEXT);
   });
 
   test('слово модели, принятое /check за ФИО: лист маскируется заново, сессия не стоит', async () => {

@@ -61,8 +61,11 @@ export class PiiProxy {
         timeoutMs: config.timeoutMs,
         caseLabels: config.caseLabels,
       });
+    // logger нужен, чтобы событие pii_after_mask_fixed (дозамаскирование/скрытие листа вместо
+    // 422) попадало в журнал прокси: иначе оператор не увидит, что лист был закрыт заглушкой.
     this.masker = new RequestMasker(
-      this.service, config.imagePolicy, config.caseLabels, this.mediaProcessor());
+      this.service, config.imagePolicy, config.caseLabels, this.mediaProcessor(),
+      { logger: deps.logger });
     this.stuck = deps.stuckTracker ?? new SessionStuckTracker();
   }
 
