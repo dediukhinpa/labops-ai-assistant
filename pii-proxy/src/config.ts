@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { ImagePolicy } from '@labops/pii';
 
@@ -11,9 +13,12 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MEDIA_TIMEOUT_MS = 120_000;
 const DEFAULT_MEDIA_MASKER_URL = 'http://127.0.0.1:8320';
 const MAX_PORT = 65_535;
+/** Каталог разрешений владельца на оригинал вложения (общий с каналом мессенджера). */
+const CONSENT_DIR_PARTS = ['.config', 'labops-pii', 'consent'] as const;
 
 const OPTIONAL_WHEN_EMPTY: readonly string[] = [
   'PII_PROXY_IMAGE_POLICY', 'MEDIA_MASKER_URL', 'MEDIA_MASKER_API_TOKEN',
+  'PII_PROXY_MEDIA_CONSENT_DIR',
 ];
 
 const envSchema = z.object({
@@ -37,6 +42,12 @@ const envSchema = z.object({
   // По умолчанию выключено; включать только по решению владельца для конкретного агента.
   PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN: z.enum(['true', 'false']).default('false')
     .transform((v) => v === 'true'),
+  // Разрешение владельца на оригинал вложения с ПДн (labops-pii 1.1.4): закрашенное вложение
+  // сопровождается текстом про инструмент канала request_media_consent; при действующем
+  // разрешении (файл в каталоге, TTL 30 минут, один файл) уходит оригинал. По умолчанию выключено.
+  PII_PROXY_MEDIA_CONSENT: z.enum(['true', 'false']).default('false')
+    .transform((v) => v === 'true'),
+  PII_PROXY_MEDIA_CONSENT_DIR: z.string().min(1).optional(),
   MEDIA_MASKER_URL: z.string().url().default(DEFAULT_MEDIA_MASKER_URL),
   MEDIA_MASKER_API_TOKEN: z.string().min(1).optional(),
   MEDIA_MASKER_TIMEOUT_MS: z.coerce.number().int().positive().default(DEFAULT_MEDIA_TIMEOUT_MS),
@@ -60,6 +71,8 @@ export interface ProxyConfig {
   readonly mediaMaskerTimeoutMs: number;
   /** Режим «оригинал, если чисто» для картинок (`PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN`). */
   readonly mediaOriginalIfClean?: boolean;
+  /** Каталог разрешений владельца на оригинал вложения; задан только при включённой функции. */
+  readonly mediaConsentDir?: string;
   /** Файл, куда дописывается событие session_stuck (читает watchdog). */
   readonly alertFile?: string;
 }
@@ -98,6 +111,9 @@ export function loadConfig(env: Record<string, string | undefined>): ProxyConfig
       ? {} : { mediaMaskerToken: v.MEDIA_MASKER_API_TOKEN }),
     mediaMaskerTimeoutMs: v.MEDIA_MASKER_TIMEOUT_MS,
     ...(v.PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN ? { mediaOriginalIfClean: true } : {}),
+    ...(v.PII_PROXY_MEDIA_CONSENT
+      ? { mediaConsentDir: v.PII_PROXY_MEDIA_CONSENT_DIR ?? join(homedir(), ...CONSENT_DIR_PARTS) }
+      : {}),
     ...(v.PII_PROXY_ALERT_FILE !== undefined ? { alertFile: v.PII_PROXY_ALERT_FILE } : {}),
   };
 }
