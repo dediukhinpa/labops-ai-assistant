@@ -293,6 +293,18 @@ export const AppConfigSchema = z.object({
     allowed_user_ids: z.array(z.number().int().positive()).optional(),
     max_preview_chars: z.number().int().positive().default(1000),
   }).default({}),
+  // Разрешение владельца на отправку ОРИГИНАЛА вложения с ПДн модели (прокси псевдонимизации
+  // по умолчанию отдаёт закрашенную версию). Default OFF: инструмента request_media_consent
+  // нет, коды не перехватываются, поведение прежнее.
+  //
+  // approver_user_ids: кто может подтвердить своим кодом. Не задано -- operator_user_ids,
+  // иначе allowed_user_ids. Проверяется отправитель (from.id), а не чат.
+  // dir: общий с прокси каталог разрешений (по умолчанию ~/.config/labops-pii/consent).
+  media_consent: z.object({
+    enabled: z.boolean().default(false),
+    approver_user_ids: z.array(z.number().int().positive()).min(1).optional(),
+    dir: z.string().min(1).optional(),
+  }).optional(),
 })
 export type AppConfig = z.infer<typeof AppConfigSchema>
 
@@ -399,6 +411,13 @@ export const RuntimeEnvSchema = z.object({
   TELEGRAM_ASK_USER_QUESTION_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
   TELEGRAM_ASK_USER_QUESTION_ALLOWED_USER_IDS: z.string().optional(), // CSV
   TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS: z.coerce.number().int().positive().optional(),
+  // Разрешение владельца на оригинал вложения (см. media_consent в AppConfigSchema).
+  TELEGRAM_MEDIA_CONSENT_ENABLED: z
+    .string()
+    .transform((v) => /^(1|true|yes|on)$/i.test(v))
+    .optional(),
+  TELEGRAM_MEDIA_CONSENT_DIR: z.string().optional(),
+  TELEGRAM_MEDIA_CONSENT_USER_IDS: z.string().optional(), // CSV
 })
 export type RuntimeEnv = z.infer<typeof RuntimeEnvSchema>
 
@@ -584,6 +603,20 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     askUserQuestion.max_preview_chars = parsedEnv.TELEGRAM_ASK_USER_QUESTION_MAX_PREVIEW_CHARS
   }
   if (Object.keys(askUserQuestion).length > 0) merged.ask_user_question = askUserQuestion
+
+  const mediaConsent = (merged.media_consent && typeof merged.media_consent === 'object'
+    ? merged.media_consent
+    : {}) as Record<string, unknown>
+  if (parsedEnv.TELEGRAM_MEDIA_CONSENT_ENABLED !== undefined) {
+    mediaConsent.enabled = parsedEnv.TELEGRAM_MEDIA_CONSENT_ENABLED
+  }
+  if (parsedEnv.TELEGRAM_MEDIA_CONSENT_DIR !== undefined && parsedEnv.TELEGRAM_MEDIA_CONSENT_DIR !== '') {
+    mediaConsent.dir = parsedEnv.TELEGRAM_MEDIA_CONSENT_DIR
+  }
+  if (parsedEnv.TELEGRAM_MEDIA_CONSENT_USER_IDS !== undefined) {
+    mediaConsent.approver_user_ids = parseCsvUserIds(parsedEnv.TELEGRAM_MEDIA_CONSENT_USER_IDS)
+  }
+  if (Object.keys(mediaConsent).length > 0) merged.media_consent = mediaConsent
 
   try {
     return AppConfigSchema.parse(merged)

@@ -61,6 +61,7 @@ import {
   type PermissionRelayHooks,
 } from '../channel/permissions.js'
 import type { AskUserQuestionUi } from './ask-user-question.js'
+import type { MediaConsent } from '../channel/media-consent.js'
 import { AlbumBuffer, type Album } from './album-buffer.js'
 import {
   compositeAlbumKey,
@@ -78,7 +79,7 @@ import { ackTaken } from './ack-taken.js'
 // re-submits the ORIGINAL text via the agent's tmux session when that happens.
 // Off unless we can resolve our own session (AGENT_ID) and not opted out.
 // Never awaited and never throws — delivery must not depend on it.
-function scheduleEnsureSubmit(content: string, log: Logger): void {
+export function scheduleEnsureSubmit(content: string, log: Logger): void {
   // Метку пишем ДО любых ранних выходов: watchdog решает по ней, можно ли
   // досылать нарисованное в поле, и это решение не должно зависеть от того,
   // включена ли досылка на стороне плагина.
@@ -198,6 +199,9 @@ export interface HandlerDeps {
   // user_id уходят на эндпоинт продукта, а не в агентскую логику. Не задан --
   // ветка выключена и посторонние молча дропаются гейтом, как раньше.
   clientRelay?: ClientRelay
+  // Разрешение владельца на оригинал вложения: код-ответ владельца перехватывается до
+  // любой другой логики и агенту не доставляется. Не задан -- функция выключена.
+  mediaConsent?: MediaConsent
 }
 
 // Личка постороннего человека: не владелец из config и не пользователь из policy.
@@ -1130,6 +1134,17 @@ export async function sendAlbumNotification(
 
 export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promise<void> {
   const text = ctx.message?.text ?? ''
+
+  // Код подтверждения оригинала вложения: проверяется ПЕРВЫМ и по отправителю (from.id, в
+  // группах тоже). Потреблённый код агенту не доставляется; чужой код не даёт разрешения.
+  if (deps.mediaConsent !== undefined && ctx.chat !== undefined) {
+    const consumed = await deps.mediaConsent.tryHandleText({
+      fromUserId: ctx.from?.id,
+      chatId: String(ctx.chat.id),
+      text,
+    })
+    if (consumed) return
+  }
 
   // Клиент поддержки в личке: до гейта, OOB и любой агентской логики.
   if (deps.clientRelay !== undefined && ctx.chat !== undefined && ctx.from !== undefined
