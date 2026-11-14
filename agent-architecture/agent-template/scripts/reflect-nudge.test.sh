@@ -36,6 +36,11 @@ assert a["payload"]["reason"] == "checkpoint", a
 '
 ok $? "dry-run JSON shape"
 
+echo "== побудка просит тишину =="
+# Без этой фразы воркер роя превращал консолидацию в отчёт владельцу в чат.
+printf '%s' "$OUT" | grep -q 'do NOT message the owner'
+ok $? "тело побудки запрещает писать владельцу"
+
 echo "== the old malformed shape is gone =="
 # Комментарии не считаем: там старое имя упомянуто как объяснение бага.
 if grep -vE '^[[:space:]]*#' "$NUDGE" | grep -q 'agent_router\.notify'; then
