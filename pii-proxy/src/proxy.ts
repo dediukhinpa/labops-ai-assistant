@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { ProxyConfig } from './config';
 import {
-  HEALTH_ROUTE, MAX_REQUEST_BODY_BYTES, SERVER_IDLE_TIMEOUT_S, SESSION_HEADER,
+  HEALTH_ROUTE, MAX_REQUEST_BODY_BYTES, QUOTA_PROBE_MAX_TOKENS, QUOTA_PROBE_TEXT,
+  SERVER_IDLE_TIMEOUT_S, SESSION_HEADER, UPSTREAM_ERROR_BODY_MAX_BYTES, UPSTREAM_LOG_HEADER,
 } from './proxy-constants';
 import {
   HttpMediaMasker, HttpPseudonymizer, MediaMaskerError, MediaProcessor, PseudonymizerError,
@@ -149,21 +150,30 @@ export class PiiProxy {
     let outBody = body;
     let stats: LogFields = {};
     let remember: ((restored: string, original: string) => void) | undefined;
+    let probe = false;
     if (masked && body !== undefined) {
       const parsed = parseJsonBody(body);
-      ctx.used = true;
-      const s = await this.masker.mask(parsed, ctx.threadId);
-      stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits,
-        remembered_leaves: s.rememberedLeaves, forgotten_leaves: s.forgottenLeaves,
-        masked_attachments: s.maskedAttachments,
-        ...(Object.keys(s.blockedReasons).length > 0
-          ? { blocked_attachments: s.blockedReasons } : {}) };
-      // Эфемерный тред живёт один запрос: его историю никто не вернёт, помнить нечего.
-      if (!ctx.ephemeral) {
-        remember = (restored, original): void =>
-          this.masker.remember(ctx.threadId, s.bootId, restored, original);
+      if (isQuotaProbe(parsed)) {
+        // Проба квоты: константный текст, ПДн в нём нет. Маскер дописал бы в неё system-вставку,
+        // и upstream отвечал на такую пробу 429 (в норме claude шлёт её без system). Уходит
+        // байт-в-байт как пришла.
+        probe = true;
+        stats = { masked_leaves: 0 };
+      } else {
+        ctx.used = true;
+        const s = await this.masker.mask(parsed, ctx.threadId);
+        stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits,
+          remembered_leaves: s.rememberedLeaves, forgotten_leaves: s.forgottenLeaves,
+          masked_attachments: s.maskedAttachments,
+          ...(Object.keys(s.blockedReasons).length > 0
+            ? { blocked_attachments: s.blockedReasons } : {}) };
+        // Эфемерный тред живёт один запрос: его историю никто не вернёт, помнить нечего.
+        if (!ctx.ephemeral) {
+          remember = (restored, original): void =>
+            this.masker.remember(ctx.threadId, s.bootId, restored, original);
+        }
+        outBody = JSON.stringify(parsed);
       }
-      outBody = JSON.stringify(parsed);
     } else if (body !== undefined && body !== '') {
       await this.checkRaw(body);
     }
@@ -173,6 +183,9 @@ export class PiiProxy {
     const headers = new Headers(upstream.headers);
     DROP_RESPONSE_HEADERS.forEach((h) => headers.delete(h));
     const ok = upstream.status >= 200 && upstream.status < 300;
+    // Отказ upstream проходит клиенту как есть; в журнал - только то, чем его можно опознать
+    // (тип ошибки, request-id, лимиты), без тела и текстов запроса.
+    if (!ok) await this.logUpstreamError(upstream, ctx, probe);
     const finish = (extra: LogFields = {}): void =>
       this.deps.logger.log('request', {
         route: ctx.route,
@@ -198,6 +211,36 @@ export class PiiProxy {
     finish();
     return { response: new Response(upstream.body, { status: upstream.status, headers }),
       deferredCleanup: false };
+  }
+
+  /** Событие `upstream_error`: статус, error.type, request-id и заголовки лимитов. */
+  private async logUpstreamError(
+    upstream: Response,
+    ctx: RequestContext,
+    probe: boolean,
+  ): Promise<void> {
+    const headers: Record<string, string> = {};
+    upstream.headers.forEach((value, name) => {
+      if (UPSTREAM_LOG_HEADER.test(name)) headers[name] = value;
+    });
+    let errorType: string | undefined;
+    try {
+      const raw = (await upstream.clone().text()).slice(0, UPSTREAM_ERROR_BODY_MAX_BYTES);
+      const parsed: unknown = JSON.parse(raw);
+      const error = isObject(parsed) ? parsed.error : undefined;
+      if (isObject(error) && typeof error.type === 'string') errorType = error.type;
+    } catch {
+      // тело не JSON или оборвано: тип ошибки в журнал не попадёт
+    }
+    const fields: LogFields & UpstreamErrorFields = {
+      route: ctx.route,
+      status: upstream.status,
+      session: ctx.session,
+      probe,
+      upstream_headers: headers,
+      ...(errorType === undefined ? {} : { upstream_error_type: errorType }),
+    };
+    this.deps.logger.log('upstream_error', fields);
   }
 
   private sseBody(
@@ -327,6 +370,28 @@ export class PiiProxy {
 }
 
 class BadBodyError extends Error {}
+
+/** Поля события `upstream_error` сверх общих полей журнала. */
+interface UpstreamErrorFields {
+  readonly probe?: boolean;
+  readonly upstream_error_type?: string;
+  readonly upstream_headers?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Служебная проба квоты claude: один user-текст «quota», max_tokens 1, без system, tools и
+ * прочих полей, меняющих смысл запроса.
+ */
+export function isQuotaProbe(body: JsonObject): boolean {
+  if (body.max_tokens !== QUOTA_PROBE_MAX_TOKENS) return false;
+  if ('system' in body || 'tools' in body || 'tool_choice' in body || 'thinking' in body) {
+    return false;
+  }
+  const messages = body.messages;
+  if (!Array.isArray(messages) || messages.length !== 1) return false;
+  const only: unknown = messages[0];
+  return isObject(only) && only.role === 'user' && only.content === QUOTA_PROBE_TEXT;
+}
 
 function parseJsonBody(body: string): JsonObject {
   let v: unknown;

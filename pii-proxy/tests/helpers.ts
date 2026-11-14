@@ -185,6 +185,8 @@ export interface UpstreamHit {
 export interface UpstreamReply {
   readonly status?: number;
   readonly contentType: string;
+  /** Дополнительные заголовки ответа (request-id, retry-after и т.п.). */
+  readonly headers?: Record<string, string>;
   /** Куски тела; между ними небольшая пауза. */
   readonly chunks: string[];
 }
@@ -226,7 +228,7 @@ export function startFakeUpstream(reply: UpstreamReply): FakeUpstream {
         },
       });
       return new Response(stream, { status: r.status ?? 200,
-        headers: { 'content-type': r.contentType } });
+        headers: { 'content-type': r.contentType, ...r.headers } });
     },
   });
   return Object.assign(self, {
