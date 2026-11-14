@@ -368,3 +368,14 @@ export const AskUserQuestionAnswerSchema = z.object({
     .optional(),
 })
 export type AskUserQuestionAnswer = z.infer<typeof AskUserQuestionAnswerSchema>
+
+// Tool args - request_media_consent. media_id - короткий id из текста прокси рядом с закрашенным
+// вложением (буква + 11 hex). kinds и reason информационные: типы ПДн канал берёт из записи
+// прокси, а не от агента, чтобы агент не мог исказить то, что увидит владелец.
+export const MEDIA_ID_RE = /^m[0-9a-f]{11}$/
+export const RequestMediaConsentArgsSchema = z.object({
+  media_id: z.string().regex(MEDIA_ID_RE, 'media_id: буква m и 11 hex-символов'),
+  kinds: z.array(z.string().max(32)).max(16).optional(),
+  reason: z.string().max(500).optional(),
+})
+export type RequestMediaConsentArgs = z.infer<typeof RequestMediaConsentArgsSchema>

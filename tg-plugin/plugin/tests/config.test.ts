@@ -464,3 +464,27 @@ describe('loadConfig', () => {
     expect(paths.logs.ask_user_question).toBe(join(stateDir, 'logs', 'ask-user-question.jsonl'))
   })
 })
+
+describe('loadConfig: media_consent (разрешение на оригинал вложения)', () => {
+  test('по умолчанию выключено: блока нет', () => {
+    expect(loadConfig(env()).media_consent).toBeUndefined()
+  })
+
+  test('из config.json в каталоге состояния', () => {
+    writeFileSync(join(stateDir, 'config.json'),
+      JSON.stringify({ media_consent: { enabled: true, approver_user_ids: [42] } }))
+    const cfg = loadConfig(env())
+    expect(cfg.media_consent?.enabled).toBe(true)
+    expect(cfg.media_consent?.approver_user_ids).toEqual([42])
+  })
+
+  test('переменные окружения перекрывают config.json', () => {
+    writeFileSync(join(stateDir, 'config.json'), JSON.stringify({ media_consent: { enabled: false } }))
+    const cfg = loadConfig(env({
+      TELEGRAM_MEDIA_CONSENT_ENABLED: 'true',
+      TELEGRAM_MEDIA_CONSENT_USER_IDS: '7, 8',
+      TELEGRAM_MEDIA_CONSENT_DIR: '/tmp/consent-x',
+    }))
+    expect(cfg.media_consent).toEqual({ enabled: true, approver_user_ids: [7, 8], dir: '/tmp/consent-x' })
+  })
+})

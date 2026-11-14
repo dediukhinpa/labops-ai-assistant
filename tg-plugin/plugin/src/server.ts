@@ -77,10 +77,13 @@ import {
   handleInboundVideo,
   handleInboundVideoNote,
   handleInboundVoice,
+  scheduleEnsureSubmit,
   sendAlbumNotification,
   type AlbumEntry,
   type HandlerDeps,
 } from './telegram/handlers.js'
+import { MediaConsent } from './channel/media-consent.js'
+import { sendChannelNotification } from './channel/notify.js'
 import { createClientRelayFromEnv } from './telegram/client-relay.js'
 import { createTimedTelegramFetch } from './telegram/timed-fetch.js'
 import { syncCommandMenu } from './telegram/command-menu.js'
@@ -577,6 +580,22 @@ if (config.memory.enabled === true && config.memory.workspace_path !== undefined
   })
 }
 
+// Разрешение владельца на оригинал вложения с ПДн (opt-in: media_consent.enabled). Имя агента
+// должно совпадать с PII_PROXY_AGENT_ID прокси: прокси принимает разрешение только своего агента.
+const mediaConsent: MediaConsent | undefined = config.media_consent?.enabled === true
+  ? new MediaConsent({
+    config,
+    telegramApi,
+    log,
+    agentId: process.env.AGENT_ID ?? config.memory.agent_label ?? 'agent',
+    notifyAgent: async (content, chatId) => {
+      const event = { content, meta: { source: 'media_consent', chat_id: chatId, ts: new Date().toISOString() } }
+      if (await sendChannelNotification(mcp, event, log)) scheduleEnsureSubmit(content, log)
+    },
+  })
+  : undefined
+if (mediaConsent !== undefined) log.info('media consent enabled')
+
 const toolDeps: ToolDeps = {
   config,
   statePaths,
@@ -587,10 +606,11 @@ const toolDeps: ToolDeps = {
   // multichat policy when present. Falls back to legacy config-only
   // behaviour when multichat is disabled or policy load failed.
   ...(multichatPolicy !== undefined ? { policy: multichatPolicy } : {}),
+  ...(mediaConsent !== undefined ? { mediaConsent } : {}),
 }
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: listTools(localApi),
+  tools: listTools(localApi, { mediaConsent: mediaConsent !== undefined }),
 }))
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req): Promise<ServerResult> => {
@@ -857,6 +877,7 @@ const handlerDeps: HandlerDeps = {
   // inside the relay itself (callbacks no-op when no pending request).
   askUserQuestionUi,
   ...(clientRelay !== undefined ? { clientRelay } : {}),
+  ...(mediaConsent !== undefined ? { mediaConsent } : {}),
 }
 
 bot.on('message:text', ctx => handleInboundText(ctx, handlerDeps))

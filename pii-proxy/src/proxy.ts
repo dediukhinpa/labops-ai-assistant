@@ -5,7 +5,7 @@ import {
   SERVER_IDLE_TIMEOUT_S, SESSION_HEADER, UPSTREAM_ERROR_BODY_MAX_BYTES, UPSTREAM_LOG_HEADER,
 } from './proxy-constants';
 import {
-  HttpMediaMasker, HttpPseudonymizer, MediaMaskerError, MediaProcessor, PseudonymizerError,
+  FileConsentGate, HttpMediaMasker, HttpPseudonymizer, MediaMaskerError, MediaProcessor, PseudonymizerError,
   RequestMasker, RequestRejectedError, Restorer, STATUS_BAD_GATEWAY, STATUS_BAD_REQUEST,
   STATUS_PII_FOUND, STATUS_UNAVAILABLE, STATUS_UNSUPPORTED_ENCODING, checkWindows, errorResponse,
   formatSse, isObject, parseSse, restoreMessageJson, restoreSse, sessionFingerprint,
@@ -74,13 +74,19 @@ export class PiiProxy {
   private mediaProcessor(): MediaProcessor | undefined {
     const {
       imagePolicy, mediaMaskerUrl, mediaMaskerToken, mediaMaskerTimeoutMs, mediaOriginalIfClean,
+      mediaConsentDir, agentId,
     } = this.config;
     if (imagePolicy !== 'mask' || mediaMaskerToken === undefined) return undefined;
     return new MediaProcessor(new HttpMediaMasker({
       baseUrl: mediaMaskerUrl, token: mediaMaskerToken, timeoutMs: mediaMaskerTimeoutMs,
       // Только при явном включении: иначе запрос к media-masker прежний
       ...(mediaOriginalIfClean === true ? { originalIfClean: true } : {}),
-    }));
+    }), {
+      logger: this.deps.logger,
+      // Разрешение владельца на оригинал: только при включённой функции, только для своего агента
+      ...(mediaConsentDir !== undefined
+        ? { consent: new FileConsentGate({ dir: mediaConsentDir, agentId }) } : {}),
+    });
   }
 
   /** Запустить HTTP-сервер. */
@@ -169,6 +175,7 @@ export class PiiProxy {
         stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits,
           remembered_leaves: s.rememberedLeaves, forgotten_leaves: s.forgottenLeaves,
           masked_attachments: s.maskedAttachments,
+          ...(s.consentOriginals > 0 ? { consent_originals: s.consentOriginals } : {}),
           ...(Object.keys(s.blockedReasons).length > 0
             ? { blocked_attachments: s.blockedReasons } : {}) };
         // Эфемерный тред живёт один запрос: его историю никто не вернёт, помнить нечего.

@@ -39,6 +39,7 @@ import {
   isPhotoExtension,
 } from '../security/paths.js'
 import { downloadViaLocalApi, type LocalApiConfig } from '../telegram/local-api.js'
+import type { MediaConsent } from './media-consent.js'
 
 /** Права на каталог и файлы скачанных вложений: только владелец. */
 export const ATTACHMENT_DIR_MODE = 0o700
@@ -363,9 +364,35 @@ function withLocalLimits(tool: ToolDefinition): ToolDefinition {
   return tool
 }
 
-export function listTools(localApi?: LocalApiConfig): ToolDefinition[] {
+// Инструмент запроса разрешения владельца на оригинал вложения. Попадает в список только при
+// media_consent.enabled: у остальных установок набор инструментов прежний.
+const MEDIA_CONSENT_TOOL: ToolDefinition = {
+  name: 'request_media_consent',
+  description:
+    'Ask the owner for permission to send the ORIGINAL of an attachment that the PII proxy showed redacted. '
+    + 'Use only when the redacted version is not enough for the task. Pass media_id from the proxy note next to '
+    + 'the attachment. The owner receives a one-time code and approves by replying with it; you never see the code. '
+    + 'After the confirmation message arrives, re-read the file.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      media_id: { type: 'string', description: 'Attachment id from the proxy note (letter m + 11 hex chars)' },
+      kinds: { type: 'array', items: { type: 'string' }, description: 'Optional: PII types from the note (informational)' },
+      reason: { type: 'string', description: 'Optional short reason shown to the owner (max 200 chars)' },
+    },
+    required: ['media_id'],
+  },
+}
+
+export interface ListToolsOptions {
+  /** Включён media_consent: добавить request_media_consent. */
+  mediaConsent?: boolean
+}
+
+export function listTools(localApi?: LocalApiConfig, options: ListToolsOptions = {}): ToolDefinition[] {
   // Return a shallow copy so callers cannot mutate our canonical list.
-  const tools = TOOL_DEFINITIONS.map(t => ({ ...t }))
+  const base = TOOL_DEFINITIONS.map(t => ({ ...t }))
+  const tools = options.mediaConsent === true ? [...base, { ...MEDIA_CONSENT_TOOL }] : base
   return localApi === undefined ? tools : tools.map(withLocalLimits)
 }
 
@@ -382,6 +409,8 @@ export interface ToolDeps {
   // H4 fix (2026-05-23): when multichat is enabled, the policy is the
   // authoritative outbound allowlist. Omitted in legacy DM-only mode.
   policy?: MultichatPolicy
+  // Разрешения владельца на оригинал вложения; без него инструмента нет.
+  mediaConsent?: MediaConsent
 }
 
 function toolError(name: string, message: string): CallToolResult {
@@ -598,6 +627,16 @@ export async function callTool(req: CallToolRequest, deps: ToolDeps): Promise<Ca
               : { kind: 'thinking' }
         await statusManager.updateByChatId(args.chat_id, state)
         return { content: [{ type: 'text', text: 'status updated' }] }
+      }
+
+      case 'request_media_consent': {
+        // Инструмент существует только при включённой функции; иначе как неизвестный
+        if (deps.mediaConsent === undefined) {
+          return { content: [{ type: 'text', text: `unknown tool: ${name}` }], isError: true }
+        }
+        const out = await deps.mediaConsent.request(rawArgs)
+        if (!out.ok) return toolError(name, out.message)
+        return { content: [{ type: 'text', text: out.message }] }
       }
 
       default:

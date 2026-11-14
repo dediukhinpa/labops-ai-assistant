@@ -123,6 +123,8 @@ export interface FakeMedia {
     originalIfClean: (boolean | undefined)[];
     /** Что «распознано» на каждой картинке и странице скана (как поле recognized сервиса). */
     recognized?: { text: string; codes: { kind: string; text: string }[]; hidden_text: boolean };
+    /** Счётчики сервиса (stats): типы находок, лица, коды. Нет - поля stats в ответе нет. */
+    stats?: { pii_kinds: string[]; faces?: number; codes?: number };
   };
   stop(): Promise<void>;
 }
@@ -143,6 +145,7 @@ export function startFakeMedia(): FakeMedia {
   const state: FakeMedia['state'] = { mode: 'ok', calls: [], tokenSeen: [], originalIfClean: [] };
   const withRecognized = (): object => state.recognized === undefined ? {}
     : { recognized: state.recognized };
+  const withStats = (): object => state.stats === undefined ? {} : { stats: state.stats };
   const server = Bun.serve({
     port: 0,
     hostname: '127.0.0.1',
@@ -162,7 +165,7 @@ export function startFakeMedia(): FakeMedia {
       if (path === '/mask_image') {
         state.originalIfClean.push(body.original_if_clean);
         return Response.json({ media_type: body.media_type, data: fakeMaskedData(body.data),
-          ...withRecognized() });
+          ...withRecognized(), ...withStats() });
       }
       const spec = Buffer.from(body.data, 'base64').toString('utf8');
       const pages = spec.startsWith('TEXT:')
@@ -170,7 +173,8 @@ export function startFakeMedia(): FakeMedia {
         : Array.from({ length: Number(spec.slice(5)) }, (_v, index) => ({ index, text: null,
           image: { media_type: 'image/jpeg', data: fakeMaskedData(`page${index}`) },
           ...withRecognized() }));
-      return Response.json({ kind: spec.startsWith('TEXT:') ? 'text' : 'images', pages });
+      return Response.json({ kind: spec.startsWith('TEXT:') ? 'text' : 'images', pages,
+        ...withStats() });
     },
   });
   return { url: `http://127.0.0.1:${server.port}`, state, stop: async () => {
