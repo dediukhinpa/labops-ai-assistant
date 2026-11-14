@@ -32,6 +32,11 @@ const envSchema = z.object({
   // Файл событий session_stuck для watchdog (JSON-строки без ПДн). Пусто - не писать.
   PII_PROXY_ALERT_FILE: z.string().min(1).optional(),
   PII_PROXY_CASE_LABELS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
+  // Режим «оригинал, если чисто» для картинок этого агента (media-masker один на всех, режим
+  // задаёт запрос прокси): без проверки лиц и QR, закрашиваются только находки детектора ПДн.
+  // По умолчанию выключено; включать только по решению владельца для конкретного агента.
+  PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN: z.enum(['true', 'false']).default('false')
+    .transform((v) => v === 'true'),
   MEDIA_MASKER_URL: z.string().url().default(DEFAULT_MEDIA_MASKER_URL),
   MEDIA_MASKER_API_TOKEN: z.string().min(1).optional(),
   MEDIA_MASKER_TIMEOUT_MS: z.coerce.number().int().positive().default(DEFAULT_MEDIA_TIMEOUT_MS),
@@ -53,6 +58,8 @@ export interface ProxyConfig {
   readonly mediaMaskerUrl: string;
   readonly mediaMaskerToken?: string;
   readonly mediaMaskerTimeoutMs: number;
+  /** Режим «оригинал, если чисто» для картинок (`PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN`). */
+  readonly mediaOriginalIfClean?: boolean;
   /** Файл, куда дописывается событие session_stuck (читает watchdog). */
   readonly alertFile?: string;
 }
@@ -90,6 +97,7 @@ export function loadConfig(env: Record<string, string | undefined>): ProxyConfig
     ...(v.MEDIA_MASKER_API_TOKEN === undefined
       ? {} : { mediaMaskerToken: v.MEDIA_MASKER_API_TOKEN }),
     mediaMaskerTimeoutMs: v.MEDIA_MASKER_TIMEOUT_MS,
+    ...(v.PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN ? { mediaOriginalIfClean: true } : {}),
     ...(v.PII_PROXY_ALERT_FILE !== undefined ? { alertFile: v.PII_PROXY_ALERT_FILE } : {}),
   };
 }

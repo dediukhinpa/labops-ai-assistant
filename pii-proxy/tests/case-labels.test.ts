@@ -76,3 +76,17 @@ describe('вставка в system', () => {
     expect(SYSTEM_INSERT_TEXT).toContain('падеж, в котором имя стояло в исходном тексте');
   });
 });
+
+describe('PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN: конфиг', () => {
+  test('по умолчанию выключено: поля в конфиге нет', () => {
+    expect(loadConfig(BASE_ENV).mediaOriginalIfClean).toBeUndefined();
+    expect(loadConfig({ ...BASE_ENV, PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN: 'false' })
+      .mediaOriginalIfClean).toBeUndefined();
+  });
+  test('true включает режим, мусор - ошибка конфигурации', () => {
+    expect(loadConfig({ ...BASE_ENV, PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN: 'true' })
+      .mediaOriginalIfClean).toBe(true);
+    expect(() => loadConfig({ ...BASE_ENV, PII_PROXY_MEDIA_ORIGINAL_IF_CLEAN: 'maybe' }))
+      .toThrow(/ORIGINAL_IF_CLEAN/);
+  });
+});

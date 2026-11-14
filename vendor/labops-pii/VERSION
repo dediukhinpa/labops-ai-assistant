@@ -1,14 +1,14 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: v1.1.2
-tag: v1.1.2
-commit: f03816b9e752ece80214868c57e4f64203f8d983
+ref: v1.1.3
+tag: v1.1.3
+commit: 95736ef40caff26a87bf9a0e1c2509850b142503
 parts: media,service,ts
-vendored_at: 2026-11-14T12:10:33Z
+vendored_at: 2026-11-14T18:24:11Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
-  d1261f3255231780c1c3024c852c0504771dcb87d67bfdaca3839c8b327329f9  labops_pii/__init__.py
+  245ea6670798a0c2f3803b3ce9a9c31e4d5c8c2b8c95088e09a3315520cf0e62  labops_pii/__init__.py
   356ad6a8aee34e5cbcb7e75d1ff954d7391fe8a511484ad71877fde0389a514b  labops_pii/__main__.py
   a6ccef9fc2ca1aa75117541f832702dd9c3d4ebecf2186d0fdef5fd03c8e8e08  labops_pii/allowlist.py
   0e6744aa521f8d2a65e748dabe80c7919da988b481c4eb5c781bac817bd36a27  labops_pii/api.py
@@ -26,12 +26,12 @@ files:
   eaeb017b9eef67f6628e165ea8dfe486e3b54037dffbef60f7a25a8611dfbb22  labops_pii/media/gate/normalize.py
   0bf3056e2a852ee1ef34ccd78554f8e636e4dc3e08882725d93d7ba7c2196003  labops_pii/media/mask/__init__.py
   a3b38c4fc7effc00e8dc3eabef099a4f502087e7ac582853ed7b79962e235d7f  labops_pii/media/mask/__main__.py
-  7a146b639a5a347fb8a423aa2471ec31cf396fe57f11ee376385a2beba597891  labops_pii/media/mask/api.py
+  568c8fee3c67d953c73a8184feedc39e3b44b69be65b8de6154cbca2df5b19bc  labops_pii/media/mask/api.py
   c40d65518719f40faaeb5ad6c776096219ef77a99684b3c9ea279c65f4226e05  labops_pii/media/mask/codes.py
-  34a243a0c40b2e8617800f99c6eed7542892d38a18ffb0894a19d2e17ea8cc7b  labops_pii/media/mask/config.py
+  b4e858cb7741e952cfaf9491ec368332ae86d78ed0bdb65468545a1808046098  labops_pii/media/mask/config.py
   1ebb74afa00c68a7862d01755b7f2526a51d78df1f580353fec9f5117755045a  labops_pii/media/mask/faces.py
-  fc7068bbac4d0a0f5105ede5c4c69147813794564771409ae9a45e270376f372  labops_pii/media/mask/imaging.py
-  7a6daa70f0952cca1291f7fce8d2a96935a2411f205db11844d23093e32c63ef  labops_pii/media/mask/jsonlog.py
+  a64734c6822beede092b1ddb18f3d8126ef191712664e69f0f12170c92b1bce1  labops_pii/media/mask/imaging.py
+  9b925b7ab0bd0cc4db7c5891acce1c7a3531b3a02a6e84871497434a3b156527  labops_pii/media/mask/jsonlog.py
   0a18998366bbb2caca3bf17fb394074c79e841775a472d0b5656087dc3cf356c  labops_pii/media/mask/ocr.py
   6195c61dbb35a7a3a3d46d4373daeae8c5267804fc88d1ec2d2e446abfc2da9c  labops_pii/media/mask/pdfdoc.py
   c6eab763d5cbf8291f8fe791f8b386ce142035b85c0c2c671d5cd4569117c9a9  labops_pii/media/mask/unreadable.py
@@ -44,7 +44,7 @@ files:
   06256424fe301305c468d43f2e56dbc9fbf99aed9d6dc06e4d521201d6437b14  labops_pii/tech_tokens.py
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  ts/LICENSE
   a99699e44cc5dc561973aca532fb059c3345cb0c4a6c3eed9ed2a845000e97a3  ts/bun.lock
-  c6bde0eb530b4b75390b9e1150b02481eaf0fa99d9dde2491b57856e1b01634d  ts/package.json
+  55058ed98a8e551dafe036ab508961616c0efb1432af7afbc828182be3aebd44  ts/package.json
   fbea7011789133ccab651c863012dbda260f21ef9725ba50a0a9fccecf5ab197  ts/src/constants.ts
   0528858775883fd26b3fe462046d928fedde8273fc2df9dd96acaeb4e89b0b9c  ts/src/detector/address-patterns.ts
   f53c2a4725568adf851c514501d44a753a4833eb78372d0124f9bdcfdf532b08  ts/src/detector/addresses.ts
@@ -65,7 +65,7 @@ files:
   1bb6b2d9e385f96d3434fe226ad98d647b8e8582fa7dfbd68e374d1e461e6615  ts/src/log.ts
   135ac727107806ea94b33f4d292593e00043d749c2970fb7b7d127704f41cc4b  ts/src/mask-cache.ts
   8eba33dd6ca1fca1fe8257535494c362406311aec495ca46bb3d7a552830d28c  ts/src/masker.ts
-  1c68c9ef9b0b3fadd490b1fa8cdf27e75f8aa4d7c9f2904df466a09a3c2bb292  ts/src/media-client.ts
+  cce3edee730b6a5fe624cdfee44f07913a62d282961f53bc7fa847bdb34601a4  ts/src/media-client.ts
   6d5e44b4d4f00f674f999c3e215150d897093e5542e7627b3b4338539f37f340  ts/src/media-text.ts
   2aa235004b59312cc345d593222859258710f5f09cdb271a84817312861dc315  ts/src/media.ts
   ebe130cba35cdcbd5d65e89a6f126f3a168d3c4d33031dae2547deb3f46b43e5  ts/src/pseudonymizer-client.ts

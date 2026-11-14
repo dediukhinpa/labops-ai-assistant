@@ -119,6 +119,8 @@ export interface FakeMedia {
     mode: FakeMediaMode;
     calls: string[];
     tokenSeen: string[];
+    /** Поле original_if_clean каждого запроса /mask_image (undefined - поля не было). */
+    originalIfClean: (boolean | undefined)[];
     /** Что «распознано» на каждой картинке и странице скана (как поле recognized сервиса). */
     recognized?: { text: string; codes: { kind: string; text: string }[]; hidden_text: boolean };
   };
@@ -138,7 +140,7 @@ export function fakeMaskedData(data: string): string {
  * с текстовым слоем, `SCAN:n` - n страниц-растров.
  */
 export function startFakeMedia(): FakeMedia {
-  const state: FakeMedia['state'] = { mode: 'ok', calls: [], tokenSeen: [] };
+  const state: FakeMedia['state'] = { mode: 'ok', calls: [], tokenSeen: [], originalIfClean: [] };
   const withRecognized = (): object => state.recognized === undefined ? {}
     : { recognized: state.recognized };
   const server = Bun.serve({
@@ -154,8 +156,11 @@ export function startFakeMedia(): FakeMedia {
         { status: 422 });
       if (state.mode === 'refuse413') return Response.json({ error: 'pdf_too_many_pages' },
         { status: 413 });
-      const body = (await req.json()) as { media_type: string; data: string };
+      const body = (await req.json()) as {
+        media_type: string; data: string; original_if_clean?: boolean;
+      };
       if (path === '/mask_image') {
+        state.originalIfClean.push(body.original_if_clean);
         return Response.json({ media_type: body.media_type, data: fakeMaskedData(body.data),
           ...withRecognized() });
       }
