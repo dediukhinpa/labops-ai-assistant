@@ -34,6 +34,18 @@ describe('политика mask', () => {
     expect(rig.media.state.tokenSeen[0]).toBe(`Bearer ${MEDIA_TOKEN}`);
   });
 
+  test('режим «оригинал, если чисто» по умолчанию выключен: поля в запросе нет', async () => {
+    rig = maskRig();
+    await post(rig.base, '/v1/messages', user([image()]));
+    expect(rig.media.state.originalIfClean).toEqual([undefined]);
+  });
+
+  test('mediaOriginalIfClean: поле original_if_clean уходит в media-masker', async () => {
+    rig = maskRig({ mediaOriginalIfClean: true });
+    await post(rig.base, '/v1/messages', user([image()]));
+    expect(rig.media.state.originalIfClean).toEqual([true]);
+  });
+
   test('image в tool_result тоже маскируется', async () => {
     rig = maskRig();
     await post(rig.base, '/v1/messages', user([{ type: 'tool_result', tool_use_id: 'x',

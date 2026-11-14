@@ -72,10 +72,14 @@ export class PiiProxy {
 
   /** Клиент media-masker с кэшем: только при политике mask (конфиг гарантирует токен). */
   private mediaProcessor(): MediaProcessor | undefined {
-    const { imagePolicy, mediaMaskerUrl, mediaMaskerToken, mediaMaskerTimeoutMs } = this.config;
+    const {
+      imagePolicy, mediaMaskerUrl, mediaMaskerToken, mediaMaskerTimeoutMs, mediaOriginalIfClean,
+    } = this.config;
     if (imagePolicy !== 'mask' || mediaMaskerToken === undefined) return undefined;
     return new MediaProcessor(new HttpMediaMasker({
       baseUrl: mediaMaskerUrl, token: mediaMaskerToken, timeoutMs: mediaMaskerTimeoutMs,
+      // Только при явном включении: иначе запрос к media-masker прежний
+      ...(mediaOriginalIfClean === true ? { originalIfClean: true } : {}),
     }));
   }
 
