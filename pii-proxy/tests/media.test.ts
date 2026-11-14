@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { loadConfig } from '../src/config';
-import { attachmentBlockedText, SYSTEM_INSERT_TEXT } from '@labops/pii';
+import { attachmentBlockedText, PII_HIDDEN_TEXT, SYSTEM_INSERT_TEXT } from '@labops/pii';
 import { MEDIA_TOKEN, fakeMaskedData, post, startRig, textStream, type Rig } from './helpers';
 
 const DICT = { 'Иван Петров': '[PERSON_1]', '+7 900 000-00-01': '[PHONE_1]' };
@@ -93,12 +93,15 @@ describe('политика mask', () => {
     expect(body.system[body.system.length - 1].text).toBe(SYSTEM_INSERT_TEXT);
   });
 
-  test('второй линией проверяется и текст из PDF', async () => {
+  test('второй линией проверяется и текст из PDF: остаток скрывается заглушкой', async () => {
     rig = maskRig();
     rig.service.state.checkOnly.push('СЕКРЕТ');
     const res = await post(rig.base, '/v1/messages', user([pdf('TEXT:СЕКРЕТ в файле')]));
-    expect(res.status).toBe(422);
-    expect(rig.upstream.hits.length).toBe(0);
+    expect(res.status).toBe(200);
+    expect(rig.upstream.hits.length).toBe(1);
+    const raw = rig.upstream.hits[0]?.body ?? '';
+    expect(raw).not.toContain('СЕКРЕТ');
+    expect(raw).toContain(PII_HIDDEN_TEXT);
   });
 
   test('документ не-PDF и документ по url: пометки с причинами', async () => {

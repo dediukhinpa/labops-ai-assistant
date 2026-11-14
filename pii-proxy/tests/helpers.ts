@@ -17,6 +17,11 @@ export interface FakeService {
     dict: Record<string, string>;
     /** Тексты, которые /check считает ПДн, хотя /pseudonymize их не маскирует. */
     checkOnly: string[];
+    /**
+     * Знает ли сервис маршрут /remask_batch (labops-pii 1.1.0+): true - строки из checkOnly
+     * заменяются токеном, false - маршрута нет (404, как у старого сервиса).
+     */
+    remaskRoute: boolean;
     /** Вызовы: метод путь. */
     calls: string[];
     batches: { threadId: string; texts: string[]; caseLabels: unknown }[];
@@ -34,7 +39,7 @@ export interface FakeService {
 /** Запустить фейковый сервис на свободном порту. */
 export function startFakeService(dict: Record<string, string> = {}): FakeService {
   const state: FakeService['state'] = {
-    mode: 'ok', bootId: 'boot-1', dict, checkOnly: [], calls: [], batches: [], batchBodies: [],
+    mode: 'ok', bootId: 'boot-1', dict, checkOnly: [], remaskRoute: false, calls: [], batches: [], batchBodies: [],
     deleted: [],
     restoreFailAfter: Number.POSITIVE_INFINITY, restoreCount: 0, bootAfterBatch: [],
   };
@@ -78,6 +83,12 @@ export function startFakeService(dict: Record<string, string> = {}): FakeService
         });
         state.batchBodies.push(body);
         return Response.json({ items: (body.texts ?? []).map((t) => ({ text: mask(t) })) });
+      }
+      if (path === '/remask_batch' && state.remaskRoute) {
+        // Второй проход: то, что /check считает ПДн, закрывается токеном (как remask сервиса)
+        const fix = (t: string): string =>
+          state.checkOnly.reduce((acc, o) => acc.split(o).join('[PERSON_9]'), t);
+        return Response.json({ items: (body.texts ?? []).map((t) => ({ text: fix(t) })) });
       }
       if (path === '/restore') {
         state.restoreCount++;
