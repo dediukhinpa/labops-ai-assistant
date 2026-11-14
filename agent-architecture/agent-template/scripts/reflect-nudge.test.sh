@@ -107,6 +107,74 @@ grep -q 'notify failed' "$WS2/logs/hooks.log"; ok $? "дошли до отпра
 # Причина в маркере должна отличать «нет токена» от «роутер не ответил».
 grep -q 'notify rejected by agent_router' "$WS2/logs/hooks.log"; ok $? "причина маркера записана"
 
+echo "== пропуск побудки, если в дневнике нет нового с прошлого разбора =="
+# Разбор оставляет в дневнике запись о себе, и без этой проверки побудки шли
+# цепочкой: каждая находила "новым" отчёт о предыдущей (rodriguez: 4 подряд).
+# Токена нет намеренно: "слать" заканчивается маркером consolidate.request, а
+# "пропустить" его не трогает -- по маркеру и по логу видно, какая ветка сработала.
+mk_ws() {  # mk_ws <имя> -> путь к .claude с пустым дневником
+    local w="$TMP/$1/.claude"; mkdir -p "$w/core/active" "$w/core/passive" "$w/logs"
+    printf '%s\n' "$w"
+}
+run_nudge() {  # run_nudge <ws>
+    AGENT_WORKSPACE="$1" AGENT_ID=nova AGENT_BEARER="" bash "$NUDGE" --reason idle
+}
+WM="2026-11-14T19:01:21Z"
+
+# 1. нет записей новее отметки -> пропуск
+W1="$(mk_ws skip-none)"; printf '%s' "$WM" > "$W1/core/passive/.consolidated-at"
+printf '### 2026-11-14 17:57 [stop-hook] {fact}\n\nстарая запись\n' > "$W1/core/active/episodic.md"
+run_nudge "$W1"; ok $? "exit 0 при пропуске"
+grep -q "skip: nothing new since $WM" "$W1/logs/hooks.log"; ok $? "пропуск записан в лог с отметкой"
+test ! -e "$W1/core/active/consolidate.request"; ok $? "при пропуске маркер не падает"
+test ! -e "$W1/core/active/.last-nudge"; ok $? "при пропуске стамп кулдауна не обновляется"
+
+# 2. есть новая обычная запись -> шлём (без токена -- файловый маркер)
+W2="$(mk_ws send-new)"; printf '%s' "$WM" > "$W2/core/passive/.consolidated-at"
+printf '### 2026-11-14 19:30 [stop-hook] {decision}\n\nРешили выкатить сайт в пятницу\n' \
+    > "$W2/core/active/episodic.md"
+run_nudge "$W2"
+test -f "$W2/core/active/consolidate.request"; ok $? "новая обычная запись -> побудка идёт"
+test -f "$W2/core/active/.last-nudge"; ok $? "при отправке стамп кулдауна обновлён"
+
+# 3. новые только записи-разборы -> пропуск (метка и старый свободный текст)
+W3="$(mk_ws skip-maint)"; printf '%s' "$WM" > "$W3/core/passive/.consolidated-at"
+{
+    printf '### 2026-11-14 17:57 [stop-hook] {fact}\n\nобычная старая запись\n\n'
+    printf '### 2026-11-14 19:05 [stop-hook] {fact}\n\n[maintenance] consolidation done\n\n'
+    printf '### 2026-11-14 19:40 [stop-hook] {fact}\n\nКонсолидацию памяти выполнила: одна запись\n\n'
+    printf '### 2026-11-14 20:12 [stop-hook] {fact}\n\nЧетвёртый разбор памяти подряд, нового нет\n'
+} > "$W3/core/active/episodic.md"
+run_nudge "$W3"
+grep -q 'skip: nothing new' "$W3/logs/hooks.log"; ok $? "только записи-разборы -> пропуск"
+test ! -e "$W3/core/active/consolidate.request"; ok $? "записи-разборы: маркер не падает"
+
+# 3b. разбор + настоящая запись после него -> шлём
+printf '### 2026-11-14 20:30 [stop-hook] {fact}\n\nДиана попросила новый баннер\n' \
+    >> "$W3/core/active/episodic.md"
+run_nudge "$W3"
+test -f "$W3/core/active/consolidate.request"; ok $? "после разбора появилась настоящая запись -> шлём"
+
+# 4. нет отметки -> всё новое, шлём
+W4="$(mk_ws no-watermark)"
+printf '### 2026-11-14 17:57 [stop-hook] {fact}\n\nстарая запись\n' > "$W4/core/active/episodic.md"
+run_nudge "$W4"
+test -f "$W4/core/active/consolidate.request"; ok $? "нет отметки -> побудка идёт"
+
+# 5. битая отметка -> fail-open, причина в логе
+W5="$(mk_ws bad-watermark)"; printf 'вчера вечером' > "$W5/core/passive/.consolidated-at"
+printf '### 2026-11-14 17:57 [stop-hook] {fact}\n\nстарая запись\n' > "$W5/core/active/episodic.md"
+run_nudge "$W5"
+test -f "$W5/core/active/consolidate.request"; ok $? "битая отметка -> fail-open, побудка идёт"
+grep -q 'unparseable watermark' "$W5/logs/hooks.log"; ok $? "причина fail-open записана в лог"
+
+# 6. режим проверки без побочных эффектов
+W6="$(mk_ws check-mode)"; printf '%s' "$WM" > "$W6/core/passive/.consolidated-at"
+printf '### 2026-11-14 17:57 [stop-hook] {fact}\n\nстарая запись\n' > "$W6/core/active/episodic.md"
+OUT6="$(AGENT_WORKSPACE="$W6" AGENT_ID=nova MEMORY_NUDGE_CHECK=1 bash "$NUDGE" --reason idle)"
+[ "$OUT6" = "skip: $WM" ]; ok $? "MEMORY_NUDGE_CHECK печатает решение: $OUT6"
+test ! -e "$W6/logs/hooks.log" -a ! -e "$W6/core/active/.last-nudge"; ok $? "CHECK без побочных эффектов"
+
 echo ""
 echo "reflect-nudge.test.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

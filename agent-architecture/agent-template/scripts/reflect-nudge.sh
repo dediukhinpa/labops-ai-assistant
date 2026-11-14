@@ -14,7 +14,9 @@ set -euo pipefail
 # Usage:  reflect-nudge.sh --reason checkpoint|idle
 # Env:    AGENT_WORKSPACE, AGENT_ID, AGENT_BEARER,
 #         SECOND_BRAIN_AGENT_ROUTER_URL (default http://localhost:5000/mcp),
-#         MEMORY_NUDGE_COOLDOWN (s, default 3600), MEMORY_NUDGE_DRYRUN (1 => print payload).
+#         MEMORY_NUDGE_COOLDOWN (s, default 3600), MEMORY_NUDGE_DRYRUN (1 => print payload),
+#         MEMORY_NUDGE_CHECK (1 => print "send: ..."/"skip: ..." decision of the
+#         "anything new since the watermark?" check and exit; no log, no side effects).
 
 REASON="checkpoint"
 while [ $# -gt 0 ]; do
@@ -117,6 +119,100 @@ if [ "${MEMORY_NUDGE_DRYRUN:-0}" = "1" ]; then
     printf '%s\n' "$PAYLOAD"
     exit 0
 fi
+
+# Есть ли в дневнике что-то новее отметки прошлого разбора?
+#
+# Разбор сам оставляет в episodic.md запись о себе (stop-hook пишет последнее
+# сообщение хода), и следующая побудка находила в дневнике "новое" -- ровно
+# эту запись. Так разборы шли цепочкой: у rodriguez четыре подряд за один день,
+# и каждый писал "записывать нечего". Поэтому до кулдауна и отправки смотрим
+# сами: записи-разборы не считаются, и если больше нового нет -- побудки нет.
+#
+# Вывод: "skip|<watermark>" (пропустить) или "send|<причина>" (слать).
+# Любая неясность -- "send": fail-open, как и весь остальной скрипт. Время
+# записи в дневнике -- до минуты (UTC), отметка -- до секунды, поэтому запись
+# считается новой, если её минута >= минуты отметки: лишняя побудка дешевле
+# потерянной записи.
+nothing_new_check() {
+    WS_E="$WS" python3 - <<'PY' 2>/dev/null || echo "send|check crashed"
+import os
+import re
+from datetime import datetime, timezone
+
+ws = os.environ["WS_E"]
+wm_path = os.path.join(ws, "core", "passive", ".consolidated-at")
+ep_path = os.path.join(ws, "core", "active", "episodic.md")
+
+# Заголовок записи: "### 2026-11-14 19:01 [stop-hook] {fact}".
+HEADER = re.compile(r"^### (\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})\b")
+# Запись о разборе: метка из скилла или пересказ разбора в начале текста
+# (записи, сделанные до введения метки).
+SELF_REPORT_PREFIX_LEN = 100
+SELF_REPORT = re.compile(
+    r"\[maintenance\]|консолидац|разбор\w* памяти|памяти\W+разбор|consolidat",
+    re.IGNORECASE,
+)
+
+if not os.path.isfile(wm_path):
+    print("send|no watermark")  # нет отметки -- всё новое
+    raise SystemExit(0)
+try:
+    raw = open(wm_path, encoding="utf-8").read().strip()
+    wm = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if wm.tzinfo is None:
+        wm = wm.replace(tzinfo=timezone.utc)
+    wm_minute = wm.astimezone(timezone.utc).replace(second=0, microsecond=0)
+except Exception as exc:
+    print(f"send|unparseable watermark ({type(exc).__name__})")
+    raise SystemExit(0)
+try:
+    lines = open(ep_path, encoding="utf-8", errors="replace").read().splitlines()
+except Exception as exc:
+    print(f"send|episodic unreadable ({type(exc).__name__})")
+    raise SystemExit(0)
+
+# Разбираем записи: (время, текст).
+entries = []
+for line in lines:
+    m = HEADER.match(line)
+    if m:
+        try:
+            when = datetime.strptime(
+                f"{m.group(1)} {m.group(2)}:{m.group(3)}", "%Y-%m-%d %H:%M"
+            ).replace(tzinfo=timezone.utc)
+        except ValueError:
+            print("send|bad entry timestamp")
+            raise SystemExit(0)
+        entries.append([when, []])
+    elif entries:
+        entries[-1][1].append(line)
+
+for when, body in entries:
+    if when < wm_minute:
+        continue
+    text = " ".join(" ".join(body).split())
+    if SELF_REPORT.search(text[:SELF_REPORT_PREFIX_LEN]):
+        continue
+    print("send|new entry " + when.strftime("%Y-%m-%d %H:%M"))
+    raise SystemExit(0)
+print("skip|" + raw)
+PY
+}
+
+NEW_CHECK="$(nothing_new_check)"
+NEW_VERDICT="${NEW_CHECK%%|*}"
+NEW_DETAIL="${NEW_CHECK#*|}"
+if [ "${MEMORY_NUDGE_CHECK:-0}" = "1" ]; then
+    echo "${NEW_VERDICT}: ${NEW_DETAIL}"
+    exit 0
+fi
+if [ "$NEW_VERDICT" = "skip" ]; then
+    # Стамп кулдауна и маркер не трогаем: пропуск -- не побудка.
+    log "skip: nothing new since ${NEW_DETAIL}"
+    exit 0
+fi
+# Причину fail-open пишем в лог; штатное "нет отметки"/"есть новое" -- тоже.
+log "new-check: ${NEW_DETAIL}, proceeding with ${REASON}"
 
 # Cooldown: don't spam the session on back-to-back triggers.
 now=$(date -u +%s)
