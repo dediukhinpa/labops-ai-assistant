@@ -3,7 +3,12 @@
 import { describe, expect, test } from 'bun:test'
 import type { EditOpts, TelegramApi } from '../../src/channel/tools.js'
 import type { Logger } from '../../src/log.js'
-import { createBackgroundTelegramApi } from '../../src/safety/background-telegram-api.js'
+import {
+  createBackgroundTelegramApi,
+  DEFAULT_CHAT_EDIT_GAP_MS,
+  DEFAULT_MIN_EDIT_INTERVAL_MS,
+  DEFAULT_TYPING_MIN_INTERVAL_MS,
+} from '../../src/safety/background-telegram-api.js'
 import { FloodGate, TelegramFloodError } from '../../src/safety/flood-gate.js'
 
 const EDIT_INTERVAL_MS = 5_000
@@ -217,5 +222,113 @@ describe('createBackgroundTelegramApi - flood ban', () => {
     await clock.tick(10_000)
     await api.editMessageText('100', 1, 'back', HTML)
     expect(calls.map((c) => c.text)).toEqual(['back'])
+  })
+})
+
+describe('createBackgroundTelegramApi - дефолтные интервалы', () => {
+  test('typing 10 с, правка сообщения 5 с, зазор по чату 3 с', () => {
+    expect(DEFAULT_TYPING_MIN_INTERVAL_MS).toBe(10_000)
+    expect(DEFAULT_MIN_EDIT_INTERVAL_MS).toBe(5_000)
+    expect(DEFAULT_CHAT_EDIT_GAP_MS).toBe(3_000)
+  })
+
+  test('без явных опций typing идёт не чаще раза в 10 с', async () => {
+    const clock = new FakeTimers()
+    const base = makeBase()
+    const api = createBackgroundTelegramApi(base.api, new FloodGate({ now: clock.now }), quietLog, {
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+    })
+    await api.sendChatAction('100', 'typing')
+    await clock.tick(4_000)
+    await api.sendChatAction('100', 'typing')
+    await clock.tick(5_999)
+    await api.sendChatAction('100', 'typing')
+    expect(base.calls.length).toBe(1)
+    await clock.tick(1)
+    await api.sendChatAction('100', 'typing')
+    expect(base.calls.length).toBe(2)
+  })
+
+  test('интервалы из опций переопределяют дефолты', async () => {
+    const clock = new FakeTimers()
+    const base = makeBase()
+    const api = createBackgroundTelegramApi(base.api, new FloodGate({ now: clock.now }), quietLog, {
+      typingMinIntervalMs: 20_000,
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+    })
+    await api.sendChatAction('100', 'typing')
+    await clock.tick(19_999)
+    await api.sendChatAction('100', 'typing')
+    expect(base.calls.length).toBe(1)
+    await clock.tick(1)
+    await api.sendChatAction('100', 'typing')
+    expect(base.calls.length).toBe(2)
+  })
+})
+
+describe('createBackgroundTelegramApi - onSkip (журнал Bot API)', () => {
+  function withSkips(): ReturnType<typeof setup> & { skips: string[] } {
+    const clock = new FakeTimers()
+    const gate = new FloodGate({ now: clock.now })
+    const base = makeBase()
+    const skips: string[] = []
+    const api = createBackgroundTelegramApi(base.api, gate, quietLog, {
+      minEditIntervalMs: EDIT_INTERVAL_MS,
+      chatEditGapMs: CHAT_GAP_MS,
+      typingMinIntervalMs: TYPING_INTERVAL_MS,
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      onSkip: (method, chatId, reason) => skips.push(`${method}@${chatId}:${reason}`),
+    })
+    return { clock, gate, calls: base.calls, api, skips }
+  }
+
+  test('схлопнутые правки и пропущенный typing = skipped_throttled', async () => {
+    const { api, skips } = withSkips()
+    await api.editMessageText('100', 1, 'v1', HTML)
+    await api.editMessageText('100', 1, 'v2', HTML) // встала в очередь, не пропуск
+    await api.editMessageText('100', 1, 'v3', HTML) // заменила v2: v2 схлопнута
+    await api.sendChatAction('100', 'typing')
+    await api.sendChatAction('100', 'typing')
+    expect(skips).toEqual([
+      'editMessageText@100:skipped_throttled',
+      'sendChatAction@100:skipped_throttled',
+    ])
+  })
+
+  test('бан = skipped_banned, в том числе для отброшенной отложенной правки', async () => {
+    const { api, gate, clock, skips } = withSkips()
+    await api.editMessageText('100', 1, 'v1', HTML)
+    await api.editMessageText('100', 1, 'v2', HTML) // в очереди
+    gate.recordBan('message', BAN_SECONDS)
+    await api.sendChatAction('100', 'typing').catch(() => undefined)
+    await api.editMessageText('100', 2, 'x', HTML).catch(() => undefined)
+    await clock.tick(EDIT_INTERVAL_MS * 2)
+    expect(skips).toEqual([
+      'sendChatAction@100:skipped_banned',
+      'editMessageText@100:skipped_banned',
+      'editMessageText@100:skipped_banned',
+    ])
+  })
+
+  test('сбой onSkip не ломает вызов', async () => {
+    const clock = new FakeTimers()
+    const base = makeBase()
+    const api = createBackgroundTelegramApi(base.api, new FloodGate({ now: clock.now }), quietLog, {
+      typingMinIntervalMs: TYPING_INTERVAL_MS,
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      onSkip: () => {
+        throw new Error('boom')
+      },
+    })
+    await api.sendChatAction('100', 'typing')
+    await expect(api.sendChatAction('100', 'typing')).resolves.toBeUndefined()
   })
 })

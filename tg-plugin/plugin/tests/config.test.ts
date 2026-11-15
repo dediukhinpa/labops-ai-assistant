@@ -7,6 +7,7 @@ import {
   loadConfig,
   redactToken,
   resolveAskUserQuestionAllowedUserIds,
+  resolveBotApiConfig,
   RuntimeEnvSchema,
 } from '../src/config.js'
 
@@ -486,5 +487,89 @@ describe('loadConfig: media_consent (разрешение на оригинал 
       TELEGRAM_MEDIA_CONSENT_DIR: '/tmp/consent-x',
     }))
     expect(cfg.media_consent).toEqual({ enabled: true, approver_user_ids: [7, 8], dir: '/tmp/consent-x' })
+  })
+})
+
+describe('loadConfig - темп фоновых вызовов Bot API (bot_api)', () => {
+  test('без env и файла bot_api не задан, resolveBotApiConfig даёт дефолты 10000/5000/3000', () => {
+    const cfg = loadConfig(env())
+    expect(cfg.bot_api).toBeUndefined()
+    const r = resolveBotApiConfig(cfg)
+    expect(r.typing_min_interval_ms).toBe(10_000)
+    expect(r.edit_min_interval_ms).toBe(5_000)
+    expect(r.chat_edit_gap_ms).toBe(3_000)
+    expect(r.log).toEqual({ enabled: true, max_bytes: 5 * 1024 * 1024, max_files: 3 })
+  })
+
+  test('env задаёт все три интервала', () => {
+    const cfg = loadConfig(env({
+      TELEGRAM_TYPING_MIN_INTERVAL_MS: '15000',
+      TELEGRAM_STATUS_EDIT_MIN_INTERVAL_MS: '7000',
+      TELEGRAM_CHAT_EDIT_GAP_MS: '4000',
+    }))
+    const r = resolveBotApiConfig(cfg)
+    expect(r.typing_min_interval_ms).toBe(15_000)
+    expect(r.edit_min_interval_ms).toBe(7_000)
+    expect(r.chat_edit_gap_ms).toBe(4_000)
+  })
+
+  test('env важнее config.json, остальные ключи файла сохраняются', () => {
+    writeFileSync(join(stateDir, 'config.json'), JSON.stringify({
+      bot_api: { typing_min_interval_ms: 20000, chat_edit_gap_ms: 6000 },
+    }))
+    const r = resolveBotApiConfig(loadConfig(env({ TELEGRAM_TYPING_MIN_INTERVAL_MS: '12000' })))
+    expect(r.typing_min_interval_ms).toBe(12_000)
+    expect(r.chat_edit_gap_ms).toBe(6_000)
+    expect(r.edit_min_interval_ms).toBe(5_000)
+  })
+
+  test('пустая строка в env = не задано', () => {
+    const r = resolveBotApiConfig(loadConfig(env({
+      TELEGRAM_TYPING_MIN_INTERVAL_MS: '',
+      TELEGRAM_STATUS_EDIT_MIN_INTERVAL_MS: ' ',
+      TELEGRAM_CHAT_EDIT_GAP_MS: '',
+      TELEGRAM_API_LOG_ENABLED: '',
+    })))
+    expect(r.typing_min_interval_ms).toBe(10_000)
+    expect(r.log.enabled).toBe(true)
+  })
+
+  test('значения ниже минимума отвергаются', () => {
+    expect(() => loadConfig(env({ TELEGRAM_TYPING_MIN_INTERVAL_MS: '3999' }))).toThrow(/invalid config/)
+    expect(() => loadConfig(env({ TELEGRAM_STATUS_EDIT_MIN_INTERVAL_MS: '1999' }))).toThrow(/invalid config/)
+    expect(() => loadConfig(env({ TELEGRAM_CHAT_EDIT_GAP_MS: '999' }))).toThrow(/invalid config/)
+    expect(() => loadConfig(env({ TELEGRAM_TYPING_MIN_INTERVAL_MS: '0' }))).toThrow()
+    expect(() => loadConfig(env({ TELEGRAM_TYPING_MIN_INTERVAL_MS: '-5' }))).toThrow()
+  })
+
+  test('нечисловое и слишком большое значения отвергаются', () => {
+    expect(() => loadConfig(env({ TELEGRAM_TYPING_MIN_INTERVAL_MS: 'abc' }))).toThrow()
+    expect(() => loadConfig(env({ TELEGRAM_TYPING_MIN_INTERVAL_MS: '1.5' }))).toThrow()
+    expect(() => loadConfig(env({ TELEGRAM_TYPING_MIN_INTERVAL_MS: '600001' }))).toThrow(/invalid config/)
+  })
+
+  test('границы допустимы: 4000 / 2000 / 1000', () => {
+    const r = resolveBotApiConfig(loadConfig(env({
+      TELEGRAM_TYPING_MIN_INTERVAL_MS: '4000',
+      TELEGRAM_STATUS_EDIT_MIN_INTERVAL_MS: '2000',
+      TELEGRAM_CHAT_EDIT_GAP_MS: '1000',
+    })))
+    expect([r.typing_min_interval_ms, r.edit_min_interval_ms, r.chat_edit_gap_ms]).toEqual([4000, 2000, 1000])
+  })
+
+  test('TELEGRAM_API_LOG_ENABLED: 0/false/off выключают, 1/true включают', () => {
+    for (const v of ['0', 'false', 'No', 'off']) {
+      expect(resolveBotApiConfig(loadConfig(env({ TELEGRAM_API_LOG_ENABLED: v }))).log.enabled).toBe(false)
+    }
+    for (const v of ['1', 'true', 'on']) {
+      expect(resolveBotApiConfig(loadConfig(env({ TELEGRAM_API_LOG_ENABLED: v }))).log.enabled).toBe(true)
+    }
+  })
+
+  test('ротация журнала: ниже минимума размера и 0 файлов отвергаются', () => {
+    writeFileSync(join(stateDir, 'config.json'), JSON.stringify({ bot_api: { log: { max_bytes: 100 } } }))
+    expect(() => loadConfig(env())).toThrow(/invalid config/)
+    writeFileSync(join(stateDir, 'config.json'), JSON.stringify({ bot_api: { log: { max_files: 0 } } }))
+    expect(() => loadConfig(env())).toThrow(/invalid config/)
   })
 })

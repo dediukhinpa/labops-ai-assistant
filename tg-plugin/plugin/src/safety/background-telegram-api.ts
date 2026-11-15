@@ -23,14 +23,16 @@ import type {
   SendMessageOpts,
   TelegramApi,
 } from '../channel/tools.js'
+import type { SkipReason } from './api-call-log.js'
 import type { FloodGate } from './flood-gate.js'
 
 // Правки одного сообщения: не чаще раза в 5 с (как ACTIVITY_EDIT_THROTTLE_MS).
-const DEFAULT_MIN_EDIT_INTERVAL_MS = 5_000
+export const DEFAULT_MIN_EDIT_INTERVAL_MS = 5_000
 // Между любыми фоновыми правками в одном чате: 3 с = не более 20 правок/мин.
-const DEFAULT_CHAT_EDIT_GAP_MS = 3_000
-// Typing живёт 5 с у Telegram; повторять чаще 4 с бессмысленно.
-const DEFAULT_TYPING_MIN_INTERVAL_MS = 4_000
+export const DEFAULT_CHAT_EDIT_GAP_MS = 3_000
+// Typing живёт 5 с у Telegram, но каждый вызов sendChatAction считается в лимит
+// чата: по решению владельца (после flood-бана 15.11.2026) повторяем не чаще 10 с.
+export const DEFAULT_TYPING_MIN_INTERVAL_MS = 10_000
 // Запись о сообщении без активности дольше этого забываем (память).
 const STALE_ENTRY_MS = 60 * 60 * 1000
 
@@ -40,6 +42,11 @@ export interface BackgroundApiOptions {
   minEditIntervalMs?: number
   chatEditGapMs?: number
   typingMinIntervalMs?: number
+  /**
+   * Вызов не ушёл в сеть (для журнала Bot API): 'skipped_throttled' - схлопнут
+   * лимитом интервала, 'skipped_banned' - заблокирован flood-баном.
+   */
+  onSkip?: (method: string, chatId: string, reason: SkipReason) => void
   /** Шов для тестов. */
   now?: () => number
   setTimer?: (cb: () => void, ms: number) => TimerHandle
@@ -86,8 +93,19 @@ export function createBackgroundTelegramApi(
 
   const keyOf = (chatId: string, messageId: number): string => `${chatId}:${messageId}`
 
-  function failIfBanned(): void {
-    if (gate.isBanned('message')) throw gate.errorFor('message')
+  function skip(method: string, chatId: string, reason: SkipReason): void {
+    try {
+      opts.onSkip?.(method, chatId, reason)
+    } catch {
+      // счётчик журнала не должен влиять на отправку
+    }
+  }
+
+  function failIfBanned(method: string, chatId: string): void {
+    if (gate.isBanned('message')) {
+      skip(method, chatId, 'skipped_banned')
+      throw gate.errorFor('message')
+    }
   }
 
   function prune(t: number): void {
@@ -115,6 +133,7 @@ export function createBackgroundTelegramApi(
     st.pending = null
     // Бан наступил, пока правка ждала: отбрасываем, сеть не трогаем.
     if (gate.isBanned('message')) {
+      skip('editMessageText', st.chatId, 'skipped_banned')
       log.debug('background edit dropped: flood ban active', {
         chat_id: st.chatId,
         message_id: st.messageId,
@@ -143,7 +162,7 @@ export function createBackgroundTelegramApi(
       text: string,
       editOpts: EditOpts,
     ): Promise<void> {
-      failIfBanned()
+      failIfBanned('editMessageText', chatId)
       const t = now()
       prune(t)
       const key = keyOf(chatId, messageId)
@@ -156,6 +175,8 @@ export function createBackgroundTelegramApi(
       if (st.pending !== null) {
         st.pending.text = text
         st.pending.opts = editOpts
+        // Прежний текст правки так и не уйдёт: считаем его схлопнутым.
+        skip('editMessageText', chatId, 'skipped_throttled')
         return
       }
       const dueAt = reserveSlot(chatId, st.lastSentAt + minEditIntervalMs)
@@ -173,10 +194,13 @@ export function createBackgroundTelegramApi(
     },
 
     async sendChatAction(chatId: string, action: ChatAction): Promise<void> {
-      failIfBanned()
+      failIfBanned('sendChatAction', chatId)
       const t = now()
       const last = lastTypingAt.get(chatId)
-      if (last !== undefined && t - last < typingMinIntervalMs) return
+      if (last !== undefined && t - last < typingMinIntervalMs) {
+        skip('sendChatAction', chatId, 'skipped_throttled')
+        return
+      }
       lastTypingAt.set(chatId, t)
       await base.sendChatAction(chatId, action)
     },
