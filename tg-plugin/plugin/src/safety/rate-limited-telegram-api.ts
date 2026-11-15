@@ -108,6 +108,11 @@ export interface RateLimitOptions {
   background?: boolean
   /** Дольше этого критичный вызов не ждёт снятия бана, а падает сразу. */
   maxInlineWaitMs?: number
+  /**
+   * Вызов не ушёл в сеть из-за активного flood-бана (для журнала Bot API).
+   * Реакции и текст банятся независимо, метод передаётся как есть.
+   */
+  onSkippedBanned?: (method: string, chatId: string) => void
   /** Test seam: replace Date.now() for deterministic virtual time. */
   now?: () => number
   /** Test seam: replace setTimeout-based sleep. */
@@ -190,7 +195,11 @@ export function createRateLimitedTelegramApi(
   // Background mode and reactions never retry. Before every attempt the
   // shared FloodGate is consulted: an active ban either makes the call wait
   // (short ban, critical call) or fails it locally without any request.
-  async function withRetry<T>(method: string, op: () => Promise<T>): Promise<T> {
+  async function withRetry<T>(
+    method: string,
+    chatId: string,
+    op: () => Promise<T>,
+  ): Promise<T> {
     const group = groupOf(method)
     const noRetry = cfg.background || group === 'reaction'
     let attempt = 0
@@ -198,7 +207,10 @@ export function createRateLimitedTelegramApi(
       attempt += 1
       const remaining = gate.remainingMs(group)
       if (remaining > 0) {
-        if (noRetry || remaining > cfg.maxInlineWaitMs) throw gate.errorFor(group)
+        if (noRetry || remaining > cfg.maxInlineWaitMs) {
+          opts.onSkippedBanned?.(method, chatId)
+          throw gate.errorFor(group)
+        }
         const jitter =
           cfg.jitterMaxMs > 0 ? Math.floor(Math.random() * cfg.jitterMaxMs) : 0
         log.info('telegram flood ban active, waiting', { method, wait_ms: remaining + jitter })
@@ -234,7 +246,11 @@ export function createRateLimitedTelegramApi(
 
   // Serialize per-chat outbound work: each new op awaits the previous op
   // (without inheriting its error), then runs under the rate-limit gate.
-  async function enqueueSend<T>(chatId: string, op: () => Promise<T>): Promise<T> {
+  async function enqueueSend<T>(
+    method: string,
+    chatId: string,
+    op: () => Promise<T>,
+  ): Promise<T> {
     const state = getChatState(chatId)
     const prev = state.tail
     let release!: () => void
@@ -244,7 +260,7 @@ export function createRateLimitedTelegramApi(
     try {
       await prev.catch(() => {})
       await waitForCapacity(state)
-      return await withRetry('send', op)
+      return await withRetry(method, chatId, op)
     } finally {
       release()
     }
@@ -256,7 +272,7 @@ export function createRateLimitedTelegramApi(
       text: string,
       sendOpts: SendMessageOpts,
     ): Promise<{ message_id: number }> {
-      return enqueueSend(chatId, () => raw.sendMessage(chatId, text, sendOpts))
+      return enqueueSend('sendMessage', chatId, () => raw.sendMessage(chatId, text, sendOpts))
     },
 
     async editMessageText(
@@ -265,7 +281,7 @@ export function createRateLimitedTelegramApi(
       text: string,
       editOpts: EditOpts,
     ): Promise<void> {
-      return withRetry('editMessageText', () =>
+      return withRetry('editMessageText', chatId, () =>
         raw.editMessageText(chatId, messageId, text, editOpts),
       )
     },
@@ -275,13 +291,13 @@ export function createRateLimitedTelegramApi(
       messageId: number,
       emoji: string,
     ): Promise<void> {
-      return withRetry('setMessageReaction', () =>
+      return withRetry('setMessageReaction', chatId, () =>
         raw.setMessageReaction(chatId, messageId, emoji),
       )
     },
 
     async sendChatAction(chatId: string, action: ChatAction): Promise<void> {
-      return withRetry('sendChatAction', () => raw.sendChatAction(chatId, action))
+      return withRetry('sendChatAction', chatId, () => raw.sendChatAction(chatId, action))
     },
 
     async sendDocument(
@@ -289,7 +305,7 @@ export function createRateLimitedTelegramApi(
       filePath: string,
       docOpts: SendDocumentOpts,
     ): Promise<{ message_id: number }> {
-      return enqueueSend(chatId, () => raw.sendDocument(chatId, filePath, docOpts))
+      return enqueueSend('sendDocument', chatId, () => raw.sendDocument(chatId, filePath, docOpts))
     },
 
     async sendPhoto(
@@ -297,7 +313,7 @@ export function createRateLimitedTelegramApi(
       filePath: string,
       photoOpts: SendDocumentOpts,
     ): Promise<{ message_id: number }> {
-      return enqueueSend(chatId, () => raw.sendPhoto(chatId, filePath, photoOpts))
+      return enqueueSend('sendPhoto', chatId, () => raw.sendPhoto(chatId, filePath, photoOpts))
     },
 
     async downloadFile(fileId: string, destDir: string): Promise<DownloadResult> {
@@ -305,7 +321,7 @@ export function createRateLimitedTelegramApi(
     },
 
     async deleteMessage(chatId: string, messageId: number): Promise<void> {
-      return withRetry('deleteMessage', () => raw.deleteMessage(chatId, messageId))
+      return withRetry('deleteMessage', chatId, () => raw.deleteMessage(chatId, messageId))
     },
   }
 }

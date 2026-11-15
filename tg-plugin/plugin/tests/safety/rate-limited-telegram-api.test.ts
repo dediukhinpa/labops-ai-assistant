@@ -571,3 +571,29 @@ describe('createRateLimitedTelegramApi — flood ban (FloodGate)', () => {
     expect(stub.calls.length).toBe(0)
   })
 })
+
+describe('createRateLimitedTelegramApi - onSkippedBanned (журнал Bot API)', () => {
+  test('вызов, отклонённый баном без сети, сообщается; сетевой 429 - нет', async () => {
+    const clock = new FakeClock()
+    const stub = makeStubApi(clock)
+    const skipped: string[] = []
+    const api = createRateLimitedTelegramApi(stub.api, stubLog, {
+      ...defaultOpts(clock),
+      onSkippedBanned: (method, chatId) => skipped.push(`${method}@${chatId}`),
+    })
+    stub.queueError('sendMessage', make429Error(40_000))
+    // Первый вызов дошёл до сети и получил 429: это не "пропуск".
+    await api.sendMessage('100', 'a', {}).catch(() => undefined)
+    expect(skipped).toEqual([])
+    await api.sendMessage('100', 'b', {}).catch(() => undefined)
+    await api.editMessageText('100', 5, 'x', {}).catch(() => undefined)
+    await api.sendChatAction('200', 'typing').catch(() => undefined)
+    await api.sendDocument('100', '/tmp/f', {}).catch(() => undefined)
+    expect(skipped).toEqual([
+      'sendMessage@100',
+      'editMessageText@100',
+      'sendChatAction@200',
+      'sendDocument@100',
+    ])
+  })
+})
