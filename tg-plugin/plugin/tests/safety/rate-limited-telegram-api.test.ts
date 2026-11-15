@@ -17,6 +17,7 @@ import type {
   TelegramApi,
 } from '../../src/channel/tools.js'
 import type { Logger } from '../../src/log.js'
+import { FloodGate, TelegramFloodError } from '../../src/safety/flood-gate.js'
 import {
   createRateLimitedTelegramApi,
   type RateLimitOptions,
@@ -371,17 +372,19 @@ describe('createRateLimitedTelegramApi — 429 retry-after', () => {
 })
 
 describe('createRateLimitedTelegramApi — retry_after clamp & edge values', () => {
-  test('retry_after over 60s is clamped to 60s', async () => {
+  test('retry_after above the inline wait fails at once with the unban time', async () => {
     const clock = new FakeClock()
     const stub = makeStubApi(clock)
     const api = createRateLimitedTelegramApi(stub.api, stubLog, defaultOpts(clock))
     stub.queueError('sendMessage', make429Error(300))
-    const p = api.sendMessage('100', 'hi', {})
-    await flushMicrotasks()
-    // Even though Telegram said 300s, we should retry after 60s.
-    await clock.tick(60_000)
-    await p
-    expect(stub.calls.length).toBe(1)
+    const result = await api.sendMessage('100', 'hi', {}).catch((e: unknown) => e)
+    // No 60s sleep and no second request: the ban is surfaced immediately.
+    expect(result).toBeInstanceOf(TelegramFloodError)
+    const flood = result as TelegramFloodError
+    expect(flood.error_code).toBe(429)
+    expect(flood.parameters.retry_after).toBe(300)
+    expect(flood.message).toContain('1970-01-01T00:05:00.000Z')
+    expect(stub.calls.length).toBe(0)
   })
 
   test('retry_after = 0 is treated as 1s fallback', async () => {
@@ -473,5 +476,98 @@ describe('createRateLimitedTelegramApi — pass-through methods', () => {
     await clock.tick(1000)
     await p
     expect(stub.calls.length).toBe(3)
+  })
+})
+
+describe('createRateLimitedTelegramApi — flood ban (FloodGate)', () => {
+  test('long ban: later calls fail locally without touching the network', async () => {
+    const clock = new FakeClock()
+    const stub = makeStubApi(clock)
+    const api = createRateLimitedTelegramApi(stub.api, stubLog, defaultOpts(clock))
+    stub.queueError('sendMessage', make429Error(40_000))
+    const first = await api.sendMessage('100', 'a', {}).catch((e: unknown) => e)
+    expect(first).toBeInstanceOf(TelegramFloodError)
+    // The stub has no programmed errors left: if these reached it, they would be recorded.
+    const second = await api.sendMessage('100', 'b', {}).catch((e: unknown) => e)
+    const edit = await api.editMessageText('100', 5, 'x', {}).catch((e: unknown) => e)
+    const typing = await api.sendChatAction('100', 'typing').catch((e: unknown) => e)
+    expect(second).toBeInstanceOf(TelegramFloodError)
+    expect(edit).toBeInstanceOf(TelegramFloodError)
+    expect(typing).toBeInstanceOf(TelegramFloodError)
+    expect(stub.calls.length).toBe(0)
+  })
+
+  test('short ban: critical call waits for the ban once and then succeeds', async () => {
+    const clock = new FakeClock()
+    const gate = new FloodGate({ now: clock.now })
+    const stub = makeStubApi(clock)
+    const api = createRateLimitedTelegramApi(stub.api, stubLog, { ...defaultOpts(clock), gate })
+    gate.recordBan('message', 10)
+    const p = api.sendMessage('100', 'hi', {})
+    await flushMicrotasks()
+    expect(stub.calls.length).toBe(0)
+    await clock.tick(10_000)
+    await p
+    expect(stub.calls.length).toBe(1)
+  })
+
+  test('ban longer than maxInlineWaitMs: critical call fails at once with unban time', async () => {
+    const clock = new FakeClock()
+    const gate = new FloodGate({ now: clock.now })
+    const stub = makeStubApi(clock)
+    const api = createRateLimitedTelegramApi(stub.api, stubLog, { ...defaultOpts(clock), gate })
+    gate.recordBan('message', 16)
+    const err = await api.sendMessage('100', 'hi', {}).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(TelegramFloodError)
+    expect((err as TelegramFloodError).bannedUntilMs).toBe(16_000)
+    expect(stub.calls.length).toBe(0)
+  })
+
+  test('background mode: never waits and never retries a 429', async () => {
+    const clock = new FakeClock()
+    const stub = makeStubApi(clock)
+    const api = createRateLimitedTelegramApi(stub.api, stubLog, {
+      ...defaultOpts(clock),
+      background: true,
+    })
+    stub.queueError('editMessageText', make429Error(3))
+    const first = await api.editMessageText('100', 1, 'a', {}).catch((e: unknown) => e)
+    expect((first as { error_code?: number }).error_code).toBe(429)
+    // Ban of 3s is now recorded; a background call must not sleep it out.
+    const second = await api.editMessageText('100', 1, 'b', {}).catch((e: unknown) => e)
+    expect(second).toBeInstanceOf(TelegramFloodError)
+    expect(stub.calls.length).toBe(0)
+  })
+
+  test('reactions have their own ban group and are never retried', async () => {
+    const clock = new FakeClock()
+    const stub = makeStubApi(clock)
+    const api = createRateLimitedTelegramApi(stub.api, stubLog, defaultOpts(clock))
+    stub.queueError('sendMessage', make429Error(40_000))
+    await api.sendMessage('100', 'a', {}).catch(() => undefined)
+    // Text is banned, reactions still go through.
+    await api.setMessageReaction('100', 7, '👀')
+    expect(stub.calls.map((c) => c.method)).toEqual(['setMessageReaction'])
+    stub.queueError('setMessageReaction', make429Error(2))
+    const r = await api.setMessageReaction('100', 8, '👌').catch((e: unknown) => e)
+    expect((r as { error_code?: number }).error_code).toBe(429)
+    expect(stub.calls.length).toBe(1)
+  })
+
+  test('shared gate: a 429 seen by one instance blocks the other', async () => {
+    const clock = new FakeClock()
+    const gate = new FloodGate({ now: clock.now })
+    const stub = makeStubApi(clock)
+    const critical = createRateLimitedTelegramApi(stub.api, stubLog, { ...defaultOpts(clock), gate })
+    const background = createRateLimitedTelegramApi(stub.api, stubLog, {
+      ...defaultOpts(clock),
+      gate,
+      background: true,
+    })
+    stub.queueError('sendMessage', make429Error(40_000))
+    await critical.sendMessage('100', 'a', {}).catch(() => undefined)
+    const err = await background.sendChatAction('100', 'typing').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(TelegramFloodError)
+    expect(stub.calls.length).toBe(0)
   })
 })
