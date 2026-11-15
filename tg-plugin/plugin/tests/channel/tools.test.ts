@@ -16,6 +16,8 @@ import {
 } from '../../src/channel/tools.js'
 import type { AppConfig, StatePaths } from '../../src/config.js'
 import { createLogger } from '../../src/log.js'
+import { FloodGate } from '../../src/safety/flood-gate.js'
+import { createRateLimitedTelegramApi } from '../../src/safety/rate-limited-telegram-api.js'
 
 // Silent logger to keep test output clean.
 const silentLog = createLogger('test', { stream: { write: () => true } as unknown as NodeJS.WritableStream })
@@ -242,6 +244,23 @@ describe('callTool', () => {
     )
     expect(result.isError).toBe(true)
     expect(result.content[0]?.text).toContain('TELEGRAM_WORKSPACE_ROOT')
+    rmSync(deps.statePaths.root, { recursive: true, force: true })
+  })
+
+  test('reply during a flood ban returns the unban time to the agent at once', async () => {
+    const gate = new FloodGate({ now: () => Date.UTC(2026, 10, 15, 19, 0, 0) })
+    gate.recordBan('message', 39_600)
+    const raw = makeStubApi({
+      sendMessage: async () => {
+        throw new Error('the network must not be reached during a ban')
+      },
+    })
+    const api = createRateLimitedTelegramApi(raw, silentLog, { gate })
+    const deps = makeDeps({ telegramApi: api })
+    const result = await callTool(callReq('reply', { chat_id: '100000001', text: 'hello' }), deps)
+    expect(result.isError).toBe(true)
+    expect(result.content[0]?.text).toContain('2026-11-16T06:00:00.000Z')
+    expect(result.content[0]?.text).toContain('do not retry')
     rmSync(deps.statePaths.root, { recursive: true, force: true })
   })
 

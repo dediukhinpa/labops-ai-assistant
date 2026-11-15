@@ -13,9 +13,14 @@
 //      its bucket. Different chats run in parallel.
 //   2. Global token bucket (default: 25 msg/sec, burst 25). Caps total
 //      throughput across all chats under Telegram's 30/sec bot-wide limit.
-//   3. 429 retry: on a grammY-shaped 429 (`error_code: 429`, optional
-//      `parameters.retry_after`), sleep the requested seconds + a small
-//      jitter and retry the SAME call. Bounded by `maxRetries` (default 3).
+//   3. 429 handling (FloodGate): a 429 records a ban until now+retry_after
+//      in a gate shared by the whole process. Every later call checks the
+//      gate BEFORE touching the network - requests made during a flood ban
+//      only extend it. A critical call (reply) waits for a SHORT ban
+//      (<= maxInlineWaitMs) and retries; for a long ban it fails at once
+//      with TelegramFloodError that carries the unban time. A background
+//      call (progress mirror, typing, status edits; `background: true`)
+//      never waits and never retries.
 //
 // Methods that don't consume the send-bucket: editMessageText (Telegram's
 // edit limits are far more lenient), setMessageReaction, sendChatAction,
@@ -27,6 +32,7 @@
 // virtual time.
 
 import type { Logger } from '../log.js'
+import { FloodGate, parseFlood429, type FloodGroup } from './flood-gate.js'
 import type {
   ChatAction,
   DownloadResult,
@@ -93,36 +99,32 @@ export interface RateLimitOptions {
   globalBurstCapacity?: number
   maxRetries?: number
   jitterMaxMs?: number
+  /** Общий для процесса учёт flood-бана; без него создаётся локальный. */
+  gate?: FloodGate
+  /**
+   * Фоновый режим: при активном бане - сразу ошибка, при 429 - без ретраев.
+   * Для зеркала прогресса, typing и правок статуса.
+   */
+  background?: boolean
+  /** Дольше этого критичный вызов не ждёт снятия бана, а падает сразу. */
+  maxInlineWaitMs?: number
   /** Test seam: replace Date.now() for deterministic virtual time. */
   now?: () => number
   /** Test seam: replace setTimeout-based sleep. */
   sleep?: (ms: number) => Promise<void>
 }
 
-interface Grammy429 {
-  error_code: 429
-  parameters?: { retry_after?: number }
-}
+// Critical calls (reply) wait for a ban at most this long. A longer
+// retry_after is returned to the caller immediately as TelegramFloodError:
+// the agent learns the unban time at once instead of hanging for minutes,
+// and no request is sent that would extend the ban.
+const DEFAULT_MAX_INLINE_WAIT_MS = 15_000
+// Total attempts for a critical call: the first one plus one retry.
+const DEFAULT_MAX_ATTEMPTS = 2
 
-// Cap retry_after so one giant value from Telegram (or a hostile-shaped
-// error) can't lock a chat's FIFO queue for minutes on end. The per-chat
-// tail-promise chain blocks all subsequent sends to the same chat until the
-// in-flight op finishes, so worst-case stall = maxRetries × MAX_RETRY_AFTER_S.
-// With defaults (3 × 60s) that's a 3-minute ceiling; if Telegram really
-// needs longer, the bounded retries exhaust and the caller sees the 429.
-const MAX_RETRY_AFTER_S = 60
-
-function parse429(err: unknown): { retryAfter: number } | null {
-  if (typeof err !== 'object' || err === null) return null
-  const e = err as Grammy429
-  if (e.error_code !== 429) return null
-  const after = e.parameters?.retry_after
-  // Telegram's retry_after is in seconds. Coerce to a sane positive integer
-  // and clamp into [1, MAX_RETRY_AFTER_S].
-  if (typeof after !== 'number' || !Number.isFinite(after) || after < 1) {
-    return { retryAfter: 1 }
-  }
-  return { retryAfter: Math.min(MAX_RETRY_AFTER_S, Math.ceil(after)) }
+// Реакции лимитируются Telegram отдельно от текста; всё остальное - группа message.
+function groupOf(method: string): FloodGroup {
+  return method === 'setMessageReaction' ? 'reaction' : 'message'
 }
 
 export function createRateLimitedTelegramApi(
@@ -135,9 +137,12 @@ export function createRateLimitedTelegramApi(
     perChatBurstCapacity: opts.perChatBurstCapacity ?? 3,
     globalRefillPerSec: opts.globalRefillPerSec ?? 25,
     globalBurstCapacity: opts.globalBurstCapacity ?? 25,
-    maxRetries: opts.maxRetries ?? 3,
+    maxRetries: opts.maxRetries ?? DEFAULT_MAX_ATTEMPTS,
     jitterMaxMs: opts.jitterMaxMs ?? 150,
+    maxInlineWaitMs: opts.maxInlineWaitMs ?? DEFAULT_MAX_INLINE_WAIT_MS,
+    background: opts.background ?? false,
   }
+  const gate = opts.gate ?? new FloodGate({ log, ...(opts.now !== undefined ? { now: opts.now } : {}) })
   const now = opts.now ?? ((): number => Date.now())
   const sleep =
     opts.sleep ??
@@ -182,33 +187,49 @@ export function createRateLimitedTelegramApi(
   }
 
   // `maxRetries` is the MAX NUMBER OF ATTEMPTS including the initial call.
-  // Semantically: budget of how many times we hit Telegram for this op.
-  // maxRetries=3 → up to 3 attempts (2 retries after the first failure).
+  // Background mode and reactions never retry. Before every attempt the
+  // shared FloodGate is consulted: an active ban either makes the call wait
+  // (short ban, critical call) or fails it locally without any request.
   async function withRetry<T>(method: string, op: () => Promise<T>): Promise<T> {
+    const group = groupOf(method)
+    const noRetry = cfg.background || group === 'reaction'
     let attempt = 0
-    let lastErr: unknown
     while (true) {
       attempt += 1
+      const remaining = gate.remainingMs(group)
+      if (remaining > 0) {
+        if (noRetry || remaining > cfg.maxInlineWaitMs) throw gate.errorFor(group)
+        const jitter =
+          cfg.jitterMaxMs > 0 ? Math.floor(Math.random() * cfg.jitterMaxMs) : 0
+        log.info('telegram flood ban active, waiting', { method, wait_ms: remaining + jitter })
+        await sleep(remaining + jitter)
+      }
       try {
         return await op()
       } catch (err) {
-        const r = parse429(err)
+        const r = parseFlood429(err)
         if (r === null) throw err
-        lastErr = err
-        if (attempt >= cfg.maxRetries) break
-        const jitter =
-          cfg.jitterMaxMs > 0 ? Math.floor(Math.random() * cfg.jitterMaxMs) : 0
-        const waitTotalMs = r.retryAfter * 1000 + jitter
-        log.warn('telegram 429, backing off', {
+        gate.recordBan(group, r.retryAfterSec)
+        const retryMs = r.retryAfterSec * 1000
+        if (noRetry || attempt >= cfg.maxRetries || retryMs > cfg.maxInlineWaitMs) {
+          log.warn('telegram 429, giving up', {
+            method,
+            retry_after_s: r.retryAfterSec,
+            attempt,
+            background: noRetry,
+          })
+          // Long ban: replace the raw error so the message carries the unban time.
+          if (retryMs > cfg.maxInlineWaitMs) throw gate.errorFor(group)
+          throw err
+        }
+        log.warn('telegram 429, short backoff', {
           method,
-          retry_after_s: r.retryAfter,
+          retry_after_s: r.retryAfterSec,
           attempt,
-          wait_ms: waitTotalMs,
         })
-        await sleep(waitTotalMs)
+        // The next iteration sleeps until the recorded ban expires.
       }
     }
-    throw lastErr
   }
 
   // Serialize per-chat outbound work: each new op awaits the previous op

@@ -39,6 +39,8 @@ import {
 } from './channel/tools.js'
 import { createSafeTelegramApi } from './safety/safe-telegram-api.js'
 import { createRateLimitedTelegramApi } from './safety/rate-limited-telegram-api.js'
+import { createBackgroundTelegramApi } from './safety/background-telegram-api.js'
+import { FloodGate } from './safety/flood-gate.js'
 import { redactSecrets } from './safety/redact.js'
 import { StatusManager } from './status/status-manager.js'
 import { ProgressReporter } from './status/progress-reporter.js'
@@ -479,12 +481,29 @@ const rawTelegramApi = createTelegramApi(bot, env.TELEGRAM_BOT_TOKEN, localApi)
 // queued op gets logged; no time wasted enqueueing text that would later be
 // downgraded). A burst of replies now paces itself instead of surfacing as
 // a 429 to the agent.
-const rateLimitedTelegramApi = createRateLimitedTelegramApi(rawTelegramApi, log)
+// FloodGate - единый на процесс учёт flood-бана (сохраняется на диск, чтобы
+// рестарт плагина не проверял бан запросами и не продлевал его).
+const floodGate = new FloodGate({ persistPath: join(statePaths.root, 'flood-ban.json'), log })
+const rateLimitedTelegramApi = createRateLimitedTelegramApi(rawTelegramApi, log, {
+  gate: floodGate,
+})
 // The bot token itself is included in extraSecrets so any code path that
 // accidentally tries to ship the token (e.g. error message including a
 // URL-with-token from grammy) gets it scrubbed before the bytes leave us.
 const apiSecrets: string[] = [...logSecrets, env.TELEGRAM_BOT_TOKEN]
 const telegramApi = createSafeTelegramApi(rateLimitedTelegramApi, log, apiSecrets)
+// Фоновый путь для статуса/прогресса/typing: без ретраев и ожидания бана,
+// правки схлопываются (последняя побеждает). Ответы агента идут через
+// telegramApi выше и не страдают от этих ограничений.
+const backgroundRateLimitedApi = createRateLimitedTelegramApi(rawTelegramApi, log, {
+  gate: floodGate,
+  background: true,
+})
+const backgroundTelegramApi = createSafeTelegramApi(
+  createBackgroundTelegramApi(backgroundRateLimitedApi, floodGate, log),
+  log,
+  apiSecrets,
+)
 
 const mcp = new Server(
   { name: 'labops-channel', version: '1.0.0' },
@@ -518,7 +537,7 @@ const mcp = new Server(
 // reference keeps each chat isolated to its own entry, and an
 // unlisted chat is fail-closed (no rolling status).
 const statusManager = new StatusManager({
-  telegramApi,
+  telegramApi: backgroundTelegramApi,
   config,
   log,
   policy: multichatPolicy ?? null,
@@ -528,13 +547,13 @@ const statusManager = new StatusManager({
 // per-tool activity in real time. StatusManager owns the transient
 // bubble (cancelled by reply()); ProgressReporter owns a thread that
 // survives. Both fire in parallel from the webhook handler.
-const progressReporter = new ProgressReporter({ telegramApi, config, log })
+const progressReporter = new ProgressReporter({ telegramApi: backgroundTelegramApi, config, log })
 
 // TaskMirror (PR-A2, 2026-05-20) — third rolling Telegram message per chat
 // showing Claude's TodoWrite milestones. Independent of the two surfaces
 // above; uses the same safe-wrapped telegramApi so every text/edit goes
 // through redact + HTML validation before leaving the process.
-const taskMirror = new TaskMirror({ telegramApi, config, log })
+const taskMirror = new TaskMirror({ telegramApi: backgroundTelegramApi, config, log })
 
 // InboundWatcher (PR-A3, 2026-05-20) — auto-reply «<агент> занят» when the
 // operator sends plain text while ProgressReporter says the session is
@@ -542,7 +561,7 @@ const taskMirror = new TaskMirror({ telegramApi, config, log })
 // detection — never mutates reporter state. Debounce + safe-api enforced
 // inside the watcher.
 const inboundWatcher = new InboundWatcher({
-  telegramApi,
+  telegramApi: backgroundTelegramApi,
   config,
   log,
   progressReporter,
@@ -811,7 +830,7 @@ if (
         sendMessage: (chatId, text, opts) =>
           telegramApi.sendMessage(chatId, text, opts),
         sendChatAction: (chatId, action) =>
-          telegramApi.sendChatAction(chatId, action),
+          backgroundTelegramApi.sendChatAction(chatId, action),
       },
       logger: log,
     })
