@@ -25,6 +25,7 @@ import {
   RuntimeEnvSchema,
   getStatePaths,
   loadConfig,
+  resolveBotApiConfig,
   redactToken,
   type AppConfig,
   type StatePaths,
@@ -35,12 +36,20 @@ import {
   callTool,
   createTelegramApi,
   listTools,
+  type TelegramApi,
   type ToolDeps,
 } from './channel/tools.js'
 import { createSafeTelegramApi } from './safety/safe-telegram-api.js'
 import { createRateLimitedTelegramApi } from './safety/rate-limited-telegram-api.js'
 import { createBackgroundTelegramApi } from './safety/background-telegram-api.js'
 import { FloodGate } from './safety/flood-gate.js'
+import {
+  createApiCallLog,
+  type ApiCallCategory,
+  type ApiCallLog,
+  type SkipReason,
+} from './safety/api-call-log.js'
+import { createLoggedTelegramApi, categoryFor } from './safety/logged-telegram-api.js'
 import { redactSecrets } from './safety/redact.js'
 import { StatusManager } from './status/status-manager.js'
 import { ProgressReporter } from './status/progress-reporter.js'
@@ -484,9 +493,35 @@ const rawTelegramApi = createTelegramApi(bot, env.TELEGRAM_BOT_TOKEN, localApi)
 // FloodGate - единый на процесс учёт flood-бана (сохраняется на диск, чтобы
 // рестарт плагина не проверял бан запросами и не продлевал его).
 const floodGate = new FloodGate({ persistPath: join(statePaths.root, 'flood-ban.json'), log })
-const rateLimitedTelegramApi = createRateLimitedTelegramApi(rawTelegramApi, log, {
-  gate: floodGate,
-})
+// Темп фоновых вызовов (typing / правки статуса) и журнал вызовов Bot API.
+const botApiConfig = resolveBotApiConfig(config)
+// Журнал: по строке JSON на вызов (без текста и токена), ротация по размеру.
+// Выключен -- заглушка, обёртки ниже тогда пропускаются.
+const apiCallLog: ApiCallLog | null = botApiConfig.log.enabled
+  ? createApiCallLog({
+      path: join(statePaths.root, 'logs', 'bot-api.jsonl'),
+      maxBytes: botApiConfig.log.max_bytes,
+      maxFiles: botApiConfig.log.max_files,
+      log,
+    })
+  : null
+// Накопленные счётчики пропусков не должны пропасть при выходе.
+process.once('exit', () => apiCallLog?.flush())
+const withApiLog = (api: TelegramApi, category: ApiCallCategory): TelegramApi =>
+  apiCallLog === null ? api : createLoggedTelegramApi(api, apiCallLog, category)
+// Пропуск вызова (лимит интервала или бан) -> счётчик журнала; без журнала -- пустышка.
+const onSkipped =
+  (path: ApiCallCategory) =>
+  (method: string, chatId: string, reason: SkipReason = 'skipped_banned'): void =>
+    apiCallLog?.recordSkip(method, chatId, categoryFor(method, path), reason)
+const rateLimitedTelegramApi = createRateLimitedTelegramApi(
+  withApiLog(rawTelegramApi, 'critical'),
+  log,
+  {
+    gate: floodGate,
+    onSkippedBanned: onSkipped('critical'),
+  },
+)
 // The bot token itself is included in extraSecrets so any code path that
 // accidentally tries to ship the token (e.g. error message including a
 // URL-with-token from grammy) gets it scrubbed before the bytes leave us.
@@ -495,12 +530,22 @@ const telegramApi = createSafeTelegramApi(rateLimitedTelegramApi, log, apiSecret
 // Фоновый путь для статуса/прогресса/typing: без ретраев и ожидания бана,
 // правки схлопываются (последняя побеждает). Ответы агента идут через
 // telegramApi выше и не страдают от этих ограничений.
-const backgroundRateLimitedApi = createRateLimitedTelegramApi(rawTelegramApi, log, {
-  gate: floodGate,
-  background: true,
-})
+const backgroundRateLimitedApi = createRateLimitedTelegramApi(
+  withApiLog(rawTelegramApi, 'background'),
+  log,
+  {
+    gate: floodGate,
+    background: true,
+    onSkippedBanned: onSkipped('background'),
+  },
+)
 const backgroundTelegramApi = createSafeTelegramApi(
-  createBackgroundTelegramApi(backgroundRateLimitedApi, floodGate, log),
+  createBackgroundTelegramApi(backgroundRateLimitedApi, floodGate, log, {
+    typingMinIntervalMs: botApiConfig.typing_min_interval_ms,
+    minEditIntervalMs: botApiConfig.edit_min_interval_ms,
+    chatEditGapMs: botApiConfig.chat_edit_gap_ms,
+    onSkip: onSkipped('background'),
+  }),
   log,
   apiSecrets,
 )

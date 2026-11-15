@@ -7,6 +7,12 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { z } from 'zod'
 
+import { DEFAULT_API_LOG_MAX_BYTES, DEFAULT_API_LOG_MAX_FILES } from './safety/api-call-log.js'
+import {
+  DEFAULT_CHAT_EDIT_GAP_MS,
+  DEFAULT_MIN_EDIT_INTERVAL_MS,
+  DEFAULT_TYPING_MIN_INTERVAL_MS,
+} from './safety/background-telegram-api.js'
 import { assertAbsoluteLocalDir, normalizeApiRoot } from './telegram/local-api.js'
 
 // ─────────────────────────────────────────────────────────────────────
@@ -27,6 +33,16 @@ import { assertAbsoluteLocalDir, normalizeApiRoot } from './telegram/local-api.j
 // All three are pure strings here so unit tests can assert what the
 // caller passed without invoking server.ts. The resolution itself
 // happens inside server.ts where `path` is already imported.
+// Границы темпа фоновых вызовов Bot API (см. AppConfigSchema.bot_api).
+// typing живёт 5 с у Telegram, чаще 4 с повторять бессмысленно; правки и зазор
+// между правками чата ниже этих значений уже упираются в лимит Telegram на чат.
+const MIN_TYPING_INTERVAL_MS = 4_000
+const MIN_EDIT_INTERVAL_MS = 2_000
+const MIN_CHAT_EDIT_GAP_MS = 1_000
+const MAX_BOT_API_INTERVAL_MS = 600_000
+const MIN_API_LOG_BYTES = 64 * 1024
+const MAX_API_LOG_FILES = 20
+
 export const MultichatConfigSchema = z.object({
   enabled: z.boolean().default(false),
   policy_path: z.string().optional(),
@@ -34,6 +50,26 @@ export const MultichatConfigSchema = z.object({
   workspace_dir: z.string().optional(),
 })
 export type MultichatConfig = z.infer<typeof MultichatConfigSchema>
+
+export const BotApiConfigSchema = z.object({
+  typing_min_interval_ms: z.number().int()
+    .min(MIN_TYPING_INTERVAL_MS).max(MAX_BOT_API_INTERVAL_MS).default(DEFAULT_TYPING_MIN_INTERVAL_MS),
+  edit_min_interval_ms: z.number().int()
+    .min(MIN_EDIT_INTERVAL_MS).max(MAX_BOT_API_INTERVAL_MS).default(DEFAULT_MIN_EDIT_INTERVAL_MS),
+  chat_edit_gap_ms: z.number().int()
+    .min(MIN_CHAT_EDIT_GAP_MS).max(MAX_BOT_API_INTERVAL_MS).default(DEFAULT_CHAT_EDIT_GAP_MS),
+  log: z.object({
+    enabled: z.boolean().default(true),
+    max_bytes: z.number().int().min(MIN_API_LOG_BYTES).default(DEFAULT_API_LOG_MAX_BYTES),
+    max_files: z.number().int().min(1).max(MAX_API_LOG_FILES).default(DEFAULT_API_LOG_MAX_FILES),
+  }).default({}),
+})
+export type BotApiConfig = z.infer<typeof BotApiConfigSchema>
+
+/** Темп фоновых вызовов и параметры журнала с дефолтами. */
+export function resolveBotApiConfig(config: { bot_api?: BotApiConfig | undefined }): BotApiConfig {
+  return BotApiConfigSchema.parse(config.bot_api ?? {})
+}
 
 export const AppConfigSchema = z.object({
   // Optional: when set (via config.json or TELEGRAM_EXPECTED_BOT_ID), the
@@ -163,6 +199,15 @@ export const AppConfigSchema = z.object({
     recent_buffer: z.number().int().positive().default(10),
     session_ttl_ms: z.number().int().positive().default(10 * 60 * 1000),
   }).default({}),
+  // Темп фоновых вызовов Bot API (flood-control, 15.11.2026). Фон = статус-пузырь,
+  // зеркало прогресса/задач, "агент занят", typing; ответы агента сюда не входят.
+  // Нижние границы защищают от настройки, которая снова приведёт к flood-бану:
+  //   typing_min_interval_ms   -- sendChatAction не чаще раза в N мс на чат;
+  //   edit_min_interval_ms     -- правка ОДНОГО статус-сообщения не чаще раза в N мс;
+  //   chat_edit_gap_ms         -- любые фоновые правки в одном чате не чаще раза в N мс.
+  // log -- журнал вызовов Bot API (logs/bot-api.jsonl, без текста и токена).
+  // Не задано -- см. resolveBotApiConfig (дефолты применяются там).
+  bot_api: BotApiConfigSchema.optional(),
   // TaskMirror (PR-A2, 2026-05-20) — third rolling Telegram message per chat,
   // showing Claude's TodoWrite milestones (in-progress / pending / completed).
   // Coexists with StatusManager bubble and ProgressReporter activity thread —
@@ -312,6 +357,11 @@ export type AppConfig = z.infer<typeof AppConfigSchema>
 // RuntimeEnv — environment variables that can override config.json
 // ─────────────────────────────────────────────────────────────────────
 
+// Пустая строка из channel.env ("VAR=") должна читаться как "не задано".
+function emptyAsUndefined<T extends z.ZodTypeAny>(inner: T): z.ZodEffects<T> {
+  return z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), inner) as z.ZodEffects<T>
+}
+
 export const RuntimeEnvSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1),
   TELEGRAM_STATE_DIR: z.string().optional(),
@@ -360,6 +410,16 @@ export const RuntimeEnvSchema = z.object({
     .optional(),
   TELEGRAM_STATUS_INTERVAL_MS: z.coerce.number().int().positive().optional(),
   TELEGRAM_ALBUM_FLUSH_MS: z.coerce.number().int().positive().optional(),
+  // Темп фоновых вызовов Bot API. Пустая строка = не задано; границы проверяет
+  // AppConfigSchema.bot_api (значение вне границ -- ошибка загрузки конфига, а не
+  // молчаливая подмена).
+  TELEGRAM_TYPING_MIN_INTERVAL_MS: emptyAsUndefined(z.coerce.number().int().positive().optional()),
+  TELEGRAM_STATUS_EDIT_MIN_INTERVAL_MS: emptyAsUndefined(z.coerce.number().int().positive().optional()),
+  TELEGRAM_CHAT_EDIT_GAP_MS: emptyAsUndefined(z.coerce.number().int().positive().optional()),
+  // Журнал вызовов Bot API; по умолчанию включён. 0/false/no/off -- выключить.
+  TELEGRAM_API_LOG_ENABLED: emptyAsUndefined(
+    z.string().transform((v) => !/^(0|false|no|off)$/i.test(v.trim())).optional(),
+  ),
   // Локальный сервис расшифровки голоса (voice-transcriber): адрес и Bearer-токен.
   VOICE_TRANSCRIBER_URL: z.string().optional(),
   VOICE_TRANSCRIBER_TOKEN: z.string().optional(),
@@ -559,6 +619,24 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     album.flush_ms = parsedEnv.TELEGRAM_ALBUM_FLUSH_MS
   }
   if (Object.keys(album).length > 0) merged.album = album
+
+  // Темп фоновых вызовов Bot API и журнал вызовов.
+  const botApi = (merged.bot_api && typeof merged.bot_api === 'object' ? merged.bot_api : {}) as Record<string, unknown>
+  if (parsedEnv.TELEGRAM_TYPING_MIN_INTERVAL_MS !== undefined) {
+    botApi.typing_min_interval_ms = parsedEnv.TELEGRAM_TYPING_MIN_INTERVAL_MS
+  }
+  if (parsedEnv.TELEGRAM_STATUS_EDIT_MIN_INTERVAL_MS !== undefined) {
+    botApi.edit_min_interval_ms = parsedEnv.TELEGRAM_STATUS_EDIT_MIN_INTERVAL_MS
+  }
+  if (parsedEnv.TELEGRAM_CHAT_EDIT_GAP_MS !== undefined) {
+    botApi.chat_edit_gap_ms = parsedEnv.TELEGRAM_CHAT_EDIT_GAP_MS
+  }
+  if (parsedEnv.TELEGRAM_API_LOG_ENABLED !== undefined) {
+    const apiLog = (botApi.log && typeof botApi.log === 'object' ? botApi.log : {}) as Record<string, unknown>
+    apiLog.enabled = parsedEnv.TELEGRAM_API_LOG_ENABLED
+    botApi.log = apiLog
+  }
+  if (Object.keys(botApi).length > 0) merged.bot_api = botApi
 
   const webhook = (merged.webhook && typeof merged.webhook === 'object' ? merged.webhook : {}) as Record<string, unknown>
   if (parsedEnv.TELEGRAM_WEBHOOK_HOST !== undefined) webhook.host = parsedEnv.TELEGRAM_WEBHOOK_HOST
