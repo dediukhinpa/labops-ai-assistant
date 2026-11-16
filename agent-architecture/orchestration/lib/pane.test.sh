@@ -66,6 +66,25 @@ has_prompt "$AUTH_DEAD"      && ok "auth-dead pane still renders a prompt (why i
 is_stuck_input "$AUTH_DEAD"  && bad "auth-dead pane misread as stuck input" \
                              || ok "auth-dead pane is not stuck input (nothing typed)"
 
+# Реальная панель zakupant 2026-11-16: срок входа истёк, токены стёрты, в строке
+# статуса «Not logged in». Раньше не ловилась — агенты молчали, watchdog молчал.
+NOT_LOGGED_IN=' ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Sonnet 5.5 · API Usage Billing
+                                                    Not logged in · Run /login
+────────────────────
+❯ Try "create a util logging.py that..."
+────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+has_auth_error "$NOT_LOGGED_IN" && ok "«Not logged in» detected as auth error" \
+                                || bad "«Not logged in» missed"
+# А напоминание о скором истечении — нет: сессия при нём ещё рабочая.
+LOGIN_EXPIRES_SOON='⚠ Your login expires in 3 days · run /login to renew
+────────────────────
+❯
+  ⏵⏵ bypass permissions on'
+has_auth_error "$LOGIN_EXPIRES_SOON" && bad "login-expiry reminder misread as auth error" \
+                                     || ok "login-expiry reminder is not an auth error"
+
 # ---- мастер первого запуска -------------------------------------------------
 # Реальный хвост панели developer 2026-09-09, снятый ровно так, как его берёт
 # watchdog (capture-pane -S -8): сессия перезапустилась на обновившийся CLI и
@@ -788,6 +807,33 @@ if grep -n -A 6 'looks_like_bypass_permissions_prompt "\$TAIL"' "$W" | grep -q '
   bad "watchdog перезапускает сессию на гейте bypass — это и есть петля"
 else
   ok "watchdog не перезапускает сессию на гейте bypass"
+fi
+
+# ---- восстановление авторизации: heartbeat от SessionStart не доказательство ----
+# 16.11.2026: после рестарта хук SessionStart писал свежий heartbeat, watchdog
+# объявлял «авторизация восстановлена», сбрасывал ладдер — и вместо тревоги
+# оператору перезапускал агентов без входа по кругу.
+W="$HERE/../watchdog.sh"
+eval "$(sed -n '/^heartbeat_since() {/,/^}/p' "$W")"
+HEARTBEAT_FILE="$TEST_TMP/heartbeat"
+echo 1000 > "$HEARTBEAT_FILE"
+heartbeat_since 1000 && bad "heartbeat_since: равный момент засчитан" \
+                     || ok "heartbeat_since: heartbeat в момент рестарта не засчитан"
+heartbeat_since 999  && ok "heartbeat_since: более поздний heartbeat засчитан" \
+                     || bad "heartbeat_since: более поздний heartbeat не засчитан"
+echo garbage > "$HEARTBEAT_FILE"
+heartbeat_since 0    && bad "heartbeat_since: мусор в файле засчитан" \
+                     || ok "heartbeat_since: мусор в файле не засчитан"
+RESET_BLOCK="$(grep -n -A3 'if \[ "$AUTH_RESTARTED" -eq 1 \]' "$W")"
+if printf '%s' "$RESET_BLOCK" | grep -q 'heartbeat_since $(( AUTH_RESTART_AT'; then
+  ok "сброс auth-ладдера требует heartbeat позже рестарта"
+else
+  bad "сброс auth-ладдера по любому свежему heartbeat (в т.ч. от SessionStart)"
+fi
+if grep -A1 'restart_session "ошибка авторизации Claude' "$W" | grep -q 'AUTH_RESTART_AT=$(date +%s)'; then
+  ok "момент auth-рестарта запоминается сразу после рестарта"
+else
+  bad "момент auth-рестарта не запоминается"
 fi
 
 echo

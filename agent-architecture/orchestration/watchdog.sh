@@ -39,6 +39,13 @@ heartbeat_age() {   # seconds since last heartbeat, or 999999 if absent/unreadab
   echo $(( now - hb ))
 }
 heartbeat_fresh() { [ "$(heartbeat_age)" -le "$HEARTBEAT_GRACE" ]; }
+# heartbeat_since <epoch> — heartbeat записан строго позже указанного момента?
+heartbeat_since() {
+  local hb
+  hb=$(cat "$HEARTBEAT_FILE" 2>/dev/null || echo '')
+  case "$hb" in ''|*[!0-9]*) return 1;; esac
+  [ "$hb" -gt "$1" ]
+}
 
 # Best-effort Telegram alerts to the Operator on failures/restarts. Opt-in via
 # WATCHDOG_TG_ALERTS (default 1); never fatal; throttled. See lib/notify.sh.
@@ -229,6 +236,14 @@ IDLE_CONSOLIDATED=0
 # только доказанным восстановлением (см. ветку (A2) и сброс ниже), НЕ рестартом:
 # иначе при реально отозванном доступе получился бы вечный цикл рестартов.
 AUTH_RESTARTED=0
+# Момент, после которого heartbeat считается доказательством восстановления.
+# Хук SessionStart тоже пишет heartbeat, а он срабатывает при любом старте —
+# в том числе у сессии без входа. Поэтому свежий heartbeat сразу после рестарта
+# ничего не доказывает: раньше по нему watchdog объявлял «авторизация
+# восстановлена», сбрасывал ладдер и вместо тревоги оператору перезапускал
+# агента по кругу. Засчитываем только heartbeat позже рестарта + запас на старт.
+AUTH_RESTART_AT=0
+AUTH_RECOVERY_MARGIN_SEC="${WATCHDOG_AUTH_RECOVERY_MARGIN_SEC:-15}"
 # То же самое для мастера первого запуска (ветка A1): один рестарт на эпизод.
 ONBOARDING_RESTARTED=0
 # Вопрос о каналах для разработки (ветка A0): сколько раз ответили за эпизод.
@@ -442,7 +457,9 @@ while true; do
     # Эпизод auth-сбоя считаем закрытым только по доказательству: ход реально
     # прошёл (свежий heartbeat) и ошибки в панели нет. Просто перерисовка панели
     # доказательством не является — после рестарта она новая всегда.
-    if [ "$AUTH_RESTARTED" -eq 1 ] && heartbeat_fresh && ! has_auth_error "$TAIL"; then
+    if [ "$AUTH_RESTARTED" -eq 1 ] && heartbeat_fresh \
+       && heartbeat_since $(( AUTH_RESTART_AT + AUTH_RECOVERY_MARGIN_SEC )) \
+       && ! has_auth_error "$TAIL"; then
       AUTH_RESTARTED=0
       log "авторизация восстановлена (ход прошёл) — сброс auth-ладдера"
     fi
@@ -550,6 +567,7 @@ while true; do
       AUTH_RESTARTED=1
       log "ошибка авторизации в панели, heartbeat протух ($(heartbeat_age)s) — пробую рестарт сессии"
       restart_session "ошибка авторизации Claude — сессия жива, но ходы не выполняются"
+      AUTH_RESTART_AT=$(date +%s)
       continue
     fi
     log "ошибка авторизации сохраняется после рестарта — эскалация оператору"
