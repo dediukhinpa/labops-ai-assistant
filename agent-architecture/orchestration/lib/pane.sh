@@ -177,7 +177,12 @@ dev_channels_prompt_wait_gone() {
 # Практически всегда лечится рестартом сессии: свежий процесс перечитывает
 # ~/.claude/.credentials.json. Если же доступ реально отозван — рестарт не
 # поможет, поэтому watchdog пробует его ОДИН раз и дальше зовёт оператора.
-AUTH_ERR_RE='disabled Claude subscription access|Invalid API key|Please run /login|OAuth token (has )?expired|Credit balance is too low|authentication_error|Unauthorized'
+# «Not logged in» — строка статуса, когда срок входа истёк и Claude стёр токены из
+# credentials.json (loginEnded=time_limit). Найдено 16.11.2026 у клиента: агенты
+# сутки показывали «Not logged in · Run /login», а watchdog считал их живыми.
+# Напоминание «Your login expires in N days · run /login to renew» сюда НЕ
+# подпадает намеренно: сессия при нём ещё рабочая.
+AUTH_ERR_RE='disabled Claude subscription access|Invalid API key|Please run /login|Not logged in|OAuth token (has )?expired|Credit balance is too low|authentication_error|Unauthorized'
 
 # has_auth_error <pane-text> — в панели видна ошибка авторизации/доступа?
 has_auth_error() { printf '%s' "${1:-}" | grep -qaE "$AUTH_ERR_RE"; }
