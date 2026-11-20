@@ -15,6 +15,8 @@ describe('accessRuleText', () => {
     expect(text).not.toContain('Refuse')
     // после перезапуска сессия пустая: ответ про доступ берётся из файла, а не из памяти
     expect(text).toContain('do not answer from memory')
+    // перед самоперезапуском итог пишется в журнал: стоп-хук после kill-session не сработает
+    expect(text).toContain('active-writer.sh')
   })
 
   test('any other value keeps the default rule', () => {
