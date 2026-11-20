@@ -30,6 +30,7 @@ it when the description matches.
 | `second_brain-doctor` | Diagnose the agent's second_brain setup end to end; output is redacted. | second_brain |
 | `local-voice` | Transcribe voice/audio files (`.ogg`) with the local voice-transcriber service (faster-whisper); audio never leaves the host. | `VOICE_TRANSCRIBER_TOKEN` |
 | `agent-browser` | Browser automation CLI (Chrome/Chromium via CDP). Navigate, click, fill forms, screenshot. | `agent-browser` binary + Chrome, not installed by `install.sh` |
+| `web-search` | Web search through the OpenAI web_search tool of the ChatGPT subscription behind the local gateway (the built-in WebSearch does not work there). | OpenAI gateway (`--openai-adapter`) |
 
 | `deep-research` | Cited, cross-checked research report with stated confidence and gaps. | web search; perplexity-research skill optional |
 | `report-generator` | Formatted report from numbers, tables and metrics. | - |
