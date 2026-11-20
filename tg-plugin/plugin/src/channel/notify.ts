@@ -14,6 +14,11 @@
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import type { Logger } from '../log.js'
+import {
+  createTmuxRunner,
+  resolveAgentSession,
+  type TmuxRunner,
+} from './ensure-submit.js'
 
 export type ChannelEvent = {
   content: string
@@ -51,6 +56,72 @@ export function normalizeMeta(raw: Record<string, unknown>): Record<string, stri
   return out
 }
 
+// Режим доставки «в окно tmux». Нужен там, где Claude Code не включает каналы
+// (`Channels are not currently available`): например, агент работает через шлюз
+// LiteLLM без входа в аккаунт Claude. Тогда notifications/claude/channel уходит в
+// пустоту, а сообщение оператора надо напечатать в сессию так, как это сделал бы
+// человек. Ответы агент по-прежнему шлёт инструментами этого же MCP-сервера.
+export const INBOUND_VIA_TMUX_ENV = 'LABOPS_INBOUND_VIA_TMUX'
+
+// Управляющие символы (включая ESC) из текста вырезаем: иначе сообщение из Telegram
+// могло бы закрыть bracketed paste раньше времени и подсунуть терминалу свои клавиши.
+// Перевод строки и табуляция остаются.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS_RE = /[\u0000-\u0008\u000b-\u001f\u007f]/g
+
+export function inboundViaTmuxEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[INBOUND_VIA_TMUX_ENV] === '1'
+}
+
+/**
+ * Текст, который агент увидит в поле ввода: тот же вид, что Claude Code рисует для
+ * канала, чтобы инструкции агента («отвечай в chat_id из тега channel») работали.
+ */
+export function formatInboundForTmux(event: ChannelEvent): string {
+  const attrs = Object.entries(event.meta)
+    .map(([key, value]) => `${key}="${value.replace(CONTROL_CHARS_RE, ' ').replace(/"/g, "'")}"`)
+    .join(' ')
+  const body = event.content.replace(CONTROL_CHARS_RE, '')
+  return `<channel source="labops-channel" ${attrs}>\n${body}\n</channel>`
+}
+
+export interface TmuxDeliveryOptions {
+  /** Для тестов: подмена tmux. */
+  runner?: TmuxRunner
+  env?: NodeJS.ProcessEnv
+}
+
+// Сообщения печатаются строго по одному: два параллельных send-keys перемешали бы текст.
+let tmuxQueue: Promise<unknown> = Promise.resolve()
+
+async function deliverViaTmux(
+  event: ChannelEvent,
+  log: Logger,
+  opts: TmuxDeliveryOptions,
+): Promise<boolean> {
+  const session = resolveAgentSession(opts.env ?? process.env)
+  if (session.length === 0) {
+    log.error('tmux inbound: no AGENT_ID, cannot pick the session')
+    return false
+  }
+  const runner = opts.runner ?? createTmuxRunner()
+  const text = formatInboundForTmux(event)
+  const job = tmuxQueue.then(async () => {
+    await runner.submitText(session, text)
+    return true
+  })
+  tmuxQueue = job.catch(() => undefined)
+  try {
+    return await job
+  } catch (err) {
+    log.error('tmux inbound delivery failed', {
+      session,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return false
+  }
+}
+
 // Returns true when server.notification accepted the write; false when the
 // transport threw (error already logged). Callers MUST honour false: poller
 // dead-letters the update, webhook returns 503.
@@ -58,7 +129,9 @@ export async function sendChannelNotification(
   server: Server,
   event: ChannelEvent,
   log: Logger,
+  opts: TmuxDeliveryOptions = {},
 ): Promise<boolean> {
+  if (inboundViaTmuxEnabled(opts.env)) return deliverViaTmux(event, log, opts)
   try {
     await server.notification({
       method: 'notifications/claude/channel',
