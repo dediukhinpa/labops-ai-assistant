@@ -22,6 +22,7 @@ set -euo pipefail
 #   bash install.sh --proxy-only # только прокси (Squid) для Donut Browser, без агента
 #   SKIP_SECOND_BRAIN=1 bash install.sh   # не клонировать общий мозг
 #   SKIP_SELFTEST=1 bash install.sh       # не останавливать установку на self-test
+#   SKIP_CLAUDE_LOGIN=1 bash install.sh   # не входить в Claude Code при установке (войти позже)
 #
 # Все прочие флаги/переменные окружения пробрасываются в
 # agent-architecture/install.sh без изменений.

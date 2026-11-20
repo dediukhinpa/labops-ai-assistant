@@ -52,6 +52,8 @@
 #   PREFLIGHT_DONE=1          # пропустить проверку доступности внешних хостов
 #   SKIP_SELFTEST=1           # не останавливать установку на self-test (осознанный обход
 #                             # оператором; в режиме --test-only игнорируется)
+#   SKIP_CLAUDE_LOGIN=1       # не входить в Claude Code при установке: агент создаётся, но к
+#                             # модели не подключится, пока не выполните вход (см. итог установки)
 #
 # Монорепо (обычно задаётся корневым ../install.sh — единой точкой входа):
 #   TG_PLUGIN_DIR=<path>      # взять tg-plugin из локального дерева, НЕ клонировать
@@ -855,8 +857,16 @@ creds_valid() {
   [ -n "$token" ]
 }
 
+# Вход можно отложить: SKIP_CLAUDE_LOGIN=1 или «s» на приглашении ниже. Раньше установка
+# без входа обрывалась намертво — а у оператора бывает, что браузера под рукой нет или
+# подписку подключат позже. new-agent.sh без входа не падает: агент создаётся и
+# помечается degraded, войти можно потом одной командой (печатаем её в итоге).
+CLAUDE_LOGIN_SKIPPED=0
 if creds_valid; then
   ok "Claude Code уже авторизован (\$HOME/.claude/.credentials.json)"
+elif [ "${SKIP_CLAUDE_LOGIN:-0}" = "1" ]; then
+  CLAUDE_LOGIN_SKIPPED=1
+  warn "вход в Claude Code пропущен (SKIP_CLAUDE_LOGIN=1) — агент не подключится к модели до входа"
 else
   say "Вход в Claude Code (подписка Max/Pro)"
   echo "  Сейчас подключу вас к сессии логина в этом же терминале."
@@ -867,9 +877,20 @@ else
   echo "  нажмите Enter — вот тогда появится ссылка для входа в браузере."
   echo "  Как только вход завершится, установщик сам это обнаружит и"
   echo "  закроет сессию — руками жать /exit не нужно."
-  printf "${UI_INFO}[?]${UI_RESET} %s" "Нажмите Enter, чтобы продолжить... "
-  read -r _
+  echo "  Войти позже: введите s — установка продолжится без входа."
+  printf "${UI_INFO}[?]${UI_RESET} %s" "Enter — войти сейчас, s — пропустить: "
+  LOGIN_CHOICE=""
+  # Без терминала (stdin закрыт) read падает — считаем это отказом от входа, а не ошибкой.
+  read -r LOGIN_CHOICE || LOGIN_CHOICE="s"
+  case "$LOGIN_CHOICE" in
+    s|S|ы|Ы)
+      CLAUDE_LOGIN_SKIPPED=1
+      warn "вход отложен — агент будет создан, но к модели не подключится до входа"
+      ;;
+  esac
+fi
 
+if [ "$CLAUDE_LOGIN_SKIPPED" = "0" ] && ! creds_valid; then
   LOGIN_SESSION="installer-login-$$"
   tmux new-session -d -s "$LOGIN_SESSION" \
     "claude --dangerously-skip-permissions; sleep 2"
@@ -903,7 +924,7 @@ else
     tmux kill-session -t "=$LOGIN_SESSION" 2>/dev/null || true
     ok "Claude Code авторизован (\$HOME/.claude/.credentials.json)"
   else
-    die "вход не завершён (валидный accessToken в \$HOME/.claude/.credentials.json так и не появился) — перезапустите ./install.sh, когда будете готовы войти."
+    die "вход не завершён (валидный accessToken в \$HOME/.claude/.credentials.json так и не появился) — перезапустите ./install.sh, когда будете готовы войти, или продолжите без входа: SKIP_CLAUDE_LOGIN=1 ./install.sh"
   fi
 fi
 
@@ -1040,6 +1061,11 @@ if [ "$NEW_AGENT_STATUS" = "ok" ]; then
 else
   printf "  ${UI_WARN}Developer создан, но не всё включено — см. список «Что НЕ работает» выше.${UI_RESET}\n"
   echo "  Пока эти пункты не закрыты, агент может не отвечать в Telegram."
+fi
+if [ "$CLAUDE_LOGIN_SKIPPED" = "1" ] && ! creds_valid; then
+  printf "  ${UI_WARN}Вход в Claude Code отложен — агент не ответит, пока вы не войдёте:${UI_RESET}\n"
+  printf "    ${UI_BOLD}claude --dangerously-skip-permissions${UI_RESET}   # /login, вход по ссылке, затем /exit\n"
+  echo "  и затем перезапустите сессию агента командой ниже."
 fi
 echo "  Перезапустить сессию агента вручную:"
 printf "    ${UI_BOLD}bash %s/orchestration/start-agent.sh %s${UI_RESET}\n" \
