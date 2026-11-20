@@ -170,6 +170,7 @@ echo "── 7. Heartbeat-хук живости (heartbeat-hook.sh) ──"
 unit "heartbeat-hook.sh: атомарная запись / sdk-guard / advance — юнит-тест зелёный" "heartbeat-hook.sh: юнит-тест провален (agent-template/hooks/heartbeat-hook.test.sh)" bash agent-template/hooks/heartbeat-hook.test.sh
 
 echo "── 7a. sdk-guard во всех хуках (защита от рекурсии) ──"
+unit "session-start-hook.sh: хвост эпизодической памяти выдаётся в контекст — юнит-тест зелёный" "session-start-hook.sh: юнит-тест провален (agent-template/hooks/session-start-hook.test.sh)" bash agent-template/hooks/session-start-hook.test.sh
 unit "sdk-guard: stop/session-start/precompact выходят без побочных эффектов — юнит-тест зелёный" "sdk-guard: юнит-тест провален (agent-template/hooks/sdk-guard.test.sh)" bash agent-template/hooks/sdk-guard.test.sh
 
 echo "── 7b. start-agent: проброс agent.env с placeholder-guard ──"

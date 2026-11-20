@@ -70,6 +70,25 @@ printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TRANSCRIPT" \
     | AGENT_WORKSPACE="$TWS" bash "$SCRIPT_DIR/active-writer.sh" --source stop-hook >/dev/null
 grep -q 'Ответ из стенограммы' "$TWS/core/active/episodic.md"; check 0 $? "текст взят из стенограммы"
 
+echo "== просьба человека пишется рядом с ответом =="
+QWS="$TMP/req"; mkdir -p "$QWS/core/active"
+TR="$TMP/transcript.jsonl"
+{
+    printf '%s\n' '{"message":{"role":"user","content":"старый вопрос"}}'
+    printf '%s\n' '{"message":{"role":"assistant","content":[{"type":"text","text":"старый ответ"}]}}'
+    printf '%s\n' '{"message":{"role":"user","content":"<channel source=\"labops-channel\" chat_id=\"1\">\nДобавь два ID в список доступа\n</channel>"}}'
+    printf '%s\n' '{"message":{"role":"user","content":[{"type":"tool_result","content":"ШУМ_ИНСТРУМЕНТА"}]}}'
+} > "$TR"
+printf '{"last_assistant_message":"Оба ID добавил.","transcript_path":"%s"}' "$TR" \
+    | AGENT_WORKSPACE="$QWS" bash "$SCRIPT_DIR/active-writer.sh" --source stop-hook >/dev/null
+EPQ="$QWS/core/active/episodic.md"
+grep -q 'Просьба: Добавь два ID в список доступа | Ответ: Оба ID добавил' "$EPQ"; check 0 $? "просьба и ответ в одной записи"
+if grep -q -e '<channel' -e 'ШУМ_ИНСТРУМЕНТА' -e 'старый вопрос' "$EPQ"; then
+    check 0 1 "обёртка канала, результаты инструментов и старые вопросы отброшены"
+else
+    check 0 0 "обёртка канала, результаты инструментов и старые вопросы отброшены"
+fi
+
 echo ""
 echo "active-writer.test.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

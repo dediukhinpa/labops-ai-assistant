@@ -108,6 +108,43 @@ print(text.replace("\n", " ")[:maxlen])
 PY
 }
 
+# Последняя просьба человека из журнала сессии (transcript_path в payload Стоп-хука).
+# Без неё запись хранит только ответ агента: после перезапуска непонятно, о чём шла речь.
+# Обёртка <channel ...> из сообщений Telegram снимается, остаётся текст человека.
+extract_request() {
+    local payload="${1:-}"
+    PAYLOAD_E="$payload" MAXLEN="$SNIPPET_MAX" python3 -I - <<'PY2' 2>/dev/null || true
+import json, os, re
+maxlen = int(os.environ["MAXLEN"])
+try:
+    path = json.loads(os.environ["PAYLOAD_E"]).get("transcript_path")
+except Exception:
+    path = None
+last = ""
+if isinstance(path, str):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    msg = json.loads(line).get("message") or {}
+                except ValueError:
+                    continue
+                if msg.get("role") != "user":
+                    continue
+                content = msg.get("content")
+                if isinstance(content, list):
+                    # результаты инструментов тоже приходят ролью user: это не человек
+                    content = " ".join(c.get("text", "") for c in content
+                                       if isinstance(c, dict) and c.get("type") == "text")
+                if isinstance(content, str) and content.strip():
+                    last = content
+    except OSError:
+        pass
+last = re.sub(r"</?channel[^>]*>", " ", last)
+print(" ".join(last.split())[:maxlen])
+PY2
+}
+
 main() {
     local source="agent" text=""
     while [ $# -gt 0 ]; do
@@ -127,7 +164,13 @@ main() {
 
     # Text may come via --text or be extracted from a stdin payload.
     if [ -z "$text" ]; then
-        text="$(extract_snippet)"
+        local payload request
+        payload="$(cat || true)"
+        text="$(printf '%s' "$payload" | extract_snippet)"
+        request="$(extract_request "$payload")"
+        if [ -n "$request" ] && [ -n "$text" ]; then
+            text="Просьба: ${request} | Ответ: ${text}"
+        fi
     else
         text="$(printf '%s' "$text" | tr '\n' ' ')"
         text="${text:0:$SNIPPET_MAX}"
