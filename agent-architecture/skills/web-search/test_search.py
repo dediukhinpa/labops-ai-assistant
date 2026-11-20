@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -51,12 +52,10 @@ class ParseSseTest(unittest.TestCase):
 
 class EnvFileTest(unittest.TestCase):
     def test_reads_values_without_quotes(self) -> None:
-        path = Path(self.id() + ".env")
-        try:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.env"
             path.write_text("A=1\n# c\nB='два'\n", encoding="utf-8")
             self.assertEqual(search.read_env_file(path), {"A": "1", "B": "два"})
-        finally:
-            path.unlink(missing_ok=True)
 
     def test_missing_file_is_empty(self) -> None:
         self.assertEqual(search.read_env_file(Path("/нет/такого")), {})
