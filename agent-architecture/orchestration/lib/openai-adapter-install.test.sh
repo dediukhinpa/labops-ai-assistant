@@ -16,7 +16,7 @@ SRC="$HERE/../../openai-adapter"
 grep -q -- '--hash=sha256:' "$SRC/requirements.lock" || fail "в lock-файле нет хэшей"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
-for t in bash env cat sed grep install mktemp rm id awk df tr dirname head tail cp touch test chmod; do
+for t in bash env cat sed grep install mktemp rm id awk df tr dirname head tail cp touch test chmod sh; do
   p="$(type -P "$t")" && ln -sf "$p" "$BIN/$t"
 done
 LOG="$TMP/calls.log"; : > "$LOG"
@@ -40,6 +40,7 @@ LOGIN_TOKEN="fake-access-token-9f8e7d6c"
 cat > "$DIR/.venv/bin/python" <<PYSTUB
 #!/usr/bin/env bash
 echo "login \$CHATGPT_TOKEN_DIR" >> "$LOG"
+echo "cwd \$(pwd -P)" >> "$LOG"
 echo "Sign in with ChatGPT using device code: https://auth.openai.com/codex/device CODE-1234"
 [ -z "\${LOGIN_FAIL:-}" ] || exit 1
 [ -n "\${LOGIN_NO_FILE:-}" ] || printf '{"access_token":"$LOGIN_TOKEN"}' > "\$CHATGPT_TOKEN_DIR/auth.json"
@@ -68,6 +69,14 @@ CONF="$ETC/config.yaml"; ENVF="$ETC/adapter.env"; UNIT="$UNITS/labops-openai-ada
 SHARED="$HOME_A/.claude-lab/shared/secrets/openai-adapter.env"
 grep -q 'model_name: gpt-test-1' "$CONF" || fail "в конфиге нет имени модели"
 grep -q 'model: chatgpt/gpt-test-1' "$CONF" || fail "в конфиге нет chatgpt/<модель>"
+grep -qx '  callbacks: flatten_system.flatten_system' "$CONF" || fail "в конфиге нет хука flatten_system"
+grep -qx '  disable_cooldowns: true' "$CONF" || fail "в конфиге нет disable_cooldowns: после 401 клиент получит 429"
+cmp -s "$SRC/flatten_system.py" "$ETC/flatten_system.py" || fail "хук не установлен рядом с конфигом"
+[ "$(stat -c %a "$ETC/flatten_system.py")" = "640" ] || fail "права хука не 640"
+# На сервер ставится только сам хук: юнит-тесты и смоук остаются в репозитории.
+STRAY="$(find "$ETC" "$DIR" -path "$DIR/.venv" -prune -o \( -name tests -o -name smoke \) -print)"
+[ -z "$STRAY" ] || fail "в /etc или каталог адаптера попали tests/ или smoke/"
+[ "$(find "$ETC" -name '*.py' | wc -l)" -eq 1 ] || fail "в каталоге конфига лишние .py, кроме хука"
 grep -q 'mode: responses' "$CONF" || fail "режим responses не задан: новая модель уйдёт в chat/completions"
 grep -q '__MODEL__' "$CONF" && fail "в конфиге остался плейсхолдер"
 grep -qi 'api_key\|OPENAI_API_KEY' "$CONF" && fail "в конфиге остались следы ключа API"
@@ -80,6 +89,7 @@ grep -qx 'LITELLM_LOCAL_MODEL_COST_MAP=True' "$ENVF" || fail "адаптер б�
 [ "$(stat -c %a "$STATE")" = "700" ] || fail "каталог токенов не 700: $(stat -c %a "$STATE")"
 [ "$(stat -c %a "$STATE/auth.json")" = "600" ] || fail "токены входа не 600"
 grep -qx "login $STATE" "$LOG" || fail "вход в ChatGPT не запускался в каталоге токенов"
+grep -qx "cwd $(cd "$STATE" && pwd -P)" "$LOG" || fail "вход запущен не из каталога токенов: у службы нет доступа к чужой папке"
 echo "$OUT" | grep -q "CODE-1234" || fail "человеку не показан код входа"
 grep -q -- '--host 127.0.0.1' "$UNIT" || fail "юнит слушает не только 127.0.0.1"
 grep -q -- '--port 4000' "$UNIT" || fail "в юните не тот порт"
@@ -115,7 +125,7 @@ echo "$OUT" | grep -q "недопустимые символы" || fail "нет 
 # 4. Без модели и без терминала берётся рекомендуемая: вопрос задать некому.
 rm -rf "$ETC"
 ENV_EXTRA="X=1" OUT="$(run_install 2>&1 </dev/null)" || fail "без модели установка должна взять рекомендуемую: $OUT"
-grep -q 'model: chatgpt/gpt-5.5' "$ETC/config.yaml" || fail "рекомендуемая модель не подставлена"
+grep -q 'model: chatgpt/gpt-6.1-sol' "$ETC/config.yaml" || fail "рекомендуемая модель не подставлена"
 
 # 5. Вход не завершён - установка честно падает и службу не запускает.
 rm -rf "$ETC" "$STATE"; : > "$LOG"
