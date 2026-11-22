@@ -3,17 +3,30 @@ import type { ProxyConfig } from './config';
 import {
   HEALTH_ROUTE, MAX_REQUEST_BODY_BYTES, QUOTA_PROBE_MAX_TOKENS, QUOTA_PROBE_TEXT,
   SERVER_IDLE_TIMEOUT_S, SESSION_HEADER, UPSTREAM_ERROR_BODY_MAX_BYTES, UPSTREAM_LOG_HEADER,
+  CODEX_SESSION_HEADERS,
 } from './proxy-constants';
 import {
   FileConsentGate, HttpMediaMasker, HttpPseudonymizer, MediaMaskerError, MediaProcessor, PseudonymizerError,
   RequestMasker, RequestRejectedError, Restorer, STATUS_BAD_GATEWAY, STATUS_BAD_REQUEST,
   STATUS_PII_FOUND, STATUS_UNAVAILABLE, STATUS_UNSUPPORTED_ENCODING, checkWindows, errorResponse,
-  formatSse, isObject, parseSse, restoreMessageJson, restoreSse, sessionFingerprint,
-  type JsonObject, type LogFields, type Logger, type Pseudonymizer, type SseEvent,
+  formatSse, isObject, parseSse, restoreMessageJson, restoreResponsesJson, restoreResponsesSse,
+  restoreSse, sessionFingerprint,
+  type JsonObject, type LogFields, type Logger, type Pseudonymizer, type RequestFormat,
+  type SseEvent,
 } from '@labops/pii';
 import { SessionStuckTracker, type StuckSignal } from './session-stuck';
 
-const MASKED_ROUTES: ReadonlySet<string> = new Set(['/v1/messages', '/v1/messages/count_tokens']);
+/**
+ * Маршруты с маскированием и их формат. Claude Code ходит в Anthropic Messages; Codex CLI —
+ * в OpenAI Responses: при входе через ChatGPT на `/backend-api/codex/responses` бэкенда
+ * chatgpt.com (снято с живого трафика 0.171.0), с API-ключом — на `/v1/responses`.
+ */
+const MASKED_ROUTES: ReadonlyMap<string, RequestFormat> = new Map<string, RequestFormat>([
+  ['/v1/messages', 'anthropic-messages'],
+  ['/v1/messages/count_tokens', 'anthropic-messages'],
+  ['/v1/responses', 'openai-responses'],
+  ['/backend-api/codex/responses', 'openai-responses'],
+]);
 const DROP_REQUEST_HEADERS = ['host', 'content-length', 'accept-encoding'];
 const DROP_RESPONSE_HEADERS = ['content-encoding', 'content-length', 'transfer-encoding'];
 
@@ -114,7 +127,7 @@ export class PiiProxy {
     if (req.method === 'GET' && url.pathname === HEALTH_ROUTE) {
       return Response.json({ status: 'ok' });
     }
-    const sessionId = req.headers.get(SESSION_HEADER);
+    const sessionId = sessionOf(req.headers);
     const ephemeral = sessionId === null || sessionId === '';
     const ctx: RequestContext = {
       threadId: `${this.config.agentId}:${ephemeral ? `req-${randomUUID()}` : sessionId}`,
@@ -156,14 +169,18 @@ export class PiiProxy {
       }
       body = await req.text();
     }
-    const masked = req.method === 'POST' && MASKED_ROUTES.has(url.pathname);
+    const format = req.method === 'POST' ? MASKED_ROUTES.get(url.pathname) : undefined;
+    const masked = format !== undefined;
+    /** Ответ — поток: у Responses по полю stream запроса (см. ниже), иначе по content-type. */
+    let wantsStream = false;
     let outBody = body;
     let stats: LogFields = {};
     let remember: ((restored: string, original: string) => void) | undefined;
     let probe = false;
     if (masked && body !== undefined) {
       const parsed = parseJsonBody(body);
-      if (isQuotaProbe(parsed)) {
+      wantsStream = parsed.stream === true;
+      if (format === 'anthropic-messages' && isQuotaProbe(parsed)) {
         // Проба квоты: константный текст, ПДн в нём нет. Маскер дописал бы в неё system-вставку,
         // и upstream отвечал на такую пробу 429 (в норме claude шлёт её без system). Уходит
         // байт-в-байт как пришла.
@@ -171,7 +188,7 @@ export class PiiProxy {
         stats = { masked_leaves: 0 };
       } else {
         ctx.used = true;
-        const s = await this.masker.mask(parsed, ctx.threadId);
+        const s = await this.masker.mask(parsed, ctx.threadId, format);
         stats = { masked_leaves: s.leaves, cache_hits: s.cacheHits,
           remembered_leaves: s.rememberedLeaves, forgotten_leaves: s.forgottenLeaves,
           masked_attachments: s.maskedAttachments,
@@ -206,15 +223,27 @@ export class PiiProxy {
         ...stats,
         ...extra,
       });
-    if (masked && ok && type.includes('text/event-stream') && upstream.body !== null) {
-      const events = restoreSse(parseSse(upstream.body), restorer);
+    // Бэкенд ChatGPT отдаёт поток Responses БЕЗ content-type (снято 22.11.2026): решать по
+    // заголовку нельзя — поток с токенами ушёл бы агенту невосстановленным. Для Responses
+    // поток определяется по полю stream запроса.
+    const isStream = type.includes('text/event-stream')
+      || (format === 'openai-responses' && wantsStream && !type.includes('application/json'));
+    if (masked && ok && isStream && upstream.body !== null) {
+      const events = format === 'openai-responses'
+        ? restoreResponsesSse(parseSse(upstream.body), restorer)
+        : restoreSse(parseSse(upstream.body), restorer);
       const stream = this.sseBody(events, restorer, ctx, finish);
       return { response: new Response(stream, { status: upstream.status, headers }),
         deferredCleanup: true };
     }
     if (masked && ok && type.includes('application/json')) {
       const parsed: unknown = await upstream.json();
-      const restored = isObject(parsed) ? await restoreMessageJson(parsed, restorer) : parsed;
+      let restored: unknown = parsed;
+      if (isObject(parsed)) {
+        restored = format === 'openai-responses'
+          ? await restoreResponsesJson(parsed, restorer)
+          : await restoreMessageJson(parsed, restorer);
+      }
       finish({ restored_tokens: restorer.restoredTokens });
       const response = new Response(JSON.stringify(restored), { status: upstream.status, headers });
       return { response, deferredCleanup: false };
@@ -381,6 +410,20 @@ export class PiiProxy {
 }
 
 class BadBodyError extends Error {}
+
+/**
+ * Id сессии запроса: заголовок Claude Code, иначе нить Codex. Нет ни одного — запрос
+ * эфемерный (свой тред на один запрос).
+ */
+export function sessionOf(headers: Headers): string | null {
+  const claude = headers.get(SESSION_HEADER);
+  if (claude !== null && claude !== '') return claude;
+  for (const name of CODEX_SESSION_HEADERS) {
+    const value = headers.get(name);
+    if (value !== null && value !== '') return value;
+  }
+  return null;
+}
 
 /** Поля события `upstream_error` сверх общих полей журнала. */
 interface UpstreamErrorFields {

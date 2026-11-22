@@ -7,6 +7,11 @@ export const SERVER_IDLE_TIMEOUT_S = 255;
 
 /** Заголовок сессии Claude Code. */
 export const SESSION_HEADER = 'x-claude-code-session-id';
+/**
+ * Заголовки нити Codex CLI (по живому трафику 0.171.0): thread-id постоянен для нити и
+ * переживает перезапуск процесса (thread/resume), session-id — запасной.
+ */
+export const CODEX_SESSION_HEADERS: readonly string[] = ['thread-id', 'session-id'];
 
 /**
  * Сколько отказов 422/503 подряд в одной сессии считаются «агент застрял». Три: одиночный
@@ -25,6 +30,7 @@ export const QUOTA_PROBE_TEXT = 'quota';
 /** max_tokens пробы квоты. */
 export const QUOTA_PROBE_MAX_TOKENS = 1;
 /** Заголовки ответа upstream, которые пишутся в журнал при отказе (без cookie и прочего). */
-export const UPSTREAM_LOG_HEADER = /^(?:request-id|retry-after|x-should-retry|anthropic-ratelimit-.+)$/;
+export const UPSTREAM_LOG_HEADER =
+  /^(?:request-id|x-oai-request-id|x-request-id|retry-after|x-should-retry|anthropic-ratelimit-.+|x-codex-(?:primary|secondary|active|plan|credits)-.+)$/;
 /** Сколько байт тела отказа upstream читается ради поля error.type. */
 export const UPSTREAM_ERROR_BODY_MAX_BYTES = 4_096;
