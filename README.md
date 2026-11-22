@@ -173,7 +173,7 @@ The root `install.sh` installs `agent-architecture` (deps, Claude Code or Codex,
 > The default model is `sonnet` (an alias — always the latest model of its tier). You install only the **first** agent — then the swarm grows itself: the Developer spawns the rest via the `create-agent` skill.
 
 > [!IMPORTANT]
-> **Model & auth.** Sign in once with `claude setup-token` (Max/Pro subscription, first-party — no third-party risk). The agent's model is set in `settings.json` (the `model` field). Model config is **operator-owned** — never change it without the owner. Without sign-in the agent starts under systemd but can't reach the model — the smoke test catches this.
+> **Model & auth.** Sign in once interactively in `claude` (`/login`, Max/Pro subscription; the session uses `~/.claude/.credentials.json`, never an env token or `claude setup-token`). The agent's model is set in `settings.json` (the `model` field). Model config is **operator-owned** — never change it without the owner. Without sign-in the agent starts under systemd but can't reach the model — the smoke test catches this.
 >
 > On the **Codex harness** the swarm signs in once to ChatGPT (`codex login --device-auth`, see below), the model is set in the agent's `config.toml`, and the default model is `gpt-6.2-sol`.
 
