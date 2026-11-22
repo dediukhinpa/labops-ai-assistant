@@ -72,7 +72,25 @@ pii_pick_port() {
 # pii_agent_base_url <agent> — ANTHROPIC_BASE_URL из settings.json агента, только локальный
 # (127.0.0.1/localhost). Пусто - у агента прокси нет.
 pii_agent_base_url() {
-  local f
+  local f toml
+  # Агент на Codex: прокси — model_provider labops-pii в CODEX_HOME/config.toml, его base_url
+  # заканчивается путём бэкенда (/backend-api/codex); нужен корень прокси для /health.
+  toml="$(pii_lab)/$1/.codex/config.toml"
+  if [ -r "$toml" ]; then
+    python3 - "$toml" <<'PY' 2>/dev/null || true
+import re, sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as fh:
+        cfg = tomllib.load(fh)
+    url = cfg.get("model_providers", {}).get(cfg.get("model_provider", ""), {}).get("base_url", "")
+except Exception:
+    url = ""
+m = re.match(r"^(http://(127\.0\.0\.1|localhost):[0-9]+)(/|$)", url or "")
+if m:
+    print(m.group(1))
+PY
+    return 0
+  fi
   f="$(pii_lab)/$1/.claude/settings.json"
   [ -r "$f" ] || return 0
   python3 - "$f" <<'PY' 2>/dev/null || true

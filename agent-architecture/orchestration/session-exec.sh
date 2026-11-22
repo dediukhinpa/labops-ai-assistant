@@ -26,6 +26,20 @@ HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
 
 resolve_agent_env "$AGENT"
 
+# Рой на Codex: панель становится драйвером (плагин в режиме LABOPS_HARNESS=codex), а он уже
+# сам держит codex app-server. TUI нет, поэтому флаги claude ниже не нужны. cwd панели —
+# каталог плагина (его задаёт start-agent.sh), отсюда и ./src/server.ts.
+. "$HERE/lib/harness.sh"
+. "$HERE/lib/codex-watch.sh"
+if [ "$(harness_current)" = "codex" ]; then
+  export LABOPS_HARNESS=codex
+  CODEX_HOME="$(codex_home_of "$AGENT")"
+  export CODEX_HOME
+  CODEX_BIN="$(codex_bin || echo codex)"
+  export CODEX_BIN
+  exec bun ./src/server.ts
+fi
+
 CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
 
 # Продолжить прежнюю сессию, если этот старт — пробуждение из глубокого сна

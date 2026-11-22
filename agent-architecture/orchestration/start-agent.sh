@@ -14,6 +14,10 @@ source "$(dirname "$0")/lib/task-poller-launch.sh"
 source "$(dirname "$0")/lib/cli-version.sh"
 # Распознавание вопроса о каналах для разработки — общее с watchdog.sh.
 source "$(dirname "$0")/lib/pane.sh"
+# Харнес роя (claude|codex) и проверки агента на Codex.
+source "$(dirname "$0")/lib/harness.sh"
+source "$(dirname "$0")/lib/codex-watch.sh"
+HARNESS="$(harness_current)"
 
 AGENT="$1"
 SESSION="labops-$AGENT"
@@ -60,7 +64,35 @@ if ! pii_gate "$AGENT"; then
   exit 1
 fi
 
+# Codex: без входа в ChatGPT драйвер поднимется, но каждый ход упадёт. Стартовать бессмысленно —
+# говорим оператору, что сделать (вход по коду подтверждения делает человек).
+if [ "$HARNESS" = "codex" ]; then
+  if [ "$PLUGIN_CWD" = "$WORKSPACE" ]; then
+    echo "[start-agent] ERROR: $AGENT — у агента на Codex нет плагина канала ($WORKSPACE/labops-tg-plugin): драйвер запускать нечем" >&2
+    exit 1
+  fi
+  case "$(codex_auth_state "$AGENT")" in
+    none)
+      echo "[start-agent] ERROR: $AGENT — Codex не вошёл в ChatGPT; $(codex_login_hint "$AGENT")" >&2
+      exit 1 ;;
+    apikey)
+      echo "[start-agent] ERROR: $AGENT — Codex вошёл по API-ключу, а рой работает по подписке ChatGPT; $(codex_login_hint "$AGENT")" >&2
+      exit 1 ;;
+  esac
+fi
+
 tmux kill-session -t "=$SESSION" 2>/dev/null || true
+
+# Codex: драйвер на SIGHUP от kill-session сбрасывает память в общий мозг (brain-flush) и
+# гасит app-server — даём ему это сделать, прежде чем добивать.
+if [ "$HARNESS" = "codex" ]; then
+  CODEX_STOP_WAIT="${CODEX_STOP_WAIT:-35}"
+  for _ in $(seq 1 "$CODEX_STOP_WAIT"); do
+    [ -z "$(codex_driver_pid "$AGENT")" ] && break
+    sleep 1
+  done
+  pkill -9 -f "$(codex_appserver_pattern "$TELEGRAM_WEBHOOK_PORT")" 2>/dev/null || true
+fi
 
 # Reap any leaked channel-server (bun) for THIS agent. kill-session kills claude,
 # but its child bun reparents to PID 1; on a bad-luck race it lands in an EPIPE
@@ -125,6 +157,8 @@ with open(tmp, "w") as f: json.dump(d, f, indent=2)
 os.replace(tmp, cfg)
 PY
 }
+# Доверие к папкам и мастер первого запуска — экраны TUI Claude Code; у Codex их нет.
+if [ "$HARNESS" != "codex" ]; then
 pretrust_folder "$WORKSPACE"
 pretrust_folder "$PLUGIN_CWD"
 pretrust_folder "$(readlink -f "$PLUGIN_CWD" 2>/dev/null || true)"
@@ -133,6 +167,7 @@ pretrust_folder "$(readlink -f "$PLUGIN_CWD" 2>/dev/null || true)"
 # показывает мастер первого запуска (тема, затем вход), и сессия встаёт на нём
 # насмерть — до промпта не доходит, канал порт не поднимает.
 cli_version_mark_onboarding_done
+fi
 
 # Панель запускает session-exec.sh, а он уже собирает окружение и становится
 # claude. Секретов в командной строке больше нет — в ps виден только агент.

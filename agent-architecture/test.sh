@@ -200,6 +200,7 @@ done
 
 echo "── 8a. Харнес роя (lib/harness.sh) ──"
 unit "harness.sh: харнес роя из swarm.env, умолчание claude, смена при агентах запрещена — юнит-тест зелёный" "harness.sh: юнит-тест провален (orchestration/lib/harness.test.sh)" bash orchestration/lib/harness.test.sh
+unit "codex-watch.sh: вход ChatGPT / heartbeat / шаблоны процессов драйвера — юнит-тест зелёный" "codex-watch.sh: юнит-тест провален (orchestration/lib/codex-watch.test.sh)" bash orchestration/lib/codex-watch.test.sh
 unit "рендер воркспейса: claude как раньше, codex — AGENTS.md + config.toml через pii-proxy — юнит-тест зелёный" "рендер воркспейса по харнесу: юнит-тест провален (agent-template/codex-workspace.test.sh)" bash agent-template/codex-workspace.test.sh
 
 echo "── 9. Изоляция плагина по агентам (lib/plugin.sh) ──"

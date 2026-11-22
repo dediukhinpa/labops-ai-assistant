@@ -34,6 +34,14 @@ printf '{"env":{"ANTHROPIC_BASE_URL":"https://api.example.com"}}' \
 eq "$(pii_agent_base_url beta)" "" "внешний url не считается прокси"
 eq "$(pii_agent_base_url nobody)" "" "нет settings.json"
 
+# 3a. агент на Codex: прокси — model_provider в .codex/config.toml (корень без пути бэкенда)
+mkdir -p "$CLAUDE_LAB/cx/.codex" "$CLAUDE_LAB/cx/.claude"
+printf 'model_provider = "labops-pii"\n[model_providers.labops-pii]\nbase_url = "http://127.0.0.1:6391/backend-api/codex"\n' \
+  > "$CLAUDE_LAB/cx/.codex/config.toml"
+eq "$(pii_agent_base_url cx)" "http://127.0.0.1:6391" "codex: корень прокси из config.toml"
+printf 'model_provider = "openai"\n' > "$CLAUDE_LAB/cx/.codex/config.toml"
+eq "$(pii_agent_base_url cx)" "" "codex: провайдер не через прокси"
+
 # 4. gate: нет прокси - можно; прокси есть, но молчит - нельзя; жив - можно
 pii_gate beta || fail "агент без прокси: gate должен пускать"
 python3 - "$TMP/port" <<'PY' &

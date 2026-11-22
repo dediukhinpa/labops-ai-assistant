@@ -12,6 +12,11 @@ START_SCRIPT="$SCRIPT_DIR/start-agent.sh"
 # SCRIPT_DIR на .../lib, и позже собрать их было бы уже нельзя.
 DOCTOR_SCRIPT="$SCRIPT_DIR/doctor.sh"
 TG_SEND="$SCRIPT_DIR/tg-send.sh"
+ORCH_LIB="$SCRIPT_DIR/lib"
+# Харнес роя: claude (по умолчанию) или codex — см. lib/harness.sh и ветку codex ниже.
+# shellcheck source=lib/harness.sh
+source "$ORCH_LIB/harness.sh"
+WATCHDOG_HARNESS="$(harness_current 2>/dev/null || echo claude)"
 
 # Idle-triggered memory consolidation: after the agent sits on a clean idle prompt
 # for MEMORY_IDLE_CONSOLIDATE_MIN minutes, nudge the session to reflect (once per
@@ -175,7 +180,15 @@ if tmux has-session -t "=$SESSION" 2>/dev/null; then
 else
   # Если прокси не жив, сессию не поднимаем: основной цикл ниже увидит «session gone» и
   # повторит попытку через restart_session (тот же gate).
-  if pii_start_allowed; then "$START_SCRIPT" "$AGENT"; fi
+  if pii_start_allowed; then
+    if [ "$WATCHDOG_HARNESS" = "codex" ]; then
+      # Неудачный старт (например, нет входа в ChatGPT) не должен ронять демон под set -e:
+      # цикл ниже поднимет тревогу и повторит.
+      "$START_SCRIPT" "$AGENT" || log "первый старт не удался — повторю в цикле надзора"
+    else
+      "$START_SCRIPT" "$AGENT"
+    fi
+  fi
 fi
 
 # Liveness model. The ONLY reliable "a turn is actively running" marker is the
@@ -346,10 +359,107 @@ restart_session() {
   # Прокси жив? Нет - не перезапускаем, повтор на следующем проходе (см. pii_start_allowed).
   if ! pii_start_allowed; then return 0; fi
   log "restarting ($1)"
-  "$START_SCRIPT" "$AGENT"
+  if [ "$WATCHDOG_HARNESS" = "codex" ]; then
+    "$START_SCRIPT" "$AGENT" || log "старт не удался — повторю на следующем проходе"
+  else
+    "$START_SCRIPT" "$AGENT"
+  fi
   PREV_TAIL=""; FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
   note_restart
 }
+
+# ── Харнес Codex ─────────────────────────────────────────────────────────────
+# В tmux-сессии агента на Codex работает плагин-драйвер, а не TUI: разбирать экран, досылать
+# ввод и отвечать на диалоги не нужно. Живость — процесс драйвера, его webhook-порт и
+# heartbeat (драйвер пишет его на событиях нити и раз в минуту в простое). /reset драйвер
+# обслуживает сам (новая нить), здесь — только /doctor, вход в ChatGPT и рестарты.
+# shellcheck source=lib/codex-watch.sh
+source "$ORCH_LIB/codex-watch.sh"
+# shellcheck source=lib/agent-env.sh
+source "$ORCH_LIB/agent-env.sh"
+CODEX_HEARTBEAT_STALE="${WATCHDOG_CODEX_HEARTBEAT_STALE_SEC:-300}"
+CODEX_AUTH_CHECK_CYCLES="${WATCHDOG_CODEX_AUTH_CHECK_CYCLES:-10}"
+CODEX_PORT_MISS_LIMIT="${WATCHDOG_CODEX_PORT_MISS_LIMIT:-3}"
+
+codex_port_listening() {   # <port>
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | grep -qE "127\.0\.0\.1:$1\b"
+  else
+    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+  fi
+}
+
+codex_watch_loop() {
+  local cycle=0 port_miss=0 auth_bad=0 state port
+  port="$(agent_env_webhook_port "$AGENT" 2>/dev/null || true)"
+  log "харнес codex: надзор за драйвером (порт ${port:-?})"
+  while true; do
+    for _ in $(seq 1 15); do
+      sleep 2
+      if doctor_request_pending "$AGENT"; then serve_doctor_request; fi
+    done
+    # Аварийный приём /doctor — как у claude: при висящей тревоге плагин, скорее всего,
+    # Telegram не читает.
+    if [ -f "$DOWN_FLAG" ]; then
+      BOT_TOKEN="$(agent_bot_token "$AGENT" 2>/dev/null || true)"
+      if [ -n "$BOT_TOKEN" ] && doctor_poll_telegram "$AGENT" "$BOT_TOKEN"; then
+        log "команда /doctor принята напрямую из Telegram (плагин недоступен)"
+        serve_doctor_request
+      fi
+      BOT_TOKEN=""
+    fi
+    pii_report_stuck
+    cycle=$((cycle + 1))
+
+    # Вход в ChatGPT: на первом проходе, раз в CODEX_AUTH_CHECK_CYCLES и каждый проход, пока
+    # входа нет. Без входа рестарты бесполезны — ждём человека с одной тревогой.
+    if [ "$auth_bad" -eq 1 ] || [ "$((cycle % CODEX_AUTH_CHECK_CYCLES))" -eq 1 ]; then
+      state="$(codex_auth_state "$AGENT")"
+      case "$state" in
+        none|apikey)
+          if [ "$auth_bad" -eq 0 ]; then
+            report_down "codex: вход $state" \
+              "⛔ агент не может работать: Codex не вошёл в ChatGPT по подписке. Что сделать: $(codex_login_hint "$AGENT"), затем агент поднимется сам."
+          fi
+          auth_bad=1
+          continue ;;
+        *)
+          if [ "$auth_bad" -eq 1 ]; then
+            auth_bad=0
+            restart_session "вход в ChatGPT восстановлен"
+            continue
+          fi ;;
+      esac
+    fi
+
+    if ! tmux has-session -t "=$SESSION" 2>/dev/null || [ -z "$(codex_driver_pid "$AGENT")" ]; then
+      restart_session "драйвер codex не работает"
+      port_miss=0
+      continue
+    fi
+    if [ "$(ensure_task_poller "$AGENT" "$AGENT_WS")" = "launched" ]; then
+      log "task-poller был мёртв при живом драйвере — поднял заново (supervise)"
+    fi
+    if [ -n "$port" ] && ! codex_port_listening "$port"; then
+      port_miss=$((port_miss + 1))
+      if [ "$port_miss" -ge "$CODEX_PORT_MISS_LIMIT" ]; then
+        restart_session "webhook :$port не слушается $port_miss проходов"
+        port_miss=0
+      fi
+      continue
+    fi
+    port_miss=0
+    if codex_heartbeat_stale "$HEARTBEAT_FILE" "$CODEX_HEARTBEAT_STALE"; then
+      restart_session "heartbeat драйвера старше ${CODEX_HEARTBEAT_STALE}s — драйвер завис"
+      continue
+    fi
+    report_up
+  done
+}
+
+if [ "$WATCHDOG_HARNESS" = "codex" ]; then
+  codex_watch_loop
+fi
 
 while true; do
   # Пауза цикла нарезана мелко: прямая команда оператора не должна ждать полминуты

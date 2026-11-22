@@ -385,6 +385,25 @@ describe('запросы сервера', () => {
 })
 
 describe('жизненный цикл', () => {
+  test('resetThread: session-end, новая нить с контекстом, id сохранён; во время хода — отказ', async () => {
+    const { driver, server, rec, stateFile } = setup({ saved: 'thr-old', sessionContext: 'ctx' })
+    await driver.start()
+    await driver.deliver(msg('42', 'x'))
+    await tick()
+    await expect(driver.resetThread()).rejects.toThrow('busy')
+    server.notify('turn/completed', { threadId: 'thr-old', turn: { id: 'turn-1', status: 'completed', items: [] } })
+    await tick()
+    await driver.resetThread()
+    expect(driver.thread).toBe('thr-new')
+    expect(JSON.parse(readFileSync(stateFile, 'utf8')).threadId).toBe('thr-new')
+    const hooks = rec.memory.map(m => m.hook)
+    expect(hooks.indexOf('session-end')).toBeLessThan(hooks.lastIndexOf('session-start'))
+    await driver.deliver(msg('42', 'после сброса'))
+    await tick()
+    const input = server.requests('turn/start').at(-1)!.params!.input as Array<{ text: string }>
+    expect(input[0]!.text).toBe('ctx')
+  })
+
   test('смерть app-server сообщается подписчику', async () => {
     const { driver, server } = setup()
     await driver.start()
