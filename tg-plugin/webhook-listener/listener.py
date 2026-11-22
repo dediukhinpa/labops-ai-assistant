@@ -2,8 +2,9 @@
 """labops-plugin webhook listener.
 
 Receives POST /hooks/agent from second_brain swarm worker, verifies Bearer,
-spawns a headless `claude -p` subprocess in the agent's workspace that
-picks up the task from second_brain via swarm.list_my_pending.
+spawns a headless subprocess in the agent's workspace that picks up the task
+from second_brain via swarm.list_my_pending: `claude -p` on a Claude Code
+swarm, `codex exec` on a Codex swarm (HARNESS in $CLAUDE_LAB/shared/swarm.env).
 
 Designed for the labops-channel plugin family, which has no inbox-poll
 loop — Claude is invoked directly when a webhook arrives.
@@ -42,6 +43,9 @@ AGENT_WORKSPACE = Path(os.environ.get(
     str(Path.home() / ".claude"),
 ))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "/usr/local/bin/claude")
+# Бинарь codex закреплённой версии ставит установщик роя (lib/codex-install.sh) пользователю
+# агентов, а не в /usr/local/bin.
+CODEX_BIN = os.environ.get("CODEX_BIN", str(Path.home() / ".local" / "bin" / "codex"))
 LOG_DIR = Path(os.environ.get(
     "WEBHOOK_LOG_DIR", "/var/log/labops-plugin-webhook",
 ))
@@ -67,6 +71,18 @@ TG_BOT_TOKEN_FILE = Path(os.environ.get(
 
 NOTIFY_TTL_SEC = int(os.environ.get("WEBHOOK_NOTIFY_TTL_SEC", "300"))
 
+# Харнес роя: все агенты на Claude Code или все на Codex CLI. Выбор пишет установщик в
+# $CLAUDE_LAB/shared/swarm.env (строка HARNESS=claude|codex), правила разбора те же, что в
+# agent-architecture/orchestration/lib/harness.sh. Файла или строки нет — рой поставлен до
+# появления выбора, это claude.
+HARNESS_CLAUDE = "claude"
+HARNESS_CODEX = "codex"
+HARNESS_KNOWN = (HARNESS_CLAUDE, HARNESS_CODEX)
+CLAUDE_LAB = Path(os.environ.get("CLAUDE_LAB") or str(Path.home() / ".claude-lab"))
+SWARM_ENV_PATH = CLAUDE_LAB / "shared" / "swarm.env"
+# Плейсхолдер bearer из agent.env: настоящего токена нет, отдавать его codex незачем.
+AGENT_BEARER_PLACEHOLDER = "CHANGE_ME"
+
 _TOXIC = re.compile(
     r"(Bearer\s+\S+|sk-[A-Za-z0-9_-]+|password=\S+)",
     re.IGNORECASE,
@@ -90,6 +106,60 @@ def _read_secret(path: str) -> bytes:
         raise SystemExit(f"secret file not found: {p}")
     return p.read_text().rstrip("\n").encode("utf-8")
 
+
+def _strip_env_value(raw: str) -> str:
+    """Срезать пробелы справа и одну пару кавычек, как harness.sh и `source`."""
+    value = raw.rstrip()
+    for quote in ('"', "'"):
+        if len(value) >= 2 and value.startswith(quote) and value.endswith(quote):
+            return value[1:-1]
+    return value
+
+
+def _read_env_file_value(path: Path, key: str) -> str:
+    """Значение ключа из env-файла (последняя строка выигрывает), пусто — нет ключа.
+
+    Файл разбирается, а не исполняется: в нём лежат секреты, а исполнять оттуда
+    что-либо listener незачем. Понимает и `KEY=value`, и `export KEY="value"`.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    pattern = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}=(.*)$")
+    value = ""
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if match:
+            value = _strip_env_value(match.group(1))
+    return value
+
+
+def _read_harness(swarm_env: Path) -> str:
+    """Харнес роя из swarm.env. Неизвестное значение — отказ старта, а не тихий claude.
+
+    Агент codex, запущенный как claude, ушёл бы мимо своего конфига и pii-proxy.
+    """
+    value = _read_env_file_value(swarm_env, "HARNESS")
+    if not value:
+        return HARNESS_CLAUDE
+    if value not in HARNESS_KNOWN:
+        raise SystemExit(
+            f"unknown HARNESS '{value}' in {swarm_env} (expected: {', '.join(HARNESS_KNOWN)})"
+        )
+    return value
+
+
+HARNESS = _read_harness(SWARM_ENV_PATH)
+# CODEX_HOME агента — сосед рабочей папки: <lab>/<agent>/.claude и <lab>/<agent>/.codex.
+CODEX_HOME = Path(os.environ.get("WEBHOOK_CODEX_HOME") or str(AGENT_WORKSPACE.parent / ".codex"))
+if HARNESS == HARNESS_CODEX and not (CODEX_HOME / "config.toml").is_file():
+    # Без config.toml агента codex пошёл бы к модели напрямую, мимо pii-proxy, и без
+    # second-brain: лучше не стартовать, чем выполнять задачи так.
+    raise SystemExit(
+        f"HARNESS=codex but {CODEX_HOME / 'config.toml'} not found — set "
+        "WEBHOOK_AGENT_WORKSPACE to <lab>/<agent>/.claude or WEBHOOK_CODEX_HOME explicitly."
+    )
 
 BEARER_TOKEN: bytes = _read_secret(BEARER_FILE)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -230,18 +300,51 @@ def _build_subprocess_env() -> dict[str, str]:
     return env
 
 
-async def _spawn_claude(prompt: str, task_id: str) -> None:
+def _build_codex_env() -> dict[str, str]:
+    """Окружение для `codex exec`: базовый allowlist, CODEX_HOME агента и его AGENT_BEARER.
+
+    Из секретов в дочерний процесс попадает только AGENT_BEARER из agent.env агента: на
+    него ссылаются MCP-серверы second-brain в config.toml (bearer_token_env_var). Префиксы
+    CLAUDE_/ANTHROPIC_ и env из settings.json — это настройки claude, codex их не получает:
+    модель и pii-proxy он берёт из своего config.toml.
+    """
+    env: dict[str, str] = {}
+    for key in _SUBPROCESS_ENV_ALLOW:
+        val = os.environ.get(key)
+        if val is not None:
+            env[key] = val
+    env.setdefault("HOME", str(Path.home()))
+    env["CODEX_HOME"] = str(CODEX_HOME)
+    bearer = _read_env_file_value(AGENT_WORKSPACE / "agent.env", "AGENT_BEARER")
+    if bearer and bearer != AGENT_BEARER_PLACEHOLDER:
+        env["AGENT_BEARER"] = bearer
+    else:
+        log.warning("AGENT_BEARER not set in agent.env — codex runs without second_brain")
+    return env
+
+
+def _headless_command(prompt: str) -> tuple[list[str], dict[str, str]]:
+    """argv и окружение headless-запуска агента под харнес роя."""
+    if HARNESS == HARNESS_CODEX:
+        # Без подтверждений и без песочницы codex работает по config.toml агента
+        # (approval_policy=never, sandbox_mode=danger-full-access), флагами это не дублируем.
+        # Рабочая папка агента — не git-репозиторий, отсюда --skip-git-repo-check.
+        return [CODEX_BIN, "exec", "--skip-git-repo-check", prompt], _build_codex_env()
+    return [CLAUDE_BIN, "-p", prompt, "--dangerously-skip-permissions"], _build_subprocess_env()
+
+
+async def _spawn_headless(prompt: str, task_id: str) -> None:
     ts = int(time.time())
     safe_id = _sanitize_task_id(task_id)
     log_path = LOG_DIR / f"{ts}_{safe_id}.log"
 
-    env = _build_subprocess_env()
+    argv, env = _headless_command(prompt)
 
-    log.info("spawning claude for task_id=%s, log=%s", task_id, log_path.name)
+    log.info("spawning %s for task_id=%s, log=%s", HARNESS, task_id, log_path.name)
     log_fh = log_path.open("w")
+    # stdin закрыт обязательно: codex exec при открытом stdin ждёт из него ввод.
     proc = await asyncio.create_subprocess_exec(
-        CLAUDE_BIN, "-p", prompt,
-        "--dangerously-skip-permissions",
+        *argv,
         cwd=str(AGENT_WORKSPACE),
         env=env,
         stdin=asyncio.subprocess.DEVNULL,
@@ -252,9 +355,9 @@ async def _spawn_claude(prompt: str, task_id: str) -> None:
     async def _wait_and_close() -> None:
         try:
             await asyncio.wait_for(proc.wait(), timeout=INVOCATION_TIMEOUT_SEC)
-            log.info("claude task_id=%s exited rc=%s", task_id, proc.returncode)
+            log.info("%s task_id=%s exited rc=%s", HARNESS, task_id, proc.returncode)
         except asyncio.TimeoutError:
-            log.warning("claude task_id=%s timed out, killing", task_id)
+            log.warning("%s task_id=%s timed out, killing", HARNESS, task_id)
             proc.kill()
         finally:
             log_fh.close()
@@ -498,7 +601,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
     await _notify_owner(from_agent, task_id, title)
 
     prompt = _build_prompt(payload)
-    await _spawn_claude(prompt, task_id)
+    await _spawn_headless(prompt, task_id)
 
     log.info("webhook accepted: from=%s task_id=%s", from_agent, task_id)
     return web.json_response({"status": "accepted", "task_id": task_id})
@@ -521,8 +624,8 @@ def make_app() -> web.Application:
 
 def main() -> None:
     log.info(
-        "starting labops-plugin-webhook on %s:%d (agent=%s workspace=%s)",
-        BIND_HOST, PORT, AGENT_NAME, AGENT_WORKSPACE,
+        "starting labops-plugin-webhook on %s:%d (agent=%s workspace=%s harness=%s)",
+        BIND_HOST, PORT, AGENT_NAME, AGENT_WORKSPACE, HARNESS,
     )
     web.run_app(make_app(), host=BIND_HOST, port=PORT, access_log=None)
 
