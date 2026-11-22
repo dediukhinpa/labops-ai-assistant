@@ -53,6 +53,16 @@ DOCTOR_DIR="$SCRIPT_DIR"
 # shellcheck source=lib/pane-recover.sh
 source "$SCRIPT_DIR/lib/pane-recover.sh"
 SCRIPT_DIR="$DOCTOR_DIR"
+# Харнес роя: у агента на Codex свои проверки входа и живости (TUI-панели нет).
+# shellcheck source=lib/harness.sh
+source "$SCRIPT_DIR/lib/harness.sh"
+# shellcheck source=lib/codex-watch.sh
+source "$SCRIPT_DIR/lib/codex-watch.sh"
+# shellcheck source=lib/agent-env.sh
+source "$SCRIPT_DIR/lib/agent-env.sh"
+DOCTOR_HARNESS="$(harness_current 2>/dev/null || echo claude)"
+# Сколько секунд heartbeat драйвера Codex считается свежим (драйвер пишет его раз в минуту).
+DOCTOR_CODEX_HEARTBEAT_STALE="${DOCTOR_CODEX_HEARTBEAT_STALE:-300}"
 
 # ── Накопители вердикта ──────────────────────────────────────────────────────
 # FIXED — что удалось починить; BROKEN — что требует человека. Обычные строки с
@@ -262,12 +272,52 @@ check_second_brain() {
   return 0
 }
 
+# ── Codex: вход в ChatGPT и живость драйвера ─────────────────────────────────
+check_codex_login() {
+  case "$(codex_auth_state "$AGENT")" in
+    none) add_broken "Codex не вошёл в ChatGPT — $(codex_login_hint "$AGENT")" ;;
+    apikey) add_broken "Codex вошёл по API-ключу, а нужна подписка ChatGPT — $(codex_login_hint "$AGENT")" ;;
+  esac
+  return 0
+}
+
+check_codex_driver() {
+  local why="" port
+  tmux has-session -t "=$SESSION" 2>/dev/null || return 0   # это уже разобрал check_session
+  port="$(agent_env_webhook_port "$AGENT" 2>/dev/null || true)"
+  if [ -z "$(codex_driver_pid "$AGENT")" ]; then
+    why="драйвер не работает"
+  elif [ -n "$port" ] && ! ss -ltn 2>/dev/null | grep -qE "127\.0\.0\.1:$port\b"; then
+    why="канал не слушает порт $port"
+  elif codex_heartbeat_stale "$AGENT_WS/state/heartbeat" "$DOCTOR_CODEX_HEARTBEAT_STALE"; then
+    why="драйвер не отвечает (heartbeat устарел)"
+  fi
+  [ -n "$why" ] || return 0
+  if [ "$FIX" -eq 0 ]; then
+    add_broken "$why"
+  elif "$START_SCRIPT" "$AGENT" >/dev/null 2>&1; then
+    add_fixed "перезапустил агента ($why)"
+  else
+    add_broken "$why, перезапуск не помог"
+  fi
+  return 0
+}
+
+if [ "$DOCTOR_HARNESS" = "codex" ]; then
+  check_codex_login
+  check_unit
+  check_session
+  check_codex_driver
+  check_plumbing
+  check_second_brain
+else
 check_credentials
 check_unit
 check_session
 check_pane
 check_plumbing
 check_second_brain
+fi
 
 # ── Вердикт ──────────────────────────────────────────────────────────────────
 # Формат заточен под Telegram: заголовок с именем агента и максимум пара строк.

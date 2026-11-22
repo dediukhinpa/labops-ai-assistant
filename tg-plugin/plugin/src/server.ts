@@ -27,6 +27,7 @@ import {
   loadConfig,
   resolveBotApiConfig,
   redactToken,
+  resolveAskUserQuestionAllowedUserIds,
   type AppConfig,
   type StatePaths,
 } from './config.js'
@@ -77,13 +78,14 @@ import {
 } from './telegram/ask-user-question.js'
 import { TelegramPoller, tokenLock } from './telegram/poller.js'
 import { describePidHolder, readLockHolder } from './telegram/pid-inspect.js'
-import { BOT_COMMANDS } from './commands/oob.js'
+import { BOT_COMMANDS, resolveResetRequestPath } from './commands/oob.js'
 import {
   dispatchHookPayload,
   startWebhookServer,
   type WebhookServerHandle,
 } from './webhook/server.js'
 import { setInboundSink } from './channel/notify.js'
+import { watchInbox, watchResetRequest } from './harness/codex/inbox.js'
 import {
   CODEX_CHANNEL_INSTRUCTIONS,
   codexHarnessEnabled,
@@ -1213,6 +1215,25 @@ if (codexMode) {
     shutdown(1)
     throw err
   }
+  // Задачи agent router: поллер кладёт их файлами в папку-очередь (печатать некуда).
+  // Ответ на задачу уходит в личку оператора — как у Claude, где задачу вбрасывали в
+  // главную сессию.
+  const operatorChat = resolveAskUserQuestionAllowedUserIds(config)[0]
+  if (operatorChat !== undefined) {
+    watchInbox({ workspace, chatId: String(operatorChat), deliver: event => driver.deliver(event), log })
+  } else {
+    log.warn('codex inbox disabled: no operator user id in the allowlist')
+  }
+  // /reset force: у Claude его выполняет watchdog, у Codex — плагин новой нитью.
+  watchResetRequest({
+    requestPath: resolveResetRequestPath(),
+    busy: () => driver.busy,
+    reset: () => driver.resetThread(),
+    notify: async (chatId, text) => {
+      await telegramApi.sendMessage(chatId, text, {})
+    },
+    log,
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────

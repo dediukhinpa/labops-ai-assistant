@@ -22,7 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from task_poller import (  # noqa: E402
     TASK_NEEDLE,
     TmuxPane,
+    AgentEnvBearer,
     BearerCache,
+    CodexInbox,
     RouterClient,
     SessionLost,
     TaskPoller,
@@ -575,6 +577,37 @@ class TmuxPaneTest(unittest.TestCase):
 
     def test_unreadable_cursor_is_not_idle(self) -> None:
         self.assertFalse(self._pane(self.TYPED, cursor="").clean_idle())
+
+class CodexDeliveryTest(unittest.TestCase):
+    """Агент на Codex: задача -- файл в папку-очередь драйвера, токен -- из agent.env."""
+
+    def test_inbox_writes_complete_files_in_order(self) -> None:
+        """Файлы появляются готовыми (без временных), по порядку имён -- по порядку отправки."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            inbox = CodexInbox(ws, _FakePane())  # type: ignore[arg-type]
+            self.assertTrue(inbox.clean_idle())
+            self.assertTrue(inbox.send_line("первая"))
+            self.assertTrue(inbox.send_line("вторая"))
+            files = sorted((ws / "state" / "codex-inbox").iterdir())
+            self.assertEqual([f.name.startswith(".") for f in files], [False, False])
+            texts = [json.loads(f.read_text(encoding="utf-8"))["text"] for f in files]
+            self.assertEqual(texts, ["первая", "вторая"])
+
+    def test_inbox_session_follows_tmux(self) -> None:
+        """Жива ли сессия -- решает tmux-контейнер драйвера."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(CodexInbox(Path(tmp), _FakePane(alive=False)).has_session())  # type: ignore[arg-type]
+
+    def test_agent_env_bearer(self) -> None:
+        """Токен читается из agent.env (export, кавычки), env-переменная главнее."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "agent.env"
+            env.write_text('export AGENT_ID="cx"\nexport AGENT_BEARER="tok-123"\n', encoding="utf-8")
+            self.assertEqual(AgentEnvBearer(env).get(), "tok-123")
+            self.assertEqual(AgentEnvBearer(env, "from-env").get(), "from-env")
+            self.assertEqual(AgentEnvBearer(Path(tmp) / "none").get(), "")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

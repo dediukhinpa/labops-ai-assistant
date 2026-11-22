@@ -193,19 +193,7 @@ export class CodexDriver {
         })
       }
     }
-    if (!resumed) {
-      const res = record(
-        await conn.request(
-          'thread/start',
-          { cwd: this.deps.workspace, approvalPolicy: 'never', sandbox: 'danger-full-access' },
-          THREAD_START_TIMEOUT_MS,
-        ),
-      )
-      this.adoptThread(record(res.thread))
-      this.sessionContext = (
-        await this.safeMemory('session-start', { hook_event_name: 'SessionStart', source: 'startup' })
-      ).trim()
-    }
+    if (!resumed) await this.startNewThread('startup')
     this.saveThread()
     this.ready = true
     this.deps.log.info('codex thread ready', { thread_id: this.threadId, resumed })
@@ -245,6 +233,39 @@ export class CodexDriver {
     this.queue.push(input)
     void this.pump()
     return true
+  }
+
+  /**
+   * Сбросить контекст (/reset force): память сбрасывается в общий мозг, затем новая нить с
+   * пересобранной идентичностью. Во время хода не выполняется — вызывающий ждёт простоя.
+   */
+  async resetThread(): Promise<void> {
+    if (!this.ready || this.active !== undefined) throw new Error('codex thread is busy')
+    this.ready = false
+    try {
+      await this.safeMemory('session-end', { hook_event_name: 'SessionEnd', reason: 'clear' })
+      await this.deps.effects.rebuildIdentity()
+      await this.startNewThread('clear')
+      this.saveThread()
+      this.deps.log.info('codex thread reset', { thread_id: this.threadId })
+    } finally {
+      this.ready = true
+      void this.pump()
+    }
+  }
+
+  private async startNewThread(source: 'startup' | 'clear'): Promise<void> {
+    const res = record(
+      await this.conn!.request(
+        'thread/start',
+        { cwd: this.deps.workspace, approvalPolicy: 'never', sandbox: 'danger-full-access' },
+        THREAD_START_TIMEOUT_MS,
+      ),
+    )
+    this.adoptThread(record(res.thread))
+    this.sessionContext = (
+      await this.safeMemory('session-start', { hook_event_name: 'SessionStart', source })
+    ).trim()
   }
 
   /** Прервать текущий ход (команда /stop). */

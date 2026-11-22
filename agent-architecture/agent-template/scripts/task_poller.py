@@ -146,6 +146,88 @@ class BearerCache:
         return ""
 
 
+AGENT_ENV_BEARER_RE = re.compile(r"""^(?:export\s+)?AGENT_BEARER=(["']?)(.*)\1\s*$""")
+CODEX_INBOX_DIR = Path("state") / "codex-inbox"
+
+
+class AgentEnvBearer:
+    """Bearer из `agent.env` -- для агента на Codex, у которого нет `.mcp.json`.
+
+    Codex берёт токен second-brain из переменной AGENT_BEARER (bearer_token_env_var в
+    config.toml), а её значение живёт в agent.env. Перечитываем только при смене mtime.
+    """
+
+    def __init__(self, env_path: Path, env_token: str = "") -> None:
+        """Args:
+            env_path: Путь к agent.env рабочей папки.
+            env_token: Токен из окружения; если задан, файл не читается.
+        """
+        self._path = env_path
+        self._env_token = env_token
+        self._token = ""
+        self._mtime: float | None = None
+
+    def get(self) -> str:
+        """Вернуть токен, перечитав файл только если его тронули."""
+        if self._env_token:
+            return self._env_token
+        try:
+            mtime = self._path.stat().st_mtime
+        except OSError:
+            return ""
+        if self._mtime == mtime and self._token:
+            return self._token
+        self._token = ""
+        try:
+            for line in self._path.read_text(encoding="utf-8").splitlines():
+                match = AGENT_ENV_BEARER_RE.match(line.strip())
+                if match:
+                    self._token = match.group(2)
+        except OSError:
+            return ""
+        self._mtime = mtime
+        return self._token
+
+
+class CodexInbox:
+    """Доставка задач агенту на Codex: файл в папку-очередь, его подбирает плагин-драйвер.
+
+    Поля ввода у Codex нет, а драйвер сам ставит сообщение в очередь, если нить занята, --
+    поэтому «простой» всегда истинен. Файл пишется под временным именем и переименовывается:
+    плагин никогда не увидит недописанный.
+    """
+
+    def __init__(self, workspace: Path, pane: "TmuxPane") -> None:
+        """Args:
+            workspace: Рабочая папка агента.
+            pane: tmux-сессия агента -- контейнер драйвера (жива ли она).
+        """
+        self._dir = workspace / CODEX_INBOX_DIR
+        self._pane = pane
+        self._seq = 0
+
+    def has_session(self) -> bool:
+        """Жива ли сессия агента (в ней работает драйвер)."""
+        return self._pane.has_session()
+
+    def clean_idle(self) -> bool:
+        """Драйвер принимает задачи в любой момент."""
+        return True
+
+    def send_line(self, text: str) -> bool:
+        """Положить задачу в папку-очередь драйвера."""
+        self._seq += 1
+        name = f"{time.time_ns():020d}-{os.getpid()}-{self._seq}.json"
+        try:
+            self._dir.mkdir(parents=True, exist_ok=True)
+            tmp = self._dir / f".{name}"
+            tmp.write_text(json.dumps({"text": text, "source": "agent_router"}, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self._dir / name)
+        except OSError:
+            return False
+        return True
+
+
 class TmuxPane:
     """Тонкая обёртка над tmux: существование сессии, простой, ввод строки."""
 
@@ -472,7 +554,7 @@ class TaskPoller:
     def __init__(
         self,
         agent: str,
-        pane: TmuxPane,
+        pane: TmuxPane | CodexInbox,
         client: RouterClient,
         seen_path: Path,
         log: Callable[[str], None],
@@ -683,14 +765,23 @@ def build_poller() -> TaskPoller:
     seen_path.parent.mkdir(parents=True, exist_ok=True)
     seen_path.touch(exist_ok=True)
 
-    bearer = BearerCache(workspace / ".mcp.json", os.environ.get("AGENT_BEARER", ""))
+    # Агент на Codex (рой с харнесом codex): токен в agent.env, задачи -- в папку-очередь
+    # драйвера. Признак -- config.toml в CODEX_HOME агента, как у connect-agents.sh.
+    codex = (workspace.parent / ".codex" / "config.toml").is_file()
+    env_token = os.environ.get("AGENT_BEARER", "")
+    bearer: BearerCache | AgentEnvBearer = (
+        AgentEnvBearer(workspace / "agent.env", env_token)
+        if codex
+        else BearerCache(workspace / ".mcp.json", env_token)
+    )
     client = RouterClient(url, bearer.get)
     # Доска -- отдельный сервер, поэтому отдельное соединение и отдельная
     # MCP-сессия. Обе живут столько же, сколько процесс.
     board = RouterClient(
         os.environ.get("SECOND_BRAIN_TASKS_URL") or DEFAULT_TASKS_URL, bearer.get
     )
-    pane = TmuxPane(f"labops-{agent}", input_col0)
+    tmux_pane = TmuxPane(f"labops-{agent}", input_col0)
+    pane: TmuxPane | CodexInbox = CodexInbox(workspace, tmux_pane) if codex else tmux_pane
     return TaskPoller(
         agent, pane, client, seen_path, log, interval, gone_limit, board=board
     )
