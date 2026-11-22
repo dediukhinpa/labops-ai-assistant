@@ -24,6 +24,13 @@ port, all Bearer-authenticated. Local hooks
 under a task is the agent's own job -- `CLAUDE.md` tells it to query the shared
 brain before non-trivial work.
 
+> **Codex harness.** This guide describes the default harness, Claude Code. If the swarm runs on
+> Codex CLI (ChatGPT subscription), the workspace gets `AGENTS.md` and
+> `~/.claude-lab/<agent-id>/.codex/config.toml` instead of `CLAUDE.md` / `settings.json` /
+> `.mcp.json`, and Codex `0.171.0`, the shared ChatGPT sign-in and the mandatory pii-proxy are set
+> up by the swarm installer (`HARNESS=codex bash install.sh` at the monorepo root). See
+> [`../../docs/codex-harness.md`](../../docs/codex-harness.md).
+
 ## Prerequisites
 
 - macOS or Linux with bash, `jq`, `python3`, `curl`, `git`

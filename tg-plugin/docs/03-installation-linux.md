@@ -23,6 +23,12 @@
 
 Anthropic Max subscription нужна для агента (Claude Code login). Установка плагина её не покрывает — это ваша подписка.
 
+> **Рой на Codex?** Этот документ — про ручную установку рядом с Claude Code. Для роя на Codex CLI
+> (подписка ChatGPT) Claude Code и его хуки не нужны, а плагин работает драйвером
+> `codex app-server`; ставится всё корневым `install.sh` монорепозитория с `HARNESS=codex`
+> (Codex `0.171.0`, один вход в ChatGPT на рой, обязательный pii-proxy). См.
+> [agent-architecture/docs/codex-harness.ru.md](../../agent-architecture/docs/codex-harness.ru.md).
+
 ---
 
 ## Шаг 1. Service-user и workspace

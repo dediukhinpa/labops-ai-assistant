@@ -7,6 +7,14 @@
 | Linux (Ubuntu / Debian / RHEL) | **systemd** | [03-installation-linux.md](03-installation-linux.md) |
 | macOS (Mac mini, MacBook, iMac) | **launchd** | [03-installation-macos.md](03-installation-macos.md) |
 
+> **Рой на Codex (подписка ChatGPT).** Документы ниже описывают ручную установку плагина рядом с
+> Claude Code. Если рой работает на Codex CLI, ставьте его только корневым `install.sh`
+> монорепозитория (харнес — первый вопрос, без вопроса: `HARNESS=codex`): он ставит Codex
+> закреплённой версии `0.171.0`, делает один вход в ChatGPT на весь рой
+> (`CODEX_HOME=~/.claude-lab/shared/codex codex login --device-auth`), обязательно поднимает
+> pii-proxy и запускает плагин в режиме драйвера `codex app-server`. Только Linux + systemd.
+> Подробно: [agent-architecture/docs/codex-harness.ru.md](../../agent-architecture/docs/codex-harness.ru.md).
+
 ## В чём ключевая разница
 
 Архитектура плагина одинакова на обоих OS — Bun runtime + Claude Code session + Telegram polling работают идентично. Разница только в **обвязке вокруг**:
