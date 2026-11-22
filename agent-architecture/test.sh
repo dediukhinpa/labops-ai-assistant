@@ -198,6 +198,9 @@ for hook_script in brain-flush.sh reflect-nudge.sh; do
   fi
 done
 
+echo "── 8a. Харнес роя (lib/harness.sh) ──"
+unit "harness.sh: харнес роя из swarm.env, умолчание claude, смена при агентах запрещена — юнит-тест зелёный" "harness.sh: юнит-тест провален (orchestration/lib/harness.test.sh)" bash orchestration/lib/harness.test.sh
+
 echo "── 9. Изоляция плагина по агентам (lib/plugin.sh) ──"
 unit "plugin.sh: приватная копия / миграция симлинка / разный cwd — юнит-тест зелёный" "plugin.sh: юнит-тест провален (orchestration/lib/plugin.test.sh)" bash orchestration/lib/plugin.test.sh
 
