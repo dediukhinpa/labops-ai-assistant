@@ -31,7 +31,7 @@
 </p>
 <p align="center"><sub><i>Illustrative mockup of the two-stage reaction flow (👀 received → 👌 done) — not a screen recording.</i></sub></p>
 
-**A self-hosted AI assistant you talk to in Telegram** — a single, long-lived Claude Code session that lives on your own server, remembers, self-heals under systemd, and grows into a swarm. This repository **combines the two layers that make that assistant run** into one deployable unit:
+**A self-hosted AI assistant you talk to in Telegram** — a single, long-lived Claude Code session (or Codex, if you choose the [Codex harness](#choosing-the-harness-claude-code-or-codex)) that lives on your own server, remembers, self-heals under systemd, and grows into a swarm. This repository **combines the two layers that make that assistant run** into one deployable unit:
 
 - **[`agent-architecture/`](agent-architecture/)** — the **runtime & lifecycle** layer: how an agent *lives*. Workspaces, layered memory, the `agent-template` scaffolder, a self-healing supervisor (`watchdog.sh → start-agent.sh → tmux → a long-lived Claude Code session`), systemd units, lifecycle hooks, and the **`create-agent`** skill the first agent uses to roll out the rest of the swarm.
 - **[`tg-plugin/`](tg-plugin/)** — the **Telegram I/O channel**: a Claude Code plugin (Bun/TypeScript) that turns an ordinary `claude` session into a long-lived Telegram agent — text, voice, media, status reactions, and interactive buttons — registered as an **MCP server inside the live session**, not a headless process per message.
@@ -49,12 +49,13 @@ The third layer of the system — shared long-term memory — lives in the sibli
 2. [Repository layout](#repository-layout)
 3. [How the pieces fit](#how-the-pieces-fit)
 4. [Quickstart](#quickstart)
-5. [Component · agent-architecture](#component--agent-architecture)
-6. [Component · tg-plugin](#component--tg-plugin)
-7. [Security](#security)
-8. [Data & privacy](#data--privacy)
-9. [Part of labops](#part-of-labops)
-10. [License](#license)
+5. [Choosing the harness: Claude Code or Codex](#choosing-the-harness-claude-code-or-codex)
+6. [Component · agent-architecture](#component--agent-architecture)
+7. [Component · tg-plugin](#component--tg-plugin)
+8. [Security](#security)
+9. [Data & privacy](#data--privacy)
+10. [Part of labops](#part-of-labops)
+11. [License](#license)
 
 ---
 
@@ -162,7 +163,9 @@ cd labops-ai-assistant
 bash install.sh
 ```
 
-The root `install.sh` installs `agent-architecture` (deps, Claude Code, the first agent) and then the bundled `tg-plugin` from this tree — nothing is cloned for the channel, it is already here. Flags pass through: `bash install.sh --no-agent` (prepare only), `bash install.sh --test-only` (self-test).
+The first question the installer asks is the **harness** — `claude` (Claude Code, Claude subscription; the default) or `codex` (Codex CLI, ChatGPT subscription); see [below](#choosing-the-harness-claude-code-or-codex). To skip the question: `HARNESS=codex bash install.sh`.
+
+The root `install.sh` installs `agent-architecture` (deps, Claude Code or Codex, the first agent) and then the bundled `tg-plugin` from this tree — nothing is cloned for the channel, it is already here. Flags pass through: `bash install.sh --no-agent` (prepare only), `bash install.sh --test-only` (self-test).
 
 **Shared memory** — `labops-second-brain` is a *separate* dependency, not part of this repo. `install.sh` clones it next to the repo (unless `SKIP_SECOND_BRAIN=1`); install it with `sudo bash ~/labops-second-brain/scripts/install.sh` (or hand it to a Claude Code agent following its `AGENT.md`). It issues the agent a Bearer token and brings up MCP `memory:5001` / `memory_router:5002` / `agent_router:5000` / `tasks:5003` (the task board).
 
@@ -170,13 +173,30 @@ The root `install.sh` installs `agent-architecture` (deps, Claude Code, the firs
 > The default model is `sonnet` (an alias — always the latest model of its tier). You install only the **first** agent — then the swarm grows itself: the Developer spawns the rest via the `create-agent` skill.
 
 > [!IMPORTANT]
-> **Model & auth.** Sign in once with `claude setup-token` (Max/Pro subscription, first-party — no third-party risk). The agent's model is set in `settings.json` (the `model` field). Model config is **operator-owned** — never change it without the owner. Without sign-in the agent starts under systemd but can't reach the model — the smoke test catches this.
+> **Model & auth.** Sign in once interactively in `claude` (`/login`, Max/Pro subscription; the session uses `~/.claude/.credentials.json`, never an env token or `claude setup-token`). The agent's model is set in `settings.json` (the `model` field). Model config is **operator-owned** — never change it without the owner. Without sign-in the agent starts under systemd but can't reach the model — the smoke test catches this.
+>
+> On the **Codex harness** the swarm signs in once to ChatGPT (`codex login --device-auth`, see below), the model is set in the agent's `config.toml`, and the default model is `gpt-6.2-sol`.
 
 > [!WARNING]
 > **Never run agents as root.** They run with `--dangerously-skip-permissions`; a dedicated non-root user is expected. Secrets live in `channel.env` / `.env` / `.claude/secrets/` (`chmod 600/640`), are git-ignored, and are never committed.
 
 Full, layer-specific instructions live in each component's README:
 [`agent-architecture/README.md`](agent-architecture/README.md) · [`tg-plugin/README.md`](tg-plugin/README.md).
+
+---
+
+## Choosing the harness: Claude Code or Codex
+
+The **harness** is the program the agents live in. The swarm can run on **Claude Code** (paid from your Claude subscription) or on **Codex CLI** (paid from your ChatGPT subscription). Memory, second-brain, Telegram, the watchdog, the task board and PII masking work the same on both. Full guide: [`agent-architecture/docs/codex-harness.md`](agent-architecture/docs/codex-harness.md).
+
+- **One harness for the whole swarm.** It is the first question of `install.sh` (`HARNESS=claude|codex` answers it without a prompt) and is stored in `~/.claude-lab/shared/swarm.env`. New agents inherit it. If agents already exist, the installer refuses to switch the swarm to the other harness.
+- **Codex is pinned to version `0.171.0`.** The installer downloads the official release package (checked by sha256) into `~/.local/share/labops-codex/` of the agents' user and links `~/.local/bin/codex` — not `/usr/local/bin`.
+- **One ChatGPT sign-in for the whole swarm:** `CODEX_HOME=~/.claude-lab/shared/codex codex login --device-auth`. Codex prints a link and a code; open the link on any device, sign in to ChatGPT and enter the code. Every agent's `CODEX_HOME` (`~/.claude-lab/<agent>/.codex/`) links to this shared sign-in, so a token refresh by one agent reaches all of them. API-key sign-in is not accepted.
+- **PII masking is mandatory on Codex.** An agent on Codex is not installed and not started without its local `pii-proxy`; all model traffic goes through it.
+- **Default model:** `gpt-6.2-sol`.
+- **No terminal app in tmux.** The watchdog starts the Telegram plugin in "driver" mode, and the driver runs `codex app-server` and talks to it over JSON-RPC: one queue for Telegram messages and tasks, 👀/👌 reactions, the agent's final message goes to the chat by itself, memory hooks are called by the driver, the conversation thread is resumed after a restart.
+- **`/reset force` and `/doctor`** work on Codex too; `/stop` interrupts the current turn.
+- **Tasks from other agents:** in a Codex swarm the `webhook-listener` runs `codex exec` instead of `claude -p`.
 
 ---
 
@@ -242,7 +262,9 @@ Self-hosted by design: agents run on the operator's own Linux server, `second_br
 
 | Endpoint | Purpose | When | Optional |
 |---|---|---|---|
-| `api.anthropic.com` (via the Claude Code engine) | LLM inference — the model the agent runs on | while the agent is active | no (core) |
+| `api.anthropic.com` (via the Claude Code engine) | LLM inference — the model the agent runs on | while the agent is active, Claude harness | no (core) |
+| `chatgpt.com` (via Codex CLI, through the local pii-proxy) | LLM inference on the ChatGPT subscription | while the agent is active, Codex harness | no (core on Codex) |
+| `auth.openai.com` | ChatGPT sign-in and token refresh | Codex harness | no (on Codex) |
 | `api.telegram.org` | chat I/O — receiving and sending messages | while running | no |
 | `127.0.0.1` (local voice-transcriber, faster-whisper) | voice transcription | only on voice messages | local — audio never leaves the host |
 | `second_brain` (`localhost` MCP, Postgres + vault) | conversation memory & state | always | local — never leaves the host |

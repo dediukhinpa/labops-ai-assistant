@@ -18,7 +18,7 @@ We aim to acknowledge a report within **3 business days** and to share a remedia
 ## Scope
 
 - **In scope:** the code in this repository — scripts, services, templates.
-- **Out of scope:** third-party services this software talks to (Telegram, Anthropic, …). Report those to the respective vendor. See the **Data & privacy** section of the README for the exact endpoints used.
+- **Out of scope:** third-party services this software talks to (Telegram, Anthropic, OpenAI, …). Report those to the respective vendor. See the **Data & privacy** section of the README for the exact endpoints used.
 
 ## Secrets & operator responsibility
 
@@ -26,9 +26,28 @@ This software is **self-hosted**: you run it on your own server and hold your ow
 credentials. Keep secrets out of git — bot tokens and API keys live in `channel.env` /
 `.env` / `.claude/secrets/` with restrictive permissions (`chmod 600`/`640`) and are
 never committed. A leaked
-*token* is rotated with the provider (BotFather, the Anthropic console, …), not
+*token* is rotated with the provider (BotFather, the Anthropic console, ChatGPT account settings, …), not
 through this repository. This repo also runs `gitleaks` in CI and ships its own
 secret-scan guards to catch accidental commits.
+
+## Codex harness (driver mode)
+
+On a swarm that runs on Codex CLI the plugin is the agent's main process and starts
+`codex app-server` itself (see the README, "Codex harness"). Security-relevant facts:
+
+- The channel tools are served to Codex as MCP over HTTP on the plugin's internal
+  `127.0.0.1:6000+` webhook server (`/mcp`), protected by a random Bearer token that is generated
+  at every start and kept only in memory and in the Codex child's environment.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_TOKEN`, `VOICE_TRANSCRIBER_TOKEN` and
+  `SUPPORT_FOLLOWUP_TOKEN` are removed from the environment Codex (and every command the model
+  runs) receives.
+- Codex runs with `approval_policy = "never"` and `sandbox_mode = "danger-full-access"`; approval
+  requests, if any arrive, are declined. Run agents as a dedicated non-root user without sudo.
+- The swarm's ChatGPT sign-in (`~/.claude-lab/shared/codex/auth.json`, `600` in a `700` folder)
+  gives access to the owner's ChatGPT subscription — treat it as a password. Details:
+  [`../agent-architecture/SECURITY.md`](../agent-architecture/SECURITY.md).
+- `codex exec` in the webhook-listener (Codex swarm) is allowed; it runs with the agent's
+  `CODEX_HOME`, so it uses the same config and pii-proxy as the agent.
 
 ## Supported versions
 

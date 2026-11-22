@@ -1,6 +1,6 @@
 # pii-proxy
 
-Локальный HTTP-прокси между Claude Code и API модели: маскирует персональные данные в
+Локальный HTTP-прокси между харнесом агента (Claude Code или Codex CLI) и API модели: маскирует персональные данные в
 запросах через сервис псевдонимизации (`labops-pii`, `pii-proxy/docs/pseudonymizer.md`) и возвращает оригиналы в ответах. Один процесс на агента.
 
 ## Вложения: PII_PROXY_IMAGE_POLICY
@@ -120,6 +120,22 @@ tests/media-e2e.test.ts` (без переменных тест пропуска�
 - Порты: `6300 + индекс агента` (webhook плагина - 6000+, listener - 6100/6101).
 - Отключить: `SKIP_PII_PROXY=1` (ПДн тогда уходят в модель немаскированными).
 
+## Харнес Codex
+
+В рое на Codex CLI (см. `agent-architecture/docs/codex-harness.ru.md`) тот же прокси стоит между
+Codex и бэкендом ChatGPT:
+
+- `PII_PROXY_UPSTREAM=https://chatgpt.com`; Codex приходит на `/backend-api/codex/responses`
+  (формат OpenAI Responses, вход через подписку ChatGPT), маскирование и восстановление потока
+  SSE — те же, что для `/v1/messages`. Адрес прокси — `model_provider = "labops-pii"` в
+  `CODEX_HOME/config.toml` агента; `settings.json` и хука `SessionEnd` у Codex нет.
+- Прокси на Codex **обязателен**: `SKIP_PII_PROXY=1` не принимается, без прокси агент не
+  ставится и не стартует.
+- Заголовки входа (`Authorization`, `chatgpt-account-id`) передаются апстриму как есть и в журнал
+  не пишутся: из заголовков запроса в журнал попадает только отпечаток (sha256-префикс) id сессии
+  или нити (`thread-id`).
+- Сжатое тело запроса проверить нельзя, поэтому в `config.toml` агента сжатие запросов выключено.
+
 ## Проверка живости
 
 `GET /health` (без авторизации, прокси слушает только `127.0.0.1`) отвечает `{"status":"ok"}`.
@@ -138,7 +154,7 @@ user-текст `quota`, без `system`). Маскировать в ней не
 Любой не-2xx ответ upstream доходит клиенту как есть, а в журнал пишется событие `upstream_error`:
 `status`, `probe` (был ли это запрос-проба), `upstream_error_type` (`error.type` из тела, например
 `rate_limit_error`) и `upstream_headers` (только `request-id`, `retry-after`, `x-should-retry`,
-`anthropic-ratelimit-*`). Тела ответа и текстов запроса в журнале нет. По событию видно, чей это
+`anthropic-ratelimit-*`, у Codex — `x-oai-request-id`, `x-request-id` и `x-codex-*` о лимитах). Тела ответа и текстов запроса в журнале нет. По событию видно, чей это
 отказ: честный лимит Anthropic (есть `retry-after` и заголовки лимитов) или отказ из-за формы
 запроса.
 
