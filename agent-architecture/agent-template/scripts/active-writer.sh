@@ -117,11 +117,15 @@ extract_request() {
 import json, os, re
 maxlen = int(os.environ["MAXLEN"])
 try:
-    path = json.loads(os.environ["PAYLOAD_E"]).get("transcript_path")
+    payload = json.loads(os.environ["PAYLOAD_E"])
 except Exception:
-    path = None
-last = ""
-if isinstance(path, str):
+    payload = {}
+if not isinstance(payload, dict):
+    payload = {}
+path = payload.get("transcript_path")
+# Драйвер Codex кладёт запрос хода прямо в payload: журнал нити Codex в другом формате.
+last = payload.get("last_user_message") if isinstance(payload.get("last_user_message"), str) else ""
+if not last and isinstance(path, str):
     try:
         with open(path, encoding="utf-8") as fh:
             for line in fh:

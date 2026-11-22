@@ -79,6 +79,7 @@ check "codex: нет файлов Claude Code" bash -c "! ls '$WS/settings.json'
 check "codex: ~/.claude не создан" test ! -e "$X/home/.claude"
 check "codex: нет упоминаний Claude в core/tools" bash -c "! grep -rqE 'Claude Code|~/.claude/|CLAUDE\.md' '$WS/core' '$WS/tools'"
 check "codex: подагенты — Codex" grep -q "Codex's built-in sub-agents" "$WS/core/AGENTS.md"
+check "codex: скрипт сборки AGENTS.md в рабочей папке" test -f "$WS/scripts/codex_workspace.py"
 
 # Повторный прогон: ничего не дублируется (правила языков вклеены один раз).
 render "$X" codex

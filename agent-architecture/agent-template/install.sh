@@ -572,9 +572,10 @@ if [ "$HARNESS" = "codex" ]; then
         } >> "${CODEX_HOME_DIR}/AGENTS.md"
         log "Language rules -> ${CODEX_HOME_DIR}/AGENTS.md"
     fi
-    # Идентичность для Codex: AGENTS.src.md с развёрнутыми @-импортами (драйвер пересобирает
-    # её перед каждым стартом нити, здесь — первая сборка).
-    python3 "$CODEX_WORKSPACE_PY" agents-md "${WORKSPACE}"
+    # Идентичность для Codex: AGENTS.src.md с развёрнутыми @-импортами. Драйвер пересобирает
+    # её перед каждым стартом нити своей копией скрипта (рабочая папка не зависит от клона).
+    cp "$CODEX_WORKSPACE_PY" "${WORKSPACE}/scripts/codex_workspace.py"
+    python3 "${WORKSPACE}/scripts/codex_workspace.py" agents-md "${WORKSPACE}"
     log "Created: ${WORKSPACE}/AGENTS.md"
 fi
 

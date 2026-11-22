@@ -24,7 +24,7 @@ import type { StatusManager } from '../status/status-manager.js'
 import type { MultichatPolicy } from '../chats/policy-loader.js'
 import type { MultichatRouter } from '../router/multichat-router.js'
 import type { InboundMessage } from '../router/inbox-bridge.js'
-import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
+import { inboundSinkActive, sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import {
   checkDmRouterAccess,
   shouldRouteDmPerPerson,
@@ -80,6 +80,9 @@ import { ackTaken } from './ack-taken.js'
 // Off unless we can resolve our own session (AGENT_ID) and not opted out.
 // Never awaited and never throws — delivery must not depend on it.
 export function scheduleEnsureSubmit(content: string, log: Logger): void {
+  // Драйвер Codex принимает сообщение сам (app-server отвечает на turn/start): поля ввода
+  // tmux, которое нужно досылать, и меток доставки для watchdog у него нет.
+  if (inboundSinkActive()) return
   // Метку пишем ДО любых ранних выходов: watchdog решает по ней, можно ли
   // досылать нарисованное в поле, и это решение не должно зависеть от того,
   // включена ли досылка на стороне плагина.

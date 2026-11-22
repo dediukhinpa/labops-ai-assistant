@@ -122,6 +122,21 @@ async function deliverViaTmux(
   }
 }
 
+// Харнес Codex: входящие уходят не уведомлением MCP (у Codex нет каналов Claude), а в
+// драйвер app-server. Пока приёмник установлен, sendChannelNotification отдаёт события ему.
+export type InboundSink = (event: ChannelEvent) => Promise<boolean>
+let inboundSink: InboundSink | undefined
+
+/** Установить (или снять — undefined) приёмник входящих вместо канала Claude. */
+export function setInboundSink(sink: InboundSink | undefined): void {
+  inboundSink = sink
+}
+
+/** Входящие идут в драйвер Codex, а не в сессию Claude Code. */
+export function inboundSinkActive(): boolean {
+  return inboundSink !== undefined
+}
+
 // Returns true when server.notification accepted the write; false when the
 // transport threw (error already logged). Callers MUST honour false: poller
 // dead-letters the update, webhook returns 503.
@@ -131,6 +146,14 @@ export async function sendChannelNotification(
   log: Logger,
   opts: TmuxDeliveryOptions = {},
 ): Promise<boolean> {
+  if (inboundSink !== undefined) {
+    try {
+      return await inboundSink(event)
+    } catch (err) {
+      log.error('inbound sink failed', { error: err instanceof Error ? err.message : String(err) })
+      return false
+    }
+  }
   if (inboundViaTmuxEnabled(opts.env)) return deliverViaTmux(event, log, opts)
   try {
     await server.notification({

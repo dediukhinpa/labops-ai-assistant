@@ -89,6 +89,13 @@ else
     check 0 0 "обёртка канала, результаты инструментов и старые вопросы отброшены"
 fi
 
+
+# Драйвер Codex: запрос хода приходит полем last_user_message, журнала в формате Claude нет.
+CWS="$TMP/codex"; mkdir -p "$CWS/core/active"
+printf '%s' '{"last_assistant_message":"Готово, 42.","last_user_message":"<channel source=\"telegram\" chat_id=\"1\">\nПосчитай 6*7\n</channel>","transcript_path":"/nonexistent"}' \
+    | AGENT_WORKSPACE="$CWS" bash "$SCRIPT_DIR/active-writer.sh" --source stop-hook >/dev/null
+grep -q 'Просьба: Посчитай 6\*7 | Ответ: Готово, 42' "$CWS/core/active/episodic.md"; check 0 $? "Codex: просьба из last_user_message"
+
 echo ""
 echo "active-writer.test.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
