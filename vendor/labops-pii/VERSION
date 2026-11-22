@@ -1,10 +1,10 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: origin/feature/openai-responses
-tag: (без тега)
+ref: v1.2.0
+tag: v1.2.0
 commit: dd76fb6dc1afac84bf461a68fae155595d89e1f4
 parts: media,service,ts
-vendored_at: 2026-11-22T18:26:59Z
+vendored_at: 2026-11-22T18:40:07Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
