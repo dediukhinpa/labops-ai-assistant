@@ -33,7 +33,7 @@
 
 ## What it is
 
-A Claude Code plugin (Bun runtime, TypeScript) that turns an ordinary `claude` session into a **long-lived Telegram agent**: your agent lives as a persistent session on a server and talks to you in Telegram — text, voice, media, status reactions, and interactive buttons. It registers as an **MCP server inside the live Claude Code session**, so Telegram is just an I/O channel — the same context, memory, and tools you already have, not a new headless process per message. Part of the **labops** architecture (see also [`labops-second-brain`](#part-of-labops) and [`agent-architecture`](#part-of-labops)).
+A Claude Code plugin (Bun runtime, TypeScript) that turns an ordinary `claude` session into a **long-lived Telegram agent**: your agent lives as a persistent session on a server and talks to you in Telegram — text, voice, media, status reactions, and interactive buttons. It registers as an **MCP server inside the live Claude Code session**, so Telegram is just an I/O channel — the same context, memory, and tools you already have, not a new headless process per message. Part of the **labops** architecture (see also [`labops-second-brain`](#part-of-labops) and [`agent-architecture`](#part-of-labops)). On a swarm that runs on **Codex CLI** the same plugin drives `codex app-server` itself — see [Codex harness](#codex-harness-the-plugin-as-the-driver).
 
 ---
 
@@ -182,6 +182,27 @@ sequenceDiagram
     S->>H: Stop (turn finished)
     H->>TG: setMessageReaction 👌  (done)
 ```
+
+---
+
+## Codex harness: the plugin as the driver
+
+If the swarm runs on **Codex CLI** instead of Claude Code (the installer's first question, see [`agent-architecture/docs/codex-harness.md`](../agent-architecture/docs/codex-harness.md)), this same plugin works in **driver mode** (`LABOPS_HARNESS=codex`, set by the orchestration from `~/.claude-lab/shared/swarm.env`). The Telegram side — poller, allowlist, voice, media, buttons, status, progress mirror — is the same code; what changes is who drives whom:
+
+- **The plugin is the main process.** The watchdog starts it in the agent's tmux session (no terminal app there), and the plugin starts `codex app-server` as its child and talks to it over JSON-RPC (stdio). Code: [`plugin/src/harness/codex/`](plugin/src/harness/codex/).
+- **Channel tools over HTTP.** Codex gets `reply`, reactions, file sending and attachment download as an MCP server on the plugin's internal port (`127.0.0.1:6000+`, path `/mcp`), protected by a random Bearer generated at every start — instead of stdio MCP.
+- **One long-lived thread, resumed after a restart.** The thread id is kept in the channel state directory; if resuming fails, a new thread starts.
+- **One input queue.** Telegram messages, board tasks (the task poller drops them as files into `state/codex-inbox/` of the workspace) and webhook deliveries share one queue. A message from the chat of the running turn is added to that turn (`turn/steer`); others wait for the turn to end.
+- **Reactions and status from events.** 👀 when the message is taken into work, 👌 when the turn ends; app-server events are translated into the hook format the status and progress code already understands — no Claude Code hooks are registered.
+- **The answer reaches the chat without `reply`.** The agent's final message of the turn is sent to the chat that started the turn; `reply` is for progress notes and files, and the same text is not sent twice. A failed turn sends a short warning.
+- **Questions** from Codex become Telegram buttons; approval requests are declined and logged (`approval_policy = never` is expected).
+- **Memory hooks** (session-start, stop, precompact, heartbeat, brain-flush) are run by the driver — the same workspace scripts Claude Code runs.
+- **`/reset force`** is served by the plugin itself: memory flush, `AGENTS.md` rebuild, new thread. **`/doctor`** goes to the watchdog as on Claude. **`/stop`** interrupts the turn.
+- The bot, webhook, voice and support tokens are removed from the environment Codex and its commands get.
+- `multichat` (per-person sessions) is not supported in driver mode yet — the plugin logs a warning and runs one session.
+- The separate [`webhook-listener/`](webhook-listener/) (one-off agent-to-agent jobs) runs `codex exec` instead of `claude -p` on a Codex swarm — in the agent's workspace, with the agent's `CODEX_HOME`, so the job goes through the same model, pii-proxy and second-brain access.
+
+On a Codex swarm `install.sh` of this component does not install Claude Code and does not register Claude Code hooks.
 
 ---
 
@@ -341,6 +362,7 @@ python3 -m venv .venv && .venv/bin/pip install -r webhook-listener/requirements.
 | **HTML validator** (`safety/html-validator.ts`) | only a safe whitelist of tags in Telegram HTML |
 | **Rate-limit** (`safety/rate-limited-telegram-api.ts`) | respects Telegram API limits without bans |
 | **Secrets out of git** | `channel.env` with `chmod 640`, not committed |
+| **Codex driver mode** | channel MCP on loopback only, random Bearer per start; bot/webhook/voice tokens stripped from the Codex environment |
 
 ---
 

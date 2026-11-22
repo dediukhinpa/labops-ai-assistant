@@ -46,7 +46,7 @@
 6. [Скилл `create-agent` (end-to-end)](#скилл-create-agent-end-to-end)
 7. [Хуки жизненного цикла и автоматизация роя](#хуки-жизненного-цикла-и-автоматизация-роя)
 8. [Скиллы в комплекте](#скиллы-в-комплекте)
-9. [Установка и модель/авторизация](#установка-и-модельавторизация)
+9. [Установка и модель/авторизация](#установка-и-модельавторизация) · [Харнес Codex](#харнес-codex-подписка-chatgpt)
 10. [Переменные и настройки](#переменные-и-настройки)
 11. [Если что-то не работает](#если-что-то-не-работает)
 12. [FAQ](#faq)
@@ -506,6 +506,19 @@ bash install.sh   # модель → идентичность → скаффол
 
 Скаффолд одного воркспейса без полного развёртывания — через `agent-template/install.sh` (см. [`agent-template/README.md`](agent-template/README.md)).
 
+### Харнес Codex (подписка ChatGPT)
+
+Всё, что выше, описывает харнес по умолчанию — **Claude Code**. Вместо него рой может работать на **Codex CLI** с оплатой из подписки ChatGPT. Подробно и простыми словами: [`docs/codex-harness.ru.md`](docs/codex-harness.ru.md). Коротко:
+
+- **Выбор.** Харнес — первый вопрос `install.sh` (`claude` / `codex`, по умолчанию `claude`); `HARNESS=codex` отвечает на него без вопроса. Он один на весь рой, хранится в `~/.claude-lab/shared/swarm.env` и наследуется `new-agent.sh`. Перевести существующий рой на другой харнес установщик откажется.
+- **Codex CLI `0.171.0`, закреплён.** Скачивается из официального релиза `openai/codex` (со сверкой sha256) в `~/.local/share/labops-codex/<версия>/`, ссылка `~/.local/bin/codex` (`orchestration/lib/codex-install.sh`). В `/usr/local/bin` не ставится.
+- **Один вход в ChatGPT на рой.** `CODEX_HOME=~/.claude-lab/shared/codex codex login --device-auth` — установщик запускает его сам (ссылка + код, любое устройство); `s` или `SKIP_CODEX_LOGIN=1` откладывают вход. В `CODEX_HOME` каждого агента (`~/.claude-lab/<агент>/.codex/`) лежат ссылки на общий `auth.json` и его файлы блокировки, поэтому обновлённый одним агентом токен виден всем. Вход по API-ключу считается отсутствием входа.
+- **pii-proxy обязателен.** На Codex `SKIP_PII_PROXY=1` не принимается; прокси агента поднимается до рендера рабочей папки (его адрес пишется в `config.toml`), а watchdog не запускает агента, пока прокси не отвечает.
+- **Модель.** По умолчанию `gpt-6.2-sol`, записывается в `~/.claude-lab/<агент>/.codex/config.toml`. Как и на Claude, это зона оператора.
+- **Драйвер вместо терминального приложения.** В tmux-сессии `labops-<агент>` watchdog запускает процесс `tg-plugin` в режиме драйвера; драйвер запускает `codex app-server` и общается с ним по JSON-RPC (одна очередь входов, реакции, финальное сообщение само уходит в чат, хуки памяти вызывает драйвер, нить восстанавливается после перезапуска). Вместо чтения экрана watchdog проверяет процесс драйвера, его порт, heartbeat и вход в ChatGPT.
+- **`/reset force`** (новая нить, память сохраняется — делает сам плагин) и **`/doctor`** работают и на Codex.
+- **Задачи от других агентов:** в рое на Codex `webhook-listener` запускает `codex exec` вместо `claude -p`. `codex exec` разрешён; запрет headless `claude -p` в `test.sh` остаётся для Claude.
+
 ### Тесты
 
 - **Синтаксис-чек bash** — `bash -n` по всем скриптам `orchestration/*.sh`, `agent-template/hooks/*.sh`, `agent-template/scripts/*.sh` (хуки fail-open, поэтому статической проверки + smoke достаточно).
@@ -537,6 +550,8 @@ bash install.sh --test-only
 | `AGENT_BEARER` | `.mcp.json` (chmod 600) | Bearer-токен агента для MCP (в БД хранится только `token_sha256`) |
 | `AGENT_SCOPES` | install | RBAC-scopes на чтение/запись (scope = первая папка пути в vault) |
 | `CLAUDE_LAB` | окружение | корень лаборатории (по умолчанию `$HOME/.claude-lab`); roster и токены ищутся относительно него |
+| `HARNESS` | окружение `install.sh` → `shared/swarm.env` | `claude` (по умолчанию) или `codex` — харнес всего роя; отвечает на первый вопрос установщика |
+| `SKIP_CODEX_LOGIN` | окружение `install.sh` | `=1` в рое на Codex: не входить в ChatGPT при установке (войти позже, см. [`docs/codex-harness.ru.md`](docs/codex-harness.ru.md)) |
 | `VOICE_TRANSCRIBER_TOKEN` | `.claude/secrets/voice-transcriber-token` | токен локального сервиса расшифровки голоса |
 | `TELEGRAM_BOT_TOKEN` | `.claude/secrets/telegram-bot-token`, `channel.env` | токен бота агента (`@BotFather`) |
 | `TELEGRAM_WEBHOOK_TOKEN` | `.claude/secrets/telegram-webhook-token` | Bearer для входящих POST на `/hooks/*` |
@@ -577,6 +592,7 @@ bash install.sh --test-only
 | «Модель не ответила» | запустите `claude` под пользователем агента, войдите через `/login`, затем `systemctl restart claude-agent-<agent>`. |
 | `second_brain недоступен` | Проверьте `SECOND_BRAIN_MEMORY_URL` / `SECOND_BRAIN_MEMORY_ROUTER_URL` / `SECOND_BRAIN_AGENT_ROUTER_URL` в `agent.env` (по умолчанию `http://127.0.0.1:5001/mcp` и т.д.) и что мозг поднят. `MCP_HOST` — только хост/IP; `SECOND_BRAIN_*_URL` — полные URL эндпоинтов. |
 | Повторный запуск/коллизия имени | `new-agent.sh` не затирает существующего агента; для донастройки поверх — `REUSE_EXISTING=1`. |
+| Рой на Codex: тревога «Codex не вошёл в ChatGPT» | `CODEX_HOME=~/.claude-lab/shared/codex codex login --device-auth` (один раз на рой); watchdog сам поднимет агентов. Подробнее: [`docs/codex-harness.ru.md`](docs/codex-harness.ru.md#9-если-что-то-не-работает). |
 
 </details>
 
@@ -627,7 +643,8 @@ Self-hosted by design: агенты работают на собственном
 
 | Endpoint | Назначение | Когда | Опционально |
 |---|---|---|---|
-| `api.anthropic.com` (через движок Claude Code) | инференс LLM — модель, на которой работает агент | пока агент активен | нет (ядро) |
+| `api.anthropic.com` (через движок Claude Code) | инференс LLM — модель, на которой работает агент | пока агент активен, харнес Claude | нет (ядро) |
+| `chatgpt.com` / `auth.openai.com` (через Codex CLI; трафик к модели — через локальный pii-proxy) | инференс LLM по подписке ChatGPT; вход и обновление токена | пока агент активен, харнес Codex | нет (ядро на Codex) |
 | `api.telegram.org` | ввод-вывод чата — приём и отправка сообщений | во время работы | нет |
 | `127.0.0.1` (локальный voice-transcriber, faster-whisper) | транскрипция голоса | только на голосовых сообщениях | локально — аудио не покидает хост |
 | `second_brain` (`localhost` MCP, Postgres + vault) | память диалога и состояние | всегда | локально — не покидает хост |
@@ -641,7 +658,7 @@ Self-hosted by design: агенты работают на собственном
 
 Каждый агент, созданный из этого репо, ходит в модель **только** через локальный `pii-proxy` (`127.0.0.1:6300+`), который маскирует персональные данные через общий на хост `pseudonymizer` (`127.0.0.1:8300`). `install.sh` ставит псевдонимизатор один раз на хост; `new-agent.sh` ставит по прокси на агента и прописывает в его `settings.json` `ANTHROPIC_BASE_URL` и второй хук `SessionEnd` (`orchestration/pii-setup.sh`). `watchdog.sh` и `start-agent.sh` не запускают `claude`, пока `/health` прокси не отвечает (fail closed), и шлют оператору алерт; сессия, которой прокси подряд отвечает 422/503, даёт алерт «сессия застряла». webhook-listener (`claude -p`) и сессии multichat берут тот же адрес прокси из `settings.json` агента. Телеметрия CLI выключена, транскрипты хранятся бессрочно (`cleanupPeriodDays` = 36500, решение владельца: контекст клиента не теряется).
 
-Отключить можно только явно: `SKIP_PII_PROXY=1` (громкое предупреждение; ПДн уйдут провайдеру модели немаскированными). `install.sh` также предупреждает, не блокируя установку, если IP хоста не в РФ (локализация по 152-ФЗ).
+Отключить можно только явно: `SKIP_PII_PROXY=1` (громкое предупреждение; ПДн уйдут провайдеру модели немаскированными). На **харнесе Codex** отключить нельзя: прокси ходит в `chatgpt.com`, его адрес — `model_provider` в `config.toml` агента, и без него агент не ставится и не стартует (см. [`docs/codex-harness.ru.md`](docs/codex-harness.ru.md#5-маскирование-пдн-обязательно)). `install.sh` также предупреждает, не блокируя установку, если IP хоста не в РФ (локализация по 152-ФЗ).
 
 **Уже установленные агенты** (переустановка не нужна): `bash orchestration/pii-setup.sh host`, затем `CLAUDE_LAB=~/.claude-lab bash orchestration/pii-setup.sh agent <id>`, затем перезапуск юнита агента (`claude-agent-<id>`): `claude` читает `settings.json` только при старте.
 

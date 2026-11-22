@@ -46,7 +46,7 @@ This is the **runtime / lifecycle layer** of the labops system. It owns how an a
 6. [The `create-agent` skill (end-to-end)](#the-create-agent-skill-end-to-end)
 7. [Lifecycle hooks & swarm automation](#lifecycle-hooks--swarm-automation)
 8. [Bundled skills](#bundled-skills)
-9. [Installation & model/auth](#installation--modelauth)
+9. [Installation & model/auth](#installation--modelauth) · [Codex harness](#codex-harness-chatgpt-subscription)
 10. [Configuration & environment](#configuration--environment)
 11. [Troubleshooting](#troubleshooting)
 12. [FAQ](#faq)
@@ -506,6 +506,19 @@ Both bundled components are installed by the block above; only the external `lab
 
 Scaffolding a single workspace without a full deployment — via `agent-template/install.sh` (see [`agent-template/README.md`](agent-template/README.md)).
 
+### Codex harness (ChatGPT subscription)
+
+Everything above describes the default harness, **Claude Code**. The swarm can instead run on **Codex CLI**, paid from a ChatGPT subscription. The full guide, in plain words: [`docs/codex-harness.md`](docs/codex-harness.md). In short:
+
+- **Choice.** The harness is the first question of `install.sh` (`claude` / `codex`, default `claude`); `HARNESS=codex` answers it without a prompt. It is one for the whole swarm, stored in `~/.claude-lab/shared/swarm.env` and inherited by `new-agent.sh`. Switching an existing swarm to the other harness is refused by the installer.
+- **Codex CLI `0.171.0`, pinned.** Downloaded from the official `openai/codex` release (sha256 checked) into `~/.local/share/labops-codex/<version>/`, linked as `~/.local/bin/codex` (`orchestration/lib/codex-install.sh`). Not installed into `/usr/local/bin`.
+- **One ChatGPT sign-in for the swarm.** `CODEX_HOME=~/.claude-lab/shared/codex codex login --device-auth` — the installer runs it for you (link + code, any device); `s` or `SKIP_CODEX_LOGIN=1` postpones it. Each agent's `CODEX_HOME` (`~/.claude-lab/<agent>/.codex/`) holds links to the shared `auth.json` and its lock files, so a token refresh by one agent reaches all. API-key sign-in is treated as "not signed in".
+- **pii-proxy is mandatory.** On Codex `SKIP_PII_PROXY=1` is refused; the agent's proxy is set up before its workspace is rendered (its address goes into `config.toml`), and the watchdog does not start the agent while the proxy is down.
+- **Model.** Default `gpt-6.2-sol`, written to `~/.claude-lab/<agent>/.codex/config.toml`. Operator-owned, like on Claude.
+- **Driver instead of a terminal app.** In the tmux session `labops-<agent>` the watchdog starts the `tg-plugin` process in driver mode; the driver runs `codex app-server` and talks to it over JSON-RPC (one input queue, reactions, the final message goes to the chat by itself, memory hooks called by the driver, the thread is resumed after a restart). The watchdog checks the driver process, its port, its heartbeat and the ChatGPT sign-in instead of reading a screen.
+- **`/reset force`** (new thread, memory kept — done by the plugin itself) and **`/doctor`** work on Codex too.
+- **Agent-to-agent jobs:** in a Codex swarm the `webhook-listener` runs `codex exec` instead of `claude -p`. `codex exec` is allowed; the `test.sh` ban on headless `claude -p` stays for Claude.
+
 ### Tests
 
 - **Bash syntax check** — `bash -n` over all scripts in `orchestration/*.sh`, `agent-template/hooks/*.sh`, `agent-template/scripts/*.sh` (hooks are fail-open, so static check + smoke is enough).
@@ -537,6 +550,8 @@ bash install.sh --test-only
 | `AGENT_BEARER` | `.mcp.json` (chmod 600) | the agent's Bearer token for MCP (only `token_sha256` is stored in the DB) |
 | `AGENT_SCOPES` | install | RBAC scopes for read/write (a scope = the first path folder in the vault) |
 | `CLAUDE_LAB` | environment | the lab root (default `$HOME/.claude-lab`); roster and tokens are resolved relative to it |
+| `HARNESS` | `install.sh` env → `shared/swarm.env` | `claude` (default) or `codex` — the harness of the whole swarm; answers the installer's first question |
+| `SKIP_CODEX_LOGIN` | `install.sh` env | `=1` on a Codex swarm: do not sign in to ChatGPT during install (sign in later, see [`docs/codex-harness.md`](docs/codex-harness.md)) |
 | `VOICE_TRANSCRIBER_TOKEN` | `.claude/secrets/voice-transcriber-token` | token of the local voice transcription service |
 | `TELEGRAM_BOT_TOKEN` | `.claude/secrets/telegram-bot-token`, `channel.env` | the agent's bot token (`@BotFather`) |
 | `TELEGRAM_WEBHOOK_TOKEN` | `.claude/secrets/telegram-webhook-token` | Bearer for inbound POSTs to `/hooks/*` |
@@ -575,6 +590,7 @@ A green smoke means: the workspace was created, the brain responds by Bearer, th
 | "The model didn't respond" | run `claude` under the agent's user, `/login`, then `systemctl restart claude-agent-<agent>`. |
 | `second_brain unreachable` | Check `SECOND_BRAIN_MEMORY_URL` / `SECOND_BRAIN_MEMORY_ROUTER_URL` / `SECOND_BRAIN_AGENT_ROUTER_URL` in `agent.env` (default `http://127.0.0.1:5001/mcp` etc.) and that the brain is up. `MCP_HOST` is the host/IP only; the `SECOND_BRAIN_*_URL` vars are the actual endpoint URLs. |
 | Re-run / name collision | `new-agent.sh` doesn't overwrite an existing agent; to tune on top — `REUSE_EXISTING=1`. |
+| Codex swarm: alert "Codex is not signed in to ChatGPT" | `CODEX_HOME=~/.claude-lab/shared/codex codex login --device-auth` (once for the swarm); the watchdog brings the agents up by itself. More: [`docs/codex-harness.md`](docs/codex-harness.md#9-troubleshooting). |
 
 </details>
 
@@ -625,7 +641,8 @@ Self-hosted by design: agents run on the operator's own Linux server, the `secon
 
 | Endpoint | Purpose | When | Optional |
 |---|---|---|---|
-| `api.anthropic.com` (via the Claude Code engine) | LLM inference — the model the agent runs on | while the agent is active | no (core) |
+| `api.anthropic.com` (via the Claude Code engine) | LLM inference — the model the agent runs on | while the agent is active, Claude harness | no (core) |
+| `chatgpt.com` / `auth.openai.com` (via Codex CLI; model traffic through the local pii-proxy) | LLM inference on the ChatGPT subscription; sign-in and token refresh | while the agent is active, Codex harness | no (core on Codex) |
 | `api.telegram.org` | chat I/O — receiving and sending messages | while running | no |
 | `127.0.0.1` (local voice-transcriber, faster-whisper) | voice transcription | only on voice messages | local — audio never leaves the host |
 | `second_brain` (`localhost` MCP, Postgres + vault) | conversation memory & state | always | local — never leaves the host |
@@ -639,7 +656,7 @@ Secrets live in `channel.env` / `.claude/secrets` (`chmod 600`) and are never co
 
 Every agent created from this repo talks to the model **only** through a local `pii-proxy` (`127.0.0.1:6300+`), which masks personal data through the host-wide `pseudonymizer` (`127.0.0.1:8300`). `install.sh` installs the pseudonymizer once per host; `new-agent.sh` installs one proxy per agent and writes `ANTHROPIC_BASE_URL` plus a second `SessionEnd` hook into the agent's `settings.json` (`orchestration/pii-setup.sh`). `watchdog.sh` / `start-agent.sh` refuse to start `claude` while the proxy's `/health` is down (fail closed) and alert the operator; a session that keeps getting 422/503 from the proxy raises a "stuck session" alert. The webhook-listener (`claude -p`) and multichat sessions read the same proxy URL from the agent's `settings.json`. CLI telemetry is switched off and transcripts are kept indefinitely (`cleanupPeriodDays` = 36500, owner decision: client context must survive).
 
-Opt out explicitly with `SKIP_PII_PROXY=1` (loud warning; personal data then reaches the model provider unmasked). `install.sh` also warns, without blocking, when the host IP is outside Russia (152-FZ data localisation).
+Opt out explicitly with `SKIP_PII_PROXY=1` (loud warning; personal data then reaches the model provider unmasked). On the **Codex harness** there is no opt-out: the proxy forwards to `chatgpt.com`, its address is the `model_provider` in the agent's `config.toml`, and an agent without it is neither installed nor started (see [`docs/codex-harness.md`](docs/codex-harness.md#5-pii-masking-is-mandatory)). `install.sh` also warns, without blocking, when the host IP is outside Russia (152-FZ data localisation).
 
 **Already installed agents** (no re-install needed): `bash orchestration/pii-setup.sh host`, then `CLAUDE_LAB=~/.claude-lab bash orchestration/pii-setup.sh agent <id>`, then restart the agent unit (`claude-agent-<id>`); `claude` reads `settings.json` only at start.
 
