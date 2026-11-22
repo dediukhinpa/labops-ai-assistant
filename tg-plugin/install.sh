@@ -106,6 +106,19 @@ fi
 command -v tmux >/dev/null 2>&1 || die "Установка tmux не удалась — установите вручную."
 ok "tmux $(tmux -V 2>/dev/null | awk '{print $2}')"
 
+# Харнес роя: claude (по умолчанию) или codex. Его выбирает установщик agent-architecture
+# (передаёт HARNESS) и пишет в ~/.claude-lab/shared/swarm.env. В рое на Codex плагин —
+# драйвер codex app-server: Claude Code и его хуки не нужны, codex ставит установщик роя.
+PLUGIN_HARNESS="${HARNESS:-}"
+SWARM_ENV="${CLAUDE_LAB:-$HOME/.claude-lab}/shared/swarm.env"
+if [ -z "$PLUGIN_HARNESS" ] && [ -f "$SWARM_ENV" ]; then
+  PLUGIN_HARNESS="$(sed -n 's/^[[:space:]]*HARNESS=//p' "$SWARM_ENV" | tail -n1 | tr -d "\"' ")"
+fi
+PLUGIN_HARNESS="${PLUGIN_HARNESS:-claude}"
+
+if [ "$PLUGIN_HARNESS" = "codex" ]; then
+  ok "харнес роя — Codex: Claude Code не нужен (плагин запускает codex app-server сам)"
+else
 if ! command -v claude >/dev/null 2>&1; then
   step "устанавливаю Claude Code"
   # Тот же приём и та же причина, что с bun выше: конвейер `curl … | bash` под
@@ -135,6 +148,7 @@ elif ver_ge "$CLAUDE_VER" "$REQUIRED_CLAUDE"; then
 else
   die "claude $CLAUDE_VER ниже требуемой v$REQUIRED_CLAUDE даже после попытки обновления. Обновите Claude Code вручную."
 fi
+fi
 
 # ─── 2. Зависимости плагина ──────────────────────────────────────
 say "Установка зависимостей плагина (bun install)"
@@ -152,7 +166,9 @@ ok "зависимости установлены"
 
 # ─── 3. Хуки Claude Code ─────────────────────────────────────────
 say "Регистрация хуков Claude Code"
-if [ -x "$PLUGIN_DIR/scripts/install-hooks.sh" ]; then
+if [ "$PLUGIN_HARNESS" = "codex" ]; then
+  note "рой на Codex: статус и прогресс идут из событий codex app-server, хуки Claude Code не нужны"
+elif [ -x "$PLUGIN_DIR/scripts/install-hooks.sh" ]; then
   # install-hooks.sh требует --settings/--chat-id/--webhook-url, которых на
   # этапе установки ещё нет (channel.env не заполнен), поэтому провал здесь
   # ожидаем — НЕ печатаем ложное "зарегистрированы". Прежний текст обещал, что

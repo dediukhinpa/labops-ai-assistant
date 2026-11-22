@@ -4,6 +4,9 @@
 # останавливается, не зацикливаясь.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Харнес читается из swarm.env — тест не должен зависеть от лаборатории машины.
+export CLAUDE_LAB="$(mktemp -d)"
+trap 'rm -rf "$CLAUDE_LAB"' EXIT
 
 # shellcheck disable=SC1091
 source "$HERE/model-choice.sh"
@@ -89,5 +92,24 @@ rc=0; out="$(run 'ыsonnet' 'sonnet\n' 1 2>&1)" || rc=$?
 out="$(run 'ыhaiku' 'haiku\nopus\n' 2>&1)"
 echo "$out" | grep -q 'не поддерживается' || fail "мусор → haiku: нет отказа"
 echo "$out" | grep -q 'RESULT=opus$' || fail "мусор → haiku → opus: $out"
+
+# 14. Рой на Codex: по умолчанию gpt-6.2-sol, правило про Haiku не действует, мусор — отказ.
+run_codex() {
+  printf '%b' "$2" | HARNESS=codex NONINTERACTIVE=0 PRIMARY_MODEL="$1" bash -c '
+    unset MODEL_CHOICE_DEFAULT
+    source "'"$HERE"'/model-choice.sh"
+    confirm_primary_model
+    echo "RESULT=$PRIMARY_MODEL"'
+}
+out="$(run_codex 'ыgpt' '\n' 2>&1)"
+echo "$out" | grep -q 'RESULT=gpt-6.2-sol$' || fail "codex: Enter после мусора не дал gpt-6.2-sol: $out"
+echo "$out" | grep -q 'модели Codex' || fail "codex: подсказка про модели Claude: $out"
+out="$(run_codex 'gpt-6.2-haiku-like' '' 2>&1)"
+[ "$out" = "RESULT=gpt-6.2-haiku-like" ] || fail "codex: правило Haiku сработало: $out"
+# Харнес из swarm.env, когда вызывающий его не задал.
+mkdir -p "$CLAUDE_LAB/shared" && echo "HARNESS=codex" > "$CLAUDE_LAB/shared/swarm.env"
+out="$(env -u HARNESS bash -c 'unset MODEL_CHOICE_DEFAULT; source "'"$HERE"'/model-choice.sh"; echo "$MODEL_CHOICE_DEFAULT"')"
+[ "$out" = "gpt-6.2-sol" ] || fail "codex из swarm.env: $out"
+rm -f "$CLAUDE_LAB/shared/swarm.env"
 
 echo "model-choice: ok"

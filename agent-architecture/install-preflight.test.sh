@@ -71,6 +71,11 @@ cp "$HERE/orchestration/lib/proxy-install.sh" "$REPO/orchestration/lib/proxy-ins
 cp "$HERE/orchestration/lib/ocr-install.sh" "$REPO/orchestration/lib/ocr-install.sh"
 # openai-adapter-install.sh даёт openai_adapter_install: install.sh сорсит его при старте.
 cp "$HERE/orchestration/lib/openai-adapter-install.sh" "$REPO/orchestration/lib/openai-adapter-install.sh"
+# harness.sh, codex-watch.sh, codex-install.sh: харнес роя спрашивается до шага 0, от него
+# зависит набор проверяемых хостов (без ввода — claude по умолчанию).
+for _lib in harness.sh codex-watch.sh codex-install.sh; do
+  cp "$HERE/orchestration/lib/$_lib" "$REPO/orchestration/lib/$_lib"
+done
 
 # 1. Закрытый хост (403) — установка обязана остановиться.
 make_curl_stub 403
@@ -85,8 +90,8 @@ printf '%s' "$OUT" | grep -q 'Системные пакеты' \
 #    403 и отделён от отсутствия связи: чинится он совсем другим действием.
 printf '%s' "$OUT" | grep -q '403' \
   || fail "в сообщении нет кода 403 — оператор не поймёт причину"
-printf '%s' "$OUT" | grep -q 'supported-countries' \
-  || fail "нет ссылки на список поддерживаемых регионов"
+printf '%s' "$OUT" | grep -q 'закрытый регион' \
+  || fail "не названа причина 403 (регион или репутация адреса)"
 
 # 4. Аварийный обход должен быть назван прямо в сообщении, иначе оператор
 #    останется без способа продолжить на свой риск.
@@ -100,7 +105,7 @@ run_install "$TMP/out-down.txt"; OUT_DOWN="$(cat "$TMP/out-down.txt")"
 [ "$RC" -ne 0 ] || fail "без связи установка не должна продолжаться"
 printf '%s' "$OUT_DOWN" | grep -qi 'нет соединения' \
   || fail "отсутствие связи не отличается по тексту от блокировки"
-printf '%s' "$OUT_DOWN" | grep -q 'supported-countries' \
+printf '%s' "$OUT_DOWN" | grep -q 'закрытый регион' \
   && fail "про регионы сказано там, где дело в сети — оператор пойдёт чинить не то"
 
 echo "OK: install.sh preflight — 5 проверок пройдено"

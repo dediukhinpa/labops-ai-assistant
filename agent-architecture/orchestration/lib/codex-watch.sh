@@ -16,6 +16,15 @@ codex_home_of() {   # <agent>
   printf '%s/%s/.codex' "${CLAUDE_LAB:-$HOME/.claude-lab}" "$1"
 }
 
+# Общий вход роя в ChatGPT: один `codex login` на всех агентов. В CODEX_HOME каждого агента
+# auth.json и оба файла блокировки — ссылки сюда. Проверено на codex 0.171.0: обновлённый
+# токен пишется сквозь ссылку, перед обновлением codex перечитывает файл с диска, а общие
+# lock-файлы не дают двум агентам обновлять токен одновременно.
+CODEX_SHARED_AUTH_FILES="auth.json auth.json.lock auth.lock"
+codex_shared_home() {
+  printf '%s/shared/codex' "${CLAUDE_LAB:-$HOME/.claude-lab}"
+}
+
 # Путь к бинарю codex: CODEX_BIN, затем закреплённая установщиком копия, затем PATH.
 codex_bin() {
   if [ -n "${CODEX_BIN:-}" ] && [ -x "$CODEX_BIN" ]; then printf '%s\n' "$CODEX_BIN"; return 0; fi
@@ -44,9 +53,14 @@ codex_appserver_pattern() {   # <webhook-port>
 #   none    — входа нет;
 #   unknown — codex не найден или ответил непонятно (не повод тревожить оператора).
 codex_auth_state() {
+  codex_auth_state_home "$(codex_home_of "$1")"
+}
+
+# codex_auth_state_home <codex-home> — то же для произвольного CODEX_HOME (общий вход роя).
+codex_auth_state_home() {
   local bin out rc=0
   bin="$(codex_bin)" || { echo unknown; return 0; }
-  out="$(CODEX_HOME="$(codex_home_of "$1")" timeout 20 "$bin" login status 2>&1)" || rc=$?
+  out="$(CODEX_HOME="$1" timeout 20 "$bin" login status 2>&1)" || rc=$?
   case "$out" in
     *"Logged in using ChatGPT"*) echo chatgpt ;;
     *"API key"*|*"api key"*) echo apikey ;;
@@ -57,8 +71,36 @@ codex_auth_state() {
 }
 
 # Текст оператору, когда входа нет: что сделать руками (код подтверждения — в браузере).
-codex_login_hint() {   # <agent>
-  printf 'войдите в ChatGPT для агента: CODEX_HOME=%s codex login --device-auth' "$(codex_home_of "$1")"
+# Вход общий на рой, поэтому и команда одна для любого агента.
+codex_login_hint() {   # [agent] — не используется, оставлен для единообразия вызовов
+  printf 'войдите в ChatGPT (один вход на весь рой): CODEX_HOME=%s codex login --device-auth' "$(codex_shared_home)"
+}
+
+# codex_link_shared_auth <agent> — сделать вход агента ссылками на общий вход роя.
+# Свой auth.json агента (вошли раньше вручную) переносится в общий, если общего ещё нет, иначе
+# откладывается в auth.json.bak-<время>: два разных входа в одном рое не нужны.
+codex_link_shared_auth() {
+  local home shared f stamp
+  home="$(codex_home_of "$1")"
+  shared="$(codex_shared_home)"
+  mkdir -p "$home" "$shared" || return 1
+  chmod 700 "$shared" 2>/dev/null || true
+  stamp="$(date +%Y%m%d%H%M%S)"
+  for f in $CODEX_SHARED_AUTH_FILES; do
+    if [ -f "$home/$f" ] && [ ! -L "$home/$f" ]; then
+      if [ "$f" = "auth.json" ] && [ ! -e "$shared/$f" ]; then
+        mv "$home/$f" "$shared/$f" || return 1
+      else
+        mv "$home/$f" "$home/$f.bak-$stamp" || return 1
+      fi
+    fi
+    if [ "$f" != "auth.json" ] && [ ! -e "$shared/$f" ]; then
+      ( umask 077; : > "$shared/$f" ) || return 1
+    fi
+    ln -sfn "$shared/$f" "$home/$f" || return 1
+  done
+  [ ! -e "$shared/auth.json" ] || chmod 600 "$shared/auth.json"
+  return 0
 }
 
 # codex_heartbeat_stale <heartbeat-file> <max-age-sec> — heartbeat старше предела или нет.

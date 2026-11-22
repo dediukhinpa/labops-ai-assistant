@@ -102,6 +102,15 @@ ORCH_DIR="$REPO_DIR/orchestration"
 . "$ORCH_DIR/lib/agent-inputs.sh"
 # shellcheck source=../../orchestration/lib/operator-profile.sh
 . "$ORCH_DIR/lib/operator-profile.sh"
+# Харнес роя (claude|codex) выбран первым вопросом install.sh и записан в shared/swarm.env;
+# новый агент его наследует и о нём не спрашивает. Codex: вход в ChatGPT общий на рой.
+# shellcheck source=../../orchestration/lib/harness.sh
+. "$ORCH_DIR/lib/harness.sh"
+# shellcheck source=../../orchestration/lib/codex-watch.sh
+. "$ORCH_DIR/lib/codex-watch.sh"
+# shellcheck source=../../orchestration/lib/pii.sh
+. "$ORCH_DIR/lib/pii.sh"
+HARNESS="$(harness_current)" || { echo "не прочитать харнес роя ($(harness_swarm_env))" >&2; exit 1; }
 # Нативный claude ставится в ~/.local/bin, но PATH туда правится только в
 # ~/.bashrc — при запуске не-login шеллом (sudo -u ... -H bash ...) это не
 # подхватывается. Подмешиваем явно, чтобы claude находился и здесь, и в
@@ -149,6 +158,30 @@ if ! command -v bun >/dev/null 2>&1 && [ ! -x "$HOME/.bun/bin/bun" ]; then
   DEGRADED+=("bun не найден — Telegram-канал не запустится: curl -fsSL https://bun.sh/install | bash, затем ln -s ~/.bun/bin/bun ~/.local/bin/bun")
   warn "bun не найден — канал агента не поднимется (см. итоговый DEGRADED-список)"
 fi
+if [ "$HARNESS" = "codex" ]; then
+  # Рой на Codex: Claude Code, согласие на его режим без проверок и его вход не нужны.
+  # Нужны codex (ставит install.sh, закреплённой версии) и общий вход роя в ChatGPT.
+  ok "харнес роя: Codex"
+  if ! pii_enabled; then
+    die "агент на Codex без маскирования ПДн не ставится (SKIP_PII_PROXY=1): все запросы к модели идут через pii-proxy"
+  fi
+  if CODEX_FOUND="$(codex_bin)"; then
+    ok "codex: $CODEX_FOUND"
+  else
+    warn "codex не найден — агент не запустится"
+    DEGRADED+=("codex не установлен — поставьте закреплённую версию повторным запуском install.sh")
+  fi
+  case "$(codex_auth_state_home "$(codex_shared_home)")" in
+    chatgpt) ok "вход роя в ChatGPT есть ($(codex_shared_home))" ;;
+    apikey)
+      warn "Codex вошёл по API-ключу, а рой работает по подписке ChatGPT"
+      DEGRADED+=("Codex вошёл по API-ключу вместо подписки ChatGPT — агент не запустится; $(codex_login_hint))") ;;
+    none)
+      warn "нет входа роя в ChatGPT — агент не запустится, пока не войдёте"
+      DEGRADED+=("нет входа в ChatGPT — агент не подключится к модели; $(codex_login_hint)") ;;
+    *) note "вход в ChatGPT проверить не удалось — проверьте позже: CODEX_HOME=$(codex_shared_home) codex login status" ;;
+  esac
+else
 # Claude Code должен быть авторизован к модели (подписка Max/Pro).
 # Без этого агент стартует под systemd, но не достучится до модели.
 if command -v claude >/dev/null 2>&1; then
@@ -189,6 +222,7 @@ if [ -f "$HOME/.claude/.credentials.json" ]; then
 else
   warn "нет \$HOME/.claude/.credentials.json — tmux-сессия агента упрётся в экран логина"
   DEGRADED+=("нет полноценного входа в Claude Code (\$HOME/.claude/.credentials.json) — агент под systemd не подключится к модели; выполните разово: claude --dangerously-skip-permissions (войдите по ссылке, затем /exit)")
+fi
 fi
 
 TG_PLUGIN_DIR="${TG_PLUGIN_DIR:-}"
@@ -240,7 +274,11 @@ fi
 # нужно править с каждым релизом. Раньше здесь стояло «opus = Opus 4.8» —
 # и устарело молча. Полное имя тоже принимается: им закрепляют конкретную
 # версию, когда обновление модели нежелательно.
+if [ "$HARNESS" = "codex" ]; then
+  ask PRIMARY_MODEL  "Модель Codex (по умолчанию $MODEL_CHOICE_DEFAULT)" "$MODEL_CHOICE_DEFAULT"
+else
 ask PRIMARY_MODEL    "Модель — алиас последней (fable / opus / sonnet) либо полное имя для закрепления версии" "sonnet"
+fi
 # Haiku не отвечает через reply канала — агент молчит в Telegram при зелёной
 # установке. Спрашиваем подтверждение, см. lib/model-choice.sh.
 confirm_primary_model
@@ -396,6 +434,16 @@ if [ -n "$USER_MD_FROM" ]; then
   operator_profile_copy "$USER_MD_FROM" "$LAB_DIR/$AGENT_ID/.claude" \
     || warn "не удалось скопировать $USER_MD_FROM — у агента будет пустой шаблон USER.md"
 fi
+# Codex: адрес pii-proxy вписывается в config.toml при рендере, поэтому прокси агента
+# поднимается ДО него (у Claude — после, правкой settings.json на шаге 3b).
+if [ "$HARNESS" = "codex" ]; then
+  say "3a. Маскирование ПДн (pii-proxy) — до рендера: его адрес нужен config.toml"
+  CLAUDE_LAB="$LAB_DIR" bash "$ORCH_DIR/pii-setup.sh" agent "$AGENT_ID" \
+    || die "pii-proxy агента не установлен — агент на Codex без него не ставится. Починить: bash $ORCH_DIR/pii-setup.sh host && CLAUDE_LAB=$LAB_DIR bash $ORCH_DIR/pii-setup.sh agent $AGENT_ID, затем повторить с REUSE_EXISTING=1"
+  PII_PROXY_URL="http://127.0.0.1:$(CLAUDE_LAB="$LAB_DIR" pii_proxy_port "$AGENT_ID")"
+  export PII_PROXY_URL
+  ok "агент ходит в модель через pii-proxy: $PII_PROXY_URL"
+fi
 NONINTERACTIVE=1 AGENT_NAME="$AGENT_NAME" LANGUAGE="$LANGUAGE" \
   PRIMARY_MODEL="$PRIMARY_MODEL" \
   MCP_HOST="$MCP_HOST" \
@@ -408,6 +456,13 @@ NONINTERACTIVE=1 AGENT_NAME="$AGENT_NAME" LANGUAGE="$LANGUAGE" \
 WORKSPACE="$LAB_DIR/$AGENT_ID/.claude"
 [ -d "$WORKSPACE" ] || die "воркспейс не создан: $WORKSPACE"
 ok "воркспейс: $WORKSPACE"
+if [ "$HARNESS" = "codex" ]; then
+  if CLAUDE_LAB="$LAB_DIR" codex_link_shared_auth "$AGENT_ID"; then
+    ok "вход в ChatGPT — общий вход роя ($(CLAUDE_LAB="$LAB_DIR" codex_shared_home))"
+  else
+    DEGRADED+=("не удалось связать вход агента с общим входом роя — агент не подключится к модели")
+  fi
+fi
 
 # Токен → на ДИСК, всегда. install.sh пропускает уже существующие файлы
 # (fill_template / agent.env), поэтому при REUSE_EXISTING=1 свежевыданный
@@ -435,9 +490,9 @@ fi
 # (шаг 6), чтобы первый запуск агента уже шёл через прокси. Сбой не обрывает создание, но
 # попадает в список «Что НЕ работает»: иначе агент молча ушёл бы в модель напрямую.
 say "3b. Маскирование ПДн (pii-proxy)"
-# shellcheck source=../../orchestration/lib/pii.sh
-. "$ORCH_DIR/lib/pii.sh"
-if pii_enabled; then
+if [ "$HARNESS" = "codex" ]; then
+  note "pii-proxy агента уже поднят на шаге 3a"
+elif pii_enabled; then
   if CLAUDE_LAB="$LAB_DIR" bash "$ORCH_DIR/pii-setup.sh" agent "$AGENT_ID"; then
     ok "агент ходит в модель через pii-proxy"
   else
@@ -697,7 +752,8 @@ if tmux has-session -t "=$SESSION" 2>/dev/null; then
   _pane_pid="$(tmux display -p -t "=$SESSION:^.{top-left}" '#{pane_pid}' 2>/dev/null)"
   _sess_age="$(ps -o etimes= -p "${_pane_pid:-0}" 2>/dev/null | tr -d ' ')"
   _stale=0
-  for f in "$WORKSPACE/.mcp.json" "$WORKSPACE/settings.json" "$WORKSPACE/CLAUDE.md"; do
+  for f in "$WORKSPACE/.mcp.json" "$WORKSPACE/settings.json" "$WORKSPACE/CLAUDE.md" \
+           "$LAB_DIR/$AGENT_ID/.codex/config.toml" "$WORKSPACE/AGENTS.md"; do
     [ -f "$f" ] || continue
     _file_age=$(( $(date +%s) - $(stat -c %Y "$f") ))
     # Файл моложе сессии => сессия его не видела.
@@ -784,7 +840,13 @@ fi
 # Никакого claude -p здесь: headless-вызовы бьют по отдельному SDK-credit
 # биллингу вне подписки, поэтому automation их не использует нигде — см.
 # комментарий в шаге 0.
-if [ -f "$HOME/.claude/.credentials.json" ]; then
+if [ "$HARNESS" = "codex" ]; then
+  if [ "$(CLAUDE_LAB="$LAB_DIR" codex_auth_state "$AGENT_ID")" = "chatgpt" ]; then
+    ok "Codex агента вошёл в ChatGPT (общий вход роя)"
+  else
+    warn "у Codex агента нет входа в ChatGPT — агент не подключится к модели"; FAIL=1
+  fi
+elif [ -f "$HOME/.claude/.credentials.json" ]; then
   ok "сессия авторизована (\$HOME/.claude/.credentials.json) — tmux-агент подключится к модели"
 else
   warn "нет \$HOME/.claude/.credentials.json — tmux-сессия агента не подключится к модели"; FAIL=1
