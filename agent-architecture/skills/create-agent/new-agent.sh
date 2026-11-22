@@ -108,6 +108,8 @@ ORCH_DIR="$REPO_DIR/orchestration"
 . "$ORCH_DIR/lib/harness.sh"
 # shellcheck source=../../orchestration/lib/codex-watch.sh
 . "$ORCH_DIR/lib/codex-watch.sh"
+# shellcheck source=../../orchestration/lib/codex-install.sh
+. "$ORCH_DIR/lib/codex-install.sh"
 # shellcheck source=../../orchestration/lib/pii.sh
 . "$ORCH_DIR/lib/pii.sh"
 HARNESS="$(harness_current)" || { echo "не прочитать харнес роя ($(harness_swarm_env))" >&2; exit 1; }
@@ -167,6 +169,11 @@ if [ "$HARNESS" = "codex" ]; then
   fi
   if CODEX_FOUND="$(codex_bin)"; then
     ok "codex: $CODEX_FOUND"
+    # Не отказ: агент может работать, но драйвер проверен только с закреплённой версией.
+    if CODEX_GOT="$(codex_pinned_mismatch "$CODEX_FOUND")"; then
+      warn "codex $CODEX_GOT, а закреплена $CODEX_PINNED_VERSION"
+      DEGRADED+=("codex версии $CODEX_GOT вместо закреплённой $CODEX_PINNED_VERSION — драйвер с ней не проверен; поставьте закреплённую повторным запуском install.sh")
+    fi
   else
     warn "codex не найден — агент не запустится"
     DEGRADED+=("codex не установлен — поставьте закреплённую версию повторным запуском install.sh")

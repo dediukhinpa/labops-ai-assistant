@@ -48,6 +48,16 @@ codex_version_of() {   # <bin>
   "$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1
 }
 
+# codex_pinned_mismatch <bin> — 0 и версию (или «неизвестна») в stdout, если codex по этому пути
+# не закреплённой версии; 1 — версия закреплённая. Драйвер опирается на протокол app-server
+# именно этой версии, поэтому чужая версия — повод предупредить оператора.
+codex_pinned_mismatch() {   # <bin>
+  local got
+  got="$(codex_version_of "$1")"
+  [ "$got" = "$CODEX_PINNED_VERSION" ] && return 1
+  printf '%s\n' "${got:-неизвестна}"
+}
+
 # codex_install_pinned — поставить закреплённую версию, если её ещё нет. Печатает путь к codex.
 # Коды: 0 — готово; 1 — не скачалось/не совпала сумма/платформа не поддерживается (причина в
 # stderr).
