@@ -30,6 +30,7 @@ import {
   WebhookPayloadSchema,
   type AskUserQuestionAnswer,
   type AskUserQuestionRequest,
+  type ClaudeHookPayload,
   type WebhookPayload,
 } from '../schemas.js'
 import { sendChannelNotification, normalizeMeta } from '../channel/notify.js'
@@ -170,6 +171,9 @@ export interface WebhookDeps {
   // plugin". Optional so tests/legacy paths can omit; when absent the route
   // answers 503 and the hook degrades to a no-op (no read receipt, no crash).
   reactToMessage?: (chatId: string, messageId: number, emoji: string) => Promise<void>
+  // Харнес Codex: инструменты канала по MCP over HTTP (маршрут /mcp), см.
+  // harness/codex/mcp-http.ts. Доступ проверяет сам обработчик (loopback + свой токен).
+  mcpHttp?: (req: IncomingMessage, res: ServerResponse) => Promise<void>
 }
 
 export interface WebhookServerHandle {
@@ -286,6 +290,110 @@ function healthBody(config: AppConfig): Record<string, unknown> {
 // Main handler
 // ─────────────────────────────────────────────────────────────────────
 
+// Событие хука (Claude Code по HTTP или драйвер Codex из потока app-server) → память,
+// статус, прогресс, список задач. Ошибки каждой поверхности логируются и глотаются: видимость
+// не должна тормозить агента.
+export async function dispatchHookPayload(
+  payload: ClaudeHookPayload,
+  deps: Pick<
+    WebhookDeps,
+    'config' | 'log' | 'statusManager' | 'memoryWriter' | 'progressReporter' | 'taskMirror' | 'watcher'
+  >,
+): Promise<{ statusDispatched: boolean }> {
+  const { config, log, statusManager, memoryWriter, progressReporter, taskMirror, watcher } = deps
+  // Phase 8: dispatch to memory writer first, BEFORE the status branch,
+  // so memory persistence runs regardless of status.enabled. Errors are
+  // logged and swallowed — memory must never back-pressure the 200.
+  if (config.memory.enabled && memoryWriter) {
+    try {
+      await memoryWriter.onHook(payload)
+    } catch (err) {
+      log.warn('[memory] writer error (ignored)', {
+        hook: payload.hook_event_name,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // Two independent visibility surfaces fire from the same hook event.
+  // Both are best-effort: failures are caught and logged, never block
+  // the 200 response (Claude hooks must not back-pressure on visibility).
+  //
+  //   * StatusManager — transient bubble (auto-cancelled by reply()).
+  //     Gate: config.status.enabled.
+  //   * ProgressReporter — persistent activity thread (survives reply).
+  //     Gate: config.progress.enabled (checked inside the reporter).
+  //
+  // The two MUST be dispatched independently so an operator can turn
+  // one off without disabling the other (review C3 fix).
+  const activityEvent = toActivityEvent(payload)
+  const statusDispatched = config.status.enabled === true && statusManager !== undefined
+  if (statusDispatched) {
+    try {
+      await statusManager!.recordActivityByChatId(payload.chatId, activityEvent)
+    } catch (err) {
+      log.warn('hook event status update failed (ignored)', {
+        chat_id: payload.chatId,
+        hook: payload.hook_event_name,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  } else {
+    log.debug('hook event status dispatch skipped (disabled or no manager)', {
+      chat_id: payload.chatId,
+      hook: payload.hook_event_name,
+    })
+  }
+
+  if (progressReporter) {
+    try {
+      await progressReporter.recordEvent(payload.chatId, activityEvent)
+    } catch (err) {
+      log.warn('hook event progress update failed (ignored)', {
+        chat_id: payload.chatId,
+        hook: payload.hook_event_name,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // PR-A2 (2026-05-20): TaskMirror handles TodoWrite + Stop hooks. The
+  // mapper returns null for every other event, so the cost when no
+  // TodoWrite is in flight is one schema test per hook — negligible.
+  if (taskMirror) {
+    const todoEvent = toTodoWriteEvent(payload, log)
+    if (todoEvent !== null) {
+      try {
+        await taskMirror.recordEvent(payload.chatId, todoEvent)
+      } catch (err) {
+        log.warn('hook event task mirror update failed (ignored)', {
+          chat_id: payload.chatId,
+          hook: payload.hook_event_name,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+  }
+
+  // PR-A3 (M3 fix): on session_stop, clear the watcher's debounce marker
+  // for this chat so the next session can fire its first auto-reply
+  // immediately. Without this, a stale marker from the previous session
+  // would block the auto-reply for up to debounce_ms.
+  if (watcher && payload.hook_event_name === 'Stop') {
+    try {
+      watcher.clearDebounce(payload.chatId)
+    } catch (err) {
+      // clearDebounce is a Map.delete() under the hood — should never throw.
+      log.warn('watcher clearDebounce failed (ignored)', {
+        chat_id: payload.chatId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  return { statusDispatched }
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -297,11 +405,6 @@ async function handleRequest(
     statePaths,
     log,
     mcpServer,
-    statusManager,
-    memoryWriter,
-    progressReporter,
-    taskMirror,
-    watcher,
   } = deps
   const method = req.method ?? 'GET'
   const url = req.url ?? '/'
@@ -333,6 +436,11 @@ async function handleRequest(
   // bearer + chat allowlist, then sets 👀 via deps.reactToMessage.
   if (method === 'POST' && path === '/hooks/react') {
     await handleReact(req, res, deps, webhookToken)
+    return
+  }
+
+  if (path === '/mcp' && deps.mcpHttp !== undefined) {
+    await deps.mcpHttp(req, res)
     return
   }
 
@@ -422,95 +530,7 @@ async function handleRequest(
   // Branch on payload variant. Discriminator was set by the Zod transform
   // so we don't have to re-sniff fields here.
   if (payload.kind === 'claude_hook') {
-    // Phase 8: dispatch to memory writer first, BEFORE the status branch,
-    // so memory persistence runs regardless of status.enabled. Errors are
-    // logged and swallowed — memory must never back-pressure the 200.
-    if (config.memory.enabled && memoryWriter) {
-      try {
-        await memoryWriter.onHook(payload)
-      } catch (err) {
-        log.warn('[memory] writer error (ignored)', {
-          hook: payload.hook_event_name,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    }
-
-    // Two independent visibility surfaces fire from the same hook event.
-    // Both are best-effort: failures are caught and logged, never block
-    // the 200 response (Claude hooks must not back-pressure on visibility).
-    //
-    //   * StatusManager — transient bubble (auto-cancelled by reply()).
-    //     Gate: config.status.enabled.
-    //   * ProgressReporter — persistent activity thread (survives reply).
-    //     Gate: config.progress.enabled (checked inside the reporter).
-    //
-    // The two MUST be dispatched independently so an operator can turn
-    // one off without disabling the other (review C3 fix).
-    const activityEvent = toActivityEvent(payload)
-    const statusDispatched = config.status.enabled === true && statusManager !== undefined
-    if (statusDispatched) {
-      try {
-        await statusManager!.recordActivityByChatId(payload.chatId, activityEvent)
-      } catch (err) {
-        log.warn('hook event status update failed (ignored)', {
-          chat_id: payload.chatId,
-          hook: payload.hook_event_name,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    } else {
-      log.debug('hook event status dispatch skipped (disabled or no manager)', {
-        chat_id: payload.chatId,
-        hook: payload.hook_event_name,
-      })
-    }
-
-    if (progressReporter) {
-      try {
-        await progressReporter.recordEvent(payload.chatId, activityEvent)
-      } catch (err) {
-        log.warn('hook event progress update failed (ignored)', {
-          chat_id: payload.chatId,
-          hook: payload.hook_event_name,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    }
-
-    // PR-A2 (2026-05-20): TaskMirror handles TodoWrite + Stop hooks. The
-    // mapper returns null for every other event, so the cost when no
-    // TodoWrite is in flight is one schema test per hook — negligible.
-    if (taskMirror) {
-      const todoEvent = toTodoWriteEvent(payload, log)
-      if (todoEvent !== null) {
-        try {
-          await taskMirror.recordEvent(payload.chatId, todoEvent)
-        } catch (err) {
-          log.warn('hook event task mirror update failed (ignored)', {
-            chat_id: payload.chatId,
-            hook: payload.hook_event_name,
-            error: err instanceof Error ? err.message : String(err),
-          })
-        }
-      }
-    }
-
-    // PR-A3 (M3 fix): on session_stop, clear the watcher's debounce marker
-    // for this chat so the next session can fire its first auto-reply
-    // immediately. Without this, a stale marker from the previous session
-    // would block the auto-reply for up to debounce_ms.
-    if (watcher && payload.hook_event_name === 'Stop') {
-      try {
-        watcher.clearDebounce(payload.chatId)
-      } catch (err) {
-        // clearDebounce is a Map.delete() under the hood — should never throw.
-        log.warn('watcher clearDebounce failed (ignored)', {
-          chat_id: payload.chatId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    }
+    const { statusDispatched } = await dispatchHookPayload(payload, deps)
 
     // Preserve the legacy status_disabled note when status is off so
     // existing webhook smoke tests can detect the disabled path.

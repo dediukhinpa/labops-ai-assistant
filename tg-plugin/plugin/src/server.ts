@@ -78,7 +78,19 @@ import {
 import { TelegramPoller, tokenLock } from './telegram/poller.js'
 import { describePidHolder, readLockHolder } from './telegram/pid-inspect.js'
 import { BOT_COMMANDS } from './commands/oob.js'
-import { startWebhookServer, type WebhookServerHandle } from './webhook/server.js'
+import {
+  dispatchHookPayload,
+  startWebhookServer,
+  type WebhookServerHandle,
+} from './webhook/server.js'
+import { setInboundSink } from './channel/notify.js'
+import {
+  CODEX_CHANNEL_INSTRUCTIONS,
+  codexHarnessEnabled,
+  createCodexDriver,
+} from './harness/codex/bootstrap.js'
+import { createMcpHttpHandler, newChannelToken } from './harness/codex/mcp-http.js'
+import type { CodexDriver } from './harness/codex/driver.js'
 import {
   handleInboundAudio,
   handleInboundDocument,
@@ -300,6 +312,10 @@ const env = RuntimeEnvSchema.parse({
   ...(process.env.TELEGRAM_MULTICHAT_WORKSPACE_DIR !== undefined ? { TELEGRAM_MULTICHAT_WORKSPACE_DIR: process.env.TELEGRAM_MULTICHAT_WORKSPACE_DIR } : {}),
 })
 
+// Харнес роя: claude (по умолчанию) — плагин работает stdio MCP-сервером внутри сессии
+// Claude Code; codex — плагин главный процесс агента и сам запускает codex app-server.
+const codexMode = codexHarnessEnabled()
+
 const config: AppConfig = loadConfig(process.env)
 const statePaths: StatePaths = getStatePaths(config, env)
 ensureStateDirs(statePaths)
@@ -365,7 +381,10 @@ let multichatPolicy: MultichatPolicy | undefined
 let multichatStateDir: string | undefined
 let multichatWorkspaceDir: string | undefined
 let multichatPolicyPath: string | undefined
-if (config.multichat.enabled) {
+if (config.multichat.enabled && codexMode) {
+  // Пул сессий по чатам построен на tmux + claude; для Codex его пока нет.
+  log.warn('multichat is not supported on the codex harness — running single-session mode')
+} else if (config.multichat.enabled) {
   multichatWorkspaceDir =
     config.multichat.workspace_dir
     ?? process.env.CLAUDE_WORKSPACE_DIR
@@ -965,10 +984,14 @@ bot.catch(err => {
 let shuttingDown = false
 let poller: TelegramPoller | undefined
 let webhookHandle: WebhookServerHandle | null = null
-function shutdown(): void {
+let codexDriver: CodexDriver | undefined
+// У Codex перед выходом драйвер сбрасывает память в общий мозг (brain-flush) — ему нужно
+// больше двух секунд; systemd всё равно ограничивает остановку своим TimeoutStopSec.
+const SHUTDOWN_DEADLINE_MS = codexMode ? 30_000 : 2000
+function shutdown(exitCode = 0): void {
   if (shuttingDown) return
   shuttingDown = true
-  log.info('shutting down')
+  log.info('shutting down', { exit_code: exitCode })
 
   // Best-effort: clean up any pulsing status messages so the chat doesn't
   // show a stale "Печатает..." after the bot dies. Errors are swallowed
@@ -1020,35 +1043,42 @@ function shutdown(): void {
   } catch {
     // pid file may already be gone.
   }
-  setTimeout(() => process.exit(0), 2000)
+  setTimeout(() => process.exit(exitCode), SHUTDOWN_DEADLINE_MS)
   const stopPoller = poller ? poller.stop() : Promise.resolve()
-  const stopWebhook = webhookHandle ? webhookHandle.close() : Promise.resolve()
-  void Promise.all([stopPoller, stopWebhook])
+  const stopDriver = codexDriver ? codexDriver.stop() : Promise.resolve()
+  // Вебхук закрываем после драйвера: пока идёт его остановка, codex ещё может звать /mcp.
+  void Promise.all([stopPoller, stopDriver])
+    .then(() => (webhookHandle ? webhookHandle.close() : Promise.resolve()))
     .then(() => Promise.resolve(bot.stop()))
-    .finally(() => process.exit(0))
+    .finally(() => process.exit(exitCode))
 }
-process.stdin.on('end', shutdown)
-process.stdin.on('close', shutdown)
-process.on('SIGTERM', shutdown)
-process.on('SIGINT', shutdown)
-process.on('SIGHUP', shutdown)
+process.on('SIGTERM', () => shutdown())
+process.on('SIGINT', () => shutdown())
+process.on('SIGHUP', () => shutdown())
 
-// Orphan watchdog: stdin events above don't reliably fire when the parent
-// chain is severed by a crash. Poll for reparenting (POSIX) or dead stdin.
-const bootPpid = process.ppid
-setInterval(() => {
-  const orphaned =
-    (process.platform !== 'win32' && process.ppid !== bootPpid) ||
-    process.stdin.destroyed ||
-    process.stdin.readableEnded
-  if (orphaned) shutdown()
-}, 5000).unref()
+if (!codexMode) {
+  // Claude Code держит плагин на stdio: закрытый stdin = сессия умерла.
+  process.stdin.on('end', () => shutdown())
+  process.stdin.on('close', () => shutdown())
+
+  // Orphan watchdog: stdin events above don't reliably fire when the parent
+  // chain is severed by a crash. Poll for reparenting (POSIX) or dead stdin.
+  // У Codex плагин сам главный процесс (его родитель — watchdog), так что не нужен.
+  const bootPpid = process.ppid
+  setInterval(() => {
+    const orphaned =
+      (process.platform !== 'win32' && process.ppid !== bootPpid) ||
+      process.stdin.destroyed ||
+      process.stdin.readableEnded
+    if (orphaned) shutdown()
+  }, 5000).unref()
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Connect MCP transport. After this, Claude Code can list tools.
 // ─────────────────────────────────────────────────────────────────────
 
-await mcp.connect(new StdioServerTransport())
+if (!codexMode) await mcp.connect(new StdioServerTransport())
 
 // ─────────────────────────────────────────────────────────────────────
 // Initialise bot identity BEFORE webhook listen and poller loop. Both
@@ -1078,8 +1108,25 @@ try {
 // — ports the behaviour from gateway.py:3531-3589.
 // ─────────────────────────────────────────────────────────────────────
 
+// Codex: инструменты канала по MCP over HTTP на этом же сервере (маршрут /mcp); токен
+// живёт только в памяти плагина и в окружении его ребёнка codex.
+const channelMcpToken = codexMode ? newChannelToken() : ''
+const mcpHttp = codexMode
+  ? createMcpHttpHandler({
+      name: 'labops-channel',
+      version: '1.0.0',
+      instructions: CODEX_CHANNEL_INSTRUCTIONS,
+      token: channelMcpToken,
+      handlers: {
+        listTools: () => listTools(localApi, { mediaConsent: mediaConsent !== undefined }),
+        callTool: req => callTool(req as Parameters<typeof callTool>[0], toolDeps),
+      },
+    })
+  : undefined
+
 try {
   webhookHandle = await startWebhookServer(config, {
+    ...(mcpHttp !== undefined ? { mcpHttp } : {}),
     mcpServer: mcp,
     config,
     statePaths,
@@ -1106,6 +1153,66 @@ try {
   log.error('webhook server failed to start', {
     error: err instanceof Error ? err.message : String(err),
   })
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Харнес Codex: драйвер app-server. Стартует после вебхука (codex подключается к /mcp при
+// старте нити) и до поллера (первое же сообщение из Telegram должно найти нить готовой).
+// Без вебхука или рабочей папки агент на Codex работать не может — выходим с ошибкой,
+// watchdog поднимет заново и сообщит оператору.
+// ─────────────────────────────────────────────────────────────────────
+
+if (codexMode) {
+  const workspace = process.env.AGENT_WORKSPACE ?? ''
+  if (webhookHandle === null || workspace === '') {
+    log.error('codex harness needs the internal webhook server and AGENT_WORKSPACE', {
+      webhook: webhookHandle !== null,
+      workspace_set: workspace !== '',
+    })
+    shutdown(1)
+    throw new Error('codex harness cannot start')
+  }
+  codexDriver = createCodexDriver({
+    workspace,
+    stateRoot: statePaths.root,
+    webhookHost: config.webhook.host,
+    webhookPort: webhookHandle.port,
+    channelToken: channelMcpToken,
+    log,
+    dispatchHook: async payload => {
+      await dispatchHookPayload(payload, {
+        config,
+        log,
+        statusManager,
+        progressReporter,
+        taskMirror,
+        watcher: inboundWatcher,
+        ...(memoryWriter !== undefined ? { memoryWriter } : {}),
+      })
+    },
+    sendReply: async (chatId, text) => {
+      const result = await callTool(
+        { params: { name: 'reply', arguments: { chat_id: chatId, text } } } as Parameters<typeof callTool>[0],
+        toolDeps,
+      )
+      if (result.isError === true) throw new Error('reply tool refused the final message')
+    },
+    react: (chatId, messageId, emoji) => telegramApi.setMessageReaction(chatId, messageId, emoji),
+    askRelay: askUserQuestionRelay,
+    askUi: askUserQuestionUi,
+  })
+  const driver = codexDriver
+  driver.onExit(() => {
+    if (!shuttingDown) shutdown(1)
+  })
+  setInboundSink(event => driver.deliver(event))
+  try {
+    await driver.start()
+  } catch (err) {
+    log.error('codex driver failed to start', { error: err instanceof Error ? err.message : String(err) })
+    shutdown(1)
+    throw err
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
