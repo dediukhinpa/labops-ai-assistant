@@ -37,6 +37,13 @@ SHARED_SKILLS_SRC="${DISTRO_ROOT}/skills"
 . "${DISTRO_ROOT}/orchestration/lib/skills.sh"
 # shellcheck source=../orchestration/lib/skills-external.sh
 . "${DISTRO_ROOT}/orchestration/lib/skills-external.sh"
+# shellcheck source=../orchestration/lib/harness.sh
+. "${DISTRO_ROOT}/orchestration/lib/harness.sh"
+# Харнес роя (claude|codex) выбран первым вопросом установки и записан в shared/swarm.env;
+# здесь только читается. Для claude всё ниже работает как раньше, побайтно.
+HARNESS="$(harness_current)" || exit 1
+CODEX_TEMPLATES_DIR="${TEMPLATES_DIR}/codex"
+CODEX_WORKSPACE_PY="${SCRIPT_DIR}/codex_workspace.py"
 log()   { ok "$1"; }
 ask()   { printf "${UI_INFO}[?]${UI_RESET} %s: " "$1"; }
 
@@ -72,7 +79,12 @@ echo "  Claude Code Agent -- Workspace Installer"
 echo "============================================"
 echo ""
 
-if ! command -v claude &>/dev/null; then
+if [ "$HARNESS" = "codex" ]; then
+    if ! command -v codex &>/dev/null; then
+        warn "Codex CLI not found (the swarm installer puts it in place before agents start)."
+        warn "Continuing anyway (workspace will be ready when you install the CLI)."
+    fi
+elif ! command -v claude &>/dev/null; then
     warn "Claude Code CLI not found. Install: curl -fsSL https://claude.ai/install.sh | bash"
     warn "Continuing anyway (workspace will be ready when you install the CLI)."
 fi
@@ -106,9 +118,15 @@ fi
 # Роль, описание и характер не спрашиваются: они пишутся в личный CLAUDE.md уроком курса
 # 07-claude-md, а ответ установщика ложился туда же второй, расходящейся версией.
 
+if [ "$HARNESS" = "codex" ]; then
+    # Модель агентов на Codex по умолчанию — решение владельца (lib/harness.sh).
+    CODEX_DEFAULT_MODEL="$(harness_default_model codex)"
+    prompt PRIMARY_MODEL      "Primary model [${CODEX_DEFAULT_MODEL}]" "$CODEX_DEFAULT_MODEL"
+else
 # Алиасы, а не версии: см. комментарий в skills/create-agent/new-agent.sh.
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo ""; echo "  Aliases resolve to the latest model of their tier: fable / opus (code+review) / sonnet (subagents+research). A full model name pins a version."; }
 prompt PRIMARY_MODEL          "Primary model [sonnet]" "sonnet"
+fi
 # Имя модели уходит в settings.json как есть: с посторонними байтами агент молчит
 # при зелёной установке (см. orchestration/lib/model-choice.sh). Этот установщик
 # запускается и отдельно, поэтому проверка своя; new-agent.sh уже переспросил.
@@ -117,8 +135,8 @@ if [ -z "$PRIMARY_MODEL" ] || [ -n "$(printf '%s' "$PRIMARY_MODEL" | LC_ALL=C tr
     exit 1
 fi
 # Haiku не вызывает reply канала — агент молчит в Telegram; в выборе его нет
-# (см. orchestration/lib/model-choice.sh).
-case "${PRIMARY_MODEL,,}" in
+# (см. orchestration/lib/model-choice.sh). Правило про модели Claude: у codex своих haiku нет.
+[ "$HARNESS" = "codex" ] || case "${PRIMARY_MODEL,,}" in
     *haiku*)
         err "Model ${PRIMARY_MODEL} is not supported: a Haiku agent does not answer in Telegram -- use fable, opus or sonnet"
         exit 1
@@ -198,7 +216,14 @@ mkdir -p "${WORKSPACE}/scripts"
 mkdir -p "${WORKSPACE}/hooks"
 mkdir -p "${WORKSPACE}/logs"
 mkdir -p "${SHARED}/secrets"
+if [ "$HARNESS" = "codex" ]; then
+    # CODEX_HOME агента: config.toml, общие правила (AGENTS.md), нити и вход ChatGPT.
+    CODEX_HOME_DIR="${LAB_DIR}/${AGENT_ID}/.codex"
+    mkdir -p "${CODEX_HOME_DIR}/rules"
+    chmod 700 "${CODEX_HOME_DIR}"
+else
 mkdir -p "${GLOBAL_DIR}/rules"
+fi
 # Не создаём core/active/archived, shared/skills, shared/scripts и handoff.md: в них
 # никто не писал и никто их не читал. Скиллы -- ссылка на репозиторий, архив дневника --
 # core/archived/episodic, итог сессии уходит в общий мозг (brain-flush.sh).
@@ -272,7 +297,27 @@ copy_doc "${REPO_ROOT}/AGENT_ROUTER.md"            "${WORKSPACE}/AGENT_ROUTER.md
 
 log "Filling templates..."
 
+if [ "$HARNESS" = "codex" ]; then
+    # Агент на Codex без псевдонимизации не ставится (решение владельца 22.11.2026): все
+    # запросы к модели идут через pii-proxy, его адрес — model_provider в config.toml.
+    if [ -z "${PII_PROXY_URL:-}" ]; then
+        err "Codex agent needs pii-proxy: PII_PROXY_URL is empty (run through new-agent.sh)"
+        exit 1
+    fi
+    if [ ! -f "${WORKSPACE}/AGENTS.src.md" ]; then
+        CODEX_IDENTITY_TMP="$(mktemp)"
+        rm -f "$CODEX_IDENTITY_TMP"
+        fill_template "${TEMPLATES_DIR}/CLAUDE.md.template" "$CODEX_IDENTITY_TMP"
+        python3 "$CODEX_WORKSPACE_PY" identity --agent-id "$AGENT_ID" \
+            --channel-section "${CODEX_TEMPLATES_DIR}/channel-section.md" \
+            "$CODEX_IDENTITY_TMP" "${WORKSPACE}/AGENTS.src.md"
+        rm -f "$CODEX_IDENTITY_TMP"
+    else
+        note "Skipping (exists): ${WORKSPACE}/AGENTS.src.md"
+    fi
+else
 fill_template "${TEMPLATES_DIR}/CLAUDE.md.template"    "${WORKSPACE}/CLAUDE.md"
+fi
 fill_template "${TEMPLATES_DIR}/agents.md.template"    "${WORKSPACE}/core/AGENTS.md"
 # В шаблоне только поля, которые спрашивает установщик (язык). Обращение, имя, часовой
 # пояс, профиль, стиль и нужды оператор дописывает уроком курса 08-user-md, характер --
@@ -286,6 +331,21 @@ fill_template "${TEMPLATES_DIR}/episodic.md.template"    "${WORKSPACE}/core/acti
 # preferences.md создаём сразу, хотя пишет в него только memory-consolidate: файл
 # импортирован в CLAUDE.md, и у свежего агента импорт должен на что-то указывать.
 fill_template "${TEMPLATES_DIR}/preferences.md.template" "${WORKSPACE}/core/passive/preferences.md"
+if [ "$HARNESS" = "codex" ]; then
+    # Общие тексты те же, что у claude; меняются только упоминания, которые у Codex другие.
+    python3 "$CODEX_WORKSPACE_PY" adapt --agent-id "$AGENT_ID" \
+        "${WORKSPACE}/core/AGENTS.md" "${WORKSPACE}/core/USER.md" "${WORKSPACE}/core/rules.md" \
+        "${WORKSPACE}/tools/TOOLS.md"
+    fill_template "${CODEX_TEMPLATES_DIR}/config.toml.template" "${CODEX_HOME_DIR}/config.toml"
+    chmod 600 "${CODEX_HOME_DIR}/config.toml"
+    # Общие правила агентов: у Codex это AGENTS.md в CODEX_HOME (аналог ~/.claude/CLAUDE.md).
+    if [ ! -f "${CODEX_HOME_DIR}/AGENTS.md" ]; then
+        fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "${CODEX_HOME_DIR}/AGENTS.md"
+        python3 "$CODEX_WORKSPACE_PY" adapt --agent-id "$AGENT_ID" "${CODEX_HOME_DIR}/AGENTS.md"
+    else
+        note "Skipping (exists): ${CODEX_HOME_DIR}/AGENTS.md"
+    fi
+else
 fill_template "${TEMPLATES_DIR}/mcp.json.template"     "${WORKSPACE}/.mcp.json"
 fill_template "${TEMPLATES_DIR}/settings.json.template" "${WORKSPACE}/settings.json"
 # Пустой ANTHROPIC_BASE_URL claude прочёл бы как «адрес не задан» неоднозначно: если прокси
@@ -322,6 +382,7 @@ if [ -f "$GLOBAL_MD" ] && ! grep -qxF "$GLOBAL_MARKER" "$GLOBAL_MD"; then
     warn "правил git, безопасности и смены модели."
 else
     fill_template "${TEMPLATES_DIR}/global-CLAUDE.md.template" "$GLOBAL_MD"
+fi
 fi
 
 # ============================================================
@@ -368,7 +429,7 @@ AGENT_RC="${WORKSPACE}/agent.env"
 if [ ! -f "$AGENT_RC" ]; then
     cat > "$AGENT_RC" <<RC
 # ${AGENT_NAME} runtime env
-# Source this before launching Claude Code:  source ${AGENT_RC}
+# Source this before launching $( [ "$HARNESS" = "codex" ] && echo "Codex" || echo "Claude Code" ):  source ${AGENT_RC}
 export AGENT_ID="${AGENT_ID}"
 export AGENT_WORKSPACE="${WORKSPACE}"
 export MCP_HOST="${MCP_HOST}"
@@ -425,6 +486,14 @@ if [ -d "$SHARED_SKILLS_SRC" ]; then
             3) note "Skipping: skills/ is pinned by .labops-keep-skills" ;;
             *) warn "skills/ not linked (code $link_rc)" ;;
         esac
+        # Codex ищет навыки в .agents/skills рабочей папки (область repo). Свой каталог
+        # навыков CODEX_HOME/skills не подходит: туда Codex пишет системные навыки.
+        if [ "$HARNESS" = "codex" ] && [ -e "${WORKSPACE}/skills" ] \
+            && [ ! -e "${WORKSPACE}/.agents/skills" ]; then
+            mkdir -p "${WORKSPACE}/.agents"
+            ln -s ../skills "${WORKSPACE}/.agents/skills"
+            log ".agents/skills -> skills (Codex)"
+        fi
     else
         warn "Skills not linked. Later: bash ${DISTRO_ROOT}/orchestration/sync-skills.sh"
     fi
@@ -438,11 +507,15 @@ fi
 
 log "Setting up language rules..."
 
+# Codex не читает ~/.claude/rules: правила ложатся в CODEX_HOME/rules и вклеиваются в его
+# общий AGENTS.md (ниже). Для claude каталог прежний.
+RULES_DIR="${GLOBAL_DIR}/rules"
+[ "$HARNESS" = "codex" ] && RULES_DIR="${CODEX_HOME_DIR}/rules"
 for rule_file in bash.md python.md typescript.md; do
-    if [ ! -f "${GLOBAL_DIR}/rules/${rule_file}" ]; then
+    if [ ! -f "${RULES_DIR}/${rule_file}" ]; then
         case "$rule_file" in
             bash.md)
-                cat > "${GLOBAL_DIR}/rules/${rule_file}" << 'RULE'
+                cat > "${RULES_DIR}/${rule_file}" << 'RULE'
 # Bash rules
 - set -euo pipefail at the start
 - Quote variables: "$VAR"
@@ -451,7 +524,7 @@ for rule_file in bash.md python.md typescript.md; do
 RULE
                 ;;
             python.md)
-                cat > "${GLOBAL_DIR}/rules/${rule_file}" << 'RULE'
+                cat > "${RULES_DIR}/${rule_file}" << 'RULE'
 # Python rules
 - Type hints required for all functions
 - Docstrings in Google style
@@ -463,7 +536,7 @@ RULE
 RULE
                 ;;
             typescript.md)
-                cat > "${GLOBAL_DIR}/rules/${rule_file}" << 'RULE'
+                cat > "${RULES_DIR}/${rule_file}" << 'RULE'
 # TypeScript rules
 - strict: true always
 - Never any, use unknown + type guard
@@ -473,9 +546,9 @@ RULE
 RULE
                 ;;
         esac
-        log "Created: ${GLOBAL_DIR}/rules/${rule_file}"
+        log "Created: ${RULES_DIR}/${rule_file}"
     else
-        note "Skipping (exists): ${GLOBAL_DIR}/rules/${rule_file}"
+        note "Skipping (exists): ${RULES_DIR}/${rule_file}"
     fi
 done
 
@@ -485,6 +558,25 @@ done
 
 chmod 700 "${SHARED}/secrets" 2>/dev/null || true
 chmod 600 "${WORKSPACE}/.mcp.json" 2>/dev/null || true
+
+if [ "$HARNESS" = "codex" ]; then
+    # Правила языков — в общий AGENTS.md Codex, один раз (по метке).
+    CODEX_RULES_MARK="<!-- labops: language rules -->"
+    if ! grep -qxF "$CODEX_RULES_MARK" "${CODEX_HOME_DIR}/AGENTS.md"; then
+        {
+            printf '\n%s\n\n## Language rules\n' "$CODEX_RULES_MARK"
+            for rule_file in bash.md python.md typescript.md; do
+                printf '\n'
+                sed 's/^# /### /' "${RULES_DIR}/${rule_file}"
+            done
+        } >> "${CODEX_HOME_DIR}/AGENTS.md"
+        log "Language rules -> ${CODEX_HOME_DIR}/AGENTS.md"
+    fi
+    # Идентичность для Codex: AGENTS.src.md с развёрнутыми @-импортами (драйвер пересобирает
+    # её перед каждым стартом нити, здесь — первая сборка).
+    python3 "$CODEX_WORKSPACE_PY" agents-md "${WORKSPACE}"
+    log "Created: ${WORKSPACE}/AGENTS.md"
+fi
 
 # ============================================================
 # Step 11: Summary
@@ -497,20 +589,28 @@ echo "============================================"
 echo ""
 echo "  Workspace:    ${WORKSPACE}/"
 echo "  Shared:       ${SHARED}/"
+if [ "$HARNESS" = "codex" ]; then
+echo "  Codex home:   ${CODEX_HOME_DIR}/"
+else
 echo "  Global:       ${GLOBAL_DIR}/"
+fi
 echo ""
 
 FILE_COUNT=$(find "${WORKSPACE}" -type f | wc -l | tr -d ' ')
 echo "  ${FILE_COUNT} files in workspace"
 echo ""
-if [ -f "${GLOBAL_MD}.labops-new" ]; then
+if [ "$HARNESS" != "codex" ] && [ -f "${GLOBAL_MD}.labops-new" ]; then
     warn "Общие правила агентов ждут переноса: ${GLOBAL_MD}.labops-new -> ${GLOBAL_MD}"
     echo ""
 fi
 echo "  Next steps:"
 echo ""
 echo "    1. Review and customize identity files:"
+if [ "$HARNESS" = "codex" ]; then
+echo "       - ${WORKSPACE}/AGENTS.src.md (SOUL; AGENTS.md is assembled from it)"
+else
 echo "       - ${WORKSPACE}/CLAUDE.md (SOUL)"
+fi
 echo "       - ${WORKSPACE}/core/AGENTS.md (models, team)"
 echo "       - ${WORKSPACE}/core/USER.md (your profile)"
 echo "       - ${WORKSPACE}/tools/TOOLS.md (servers, services)"
@@ -521,8 +621,12 @@ echo ""
 echo "    2. Verify second_brain connectivity (handshake, token, recall, hooks):"
 echo "       python3 ${WORKSPACE}/skills/second_brain-doctor/scripts/second_brain_doctor.py --agent ${AGENT_ID}"
 echo ""
+if [ "$HARNESS" = "codex" ]; then
+echo "    3. The agent runs under its systemd unit (Codex driver), not by hand."
+else
 echo "    3. Launch agent (settings.json wires Stop/SessionStart/PreCompact hooks):"
 echo "       source ${AGENT_RC} && claude --project ${WORKSPACE}"
+fi
 echo ""
 # Крон на уборку памяти больше не предлагаем: decay-sweep и archive-roll раз в
 # сутки запускает сам Stop-хук, а крон поверх него гонял бы их дважды.
