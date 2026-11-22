@@ -1,5 +1,5 @@
 [Unit]
-Description=labops-plugin webhook listener (second_brain agent_router → claude -p)
+Description=labops-plugin webhook listener (second_brain agent_router → claude -p or codex exec)
 After=network-online.target
 Wants=network-online.target
 
