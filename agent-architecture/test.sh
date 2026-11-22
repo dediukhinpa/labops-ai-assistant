@@ -909,14 +909,15 @@ if [ -n "$_ocr_line" ] && [ -n "$_exec_line" ] && [ "$_ocr_line" -lt "$_exec_lin
 else
   bad "run_ocr_step не вызывается на этапе root до exec sudo -u — apt там уже недоступен"
 fi
-# Адаптер Claude Code -> OpenAI (LiteLLM): зависимости только по lock-файлу с хэшами, ключи не
-# светятся, повтор не меняет ключ шлюза; перевод агента обратим (openai-adapter-wire.sh).
-unit "openai-adapter-install: установка по lock с хэшами, ключи не светятся — юнит-тест зелёный" \
-     "openai-adapter-install: юнит-тест провален (orchestration/lib/openai-adapter-install.test.sh)" \
-     bash orchestration/lib/openai-adapter-install.test.sh
-unit "openai-adapter-wire: перевод агента на адаптер и откат — юнит-тест зелёный" \
-     "openai-adapter-wire: юнит-тест провален (orchestration/openai-adapter-wire.test.sh)" \
-     bash orchestration/openai-adapter-wire.test.sh
+# Неизвестный аргумент (опечатка, флаг удалённого режима --openai-adapter) обязан остановить
+# install.sh до любых действий, а не уйти в полную установку.
+_unk_rc=0
+_unk_out="$(bash install.sh --no-such-flag </dev/null 2>&1)" || _unk_rc=$?
+if [ "$_unk_rc" -ne 0 ] && printf '%s' "$_unk_out" | grep -q 'неизвестный аргумент'; then
+  ok "install.sh отвергает неизвестный аргумент до начала установки"
+else
+  bad "install.sh принял неизвестный аргумент (rc=$_unk_rc) — ушёл бы в полную установку"
+fi
 
 # Тест гоняет НАСТОЯЩИЙ install.sh, поэтому обязан быть глух к флагам в шелле
 # оператора: с PREFLIGHT_DONE=1 в окружении он винил установщик в том, чего тот
