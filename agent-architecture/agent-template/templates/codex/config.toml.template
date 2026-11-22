@@ -1,0 +1,40 @@
+# Конфиг Codex CLI агента {{AGENT_ID}} (CODEX_HOME = ~/.claude-lab/{{AGENT_ID}}/.codex).
+# Создан установщиком LabOps; модель — решение владельца, менять только с ним.
+
+model = "{{PRIMARY_MODEL}}"
+# Все запросы к модели идут через локальный pii-proxy агента (маскирование ПДн).
+model_provider = "labops-pii"
+# Аналог --dangerously-skip-permissions: агент работает от отдельного пользователя без root.
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+# Идентичность агента (AGENTS.md) собирается из нескольких файлов памяти и бывает большой.
+project_doc_max_bytes = 262144
+
+[features]
+# pii-proxy не принимает сжатое тело запроса: проверить его на ПДн нельзя.
+enable_request_compression = false
+
+[model_providers.labops-pii]
+name = "labops-pii"
+base_url = "{{PII_PROXY_URL}}/backend-api/codex"
+# Вход через подписку ChatGPT (codex login): прокси передаёт авторизацию как есть.
+requires_openai_auth = true
+wire_api = "responses"
+
+# Общий мозг роя (second-brain). Bearer агента берётся из переменной окружения AGENT_BEARER
+# (agent.env воркспейса), в этот файл он не пишется.
+[mcp_servers.second_brain-memory]
+url = "${SECOND_BRAIN_MEMORY_URL}"
+bearer_token_env_var = "AGENT_BEARER"
+
+[mcp_servers.second_brain-memory_router]
+url = "${SECOND_BRAIN_MEMORY_ROUTER_URL}"
+bearer_token_env_var = "AGENT_BEARER"
+
+[mcp_servers.second_brain-agent_router]
+url = "${SECOND_BRAIN_AGENT_ROUTER_URL}"
+bearer_token_env_var = "AGENT_BEARER"
+
+[mcp_servers.second_brain-tasks]
+url = "${SECOND_BRAIN_TASKS_URL}"
+bearer_token_env_var = "AGENT_BEARER"
