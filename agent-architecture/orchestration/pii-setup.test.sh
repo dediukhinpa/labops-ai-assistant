@@ -139,4 +139,16 @@ n="$(grep -c 'session-end.sh' "$CLAUDE_LAB/alpha/.claude/settings.json")"
 [ "$(sed -n 's/^PII_PROXY_PORT=//p' "$CLAUDE_LAB/alpha/.claude/secrets/pii-proxy.env")" = "$pa" ] \
   || fail "порт изменился при повторе"
 
+# 5. Рой на Codex: воркспейса ещё нет (шаг идёт до рендера), прокси — к бэкенду ChatGPT,
+# settings.json не создаётся и не требуется.
+mkdir -p "$CLAUDE_LAB/shared" && echo "HARNESS=codex" > "$CLAUDE_LAB/shared/swarm.env"
+bash "$HERE/pii-setup.sh" agent cx >/dev/null 2>&1 || fail "codex: agent cx упал"
+cxenv="$CLAUDE_LAB/cx/.claude/secrets/pii-proxy.env"
+grep -qx 'PII_PROXY_UPSTREAM=https://chatgpt.com' "$cxenv" || fail "codex: upstream не chatgpt.com"
+[ ! -e "$CLAUDE_LAB/cx/.claude/settings.json" ] || fail "codex: создан settings.json"
+grep -q 'enable --now labops-pii-proxy@cx.service' "$TMP/systemctl.log" || fail "codex: юнит не включён"
+grep -qx 'PII_PROXY_UPSTREAM=https://api.anthropic.com' "$CLAUDE_LAB/alpha/.claude/secrets/pii-proxy.env" \
+  || fail "claude-агент потерял upstream Anthropic"
+rm -f "$CLAUDE_LAB/shared/swarm.env"
+
 echo "OK: pii-setup.test.sh"

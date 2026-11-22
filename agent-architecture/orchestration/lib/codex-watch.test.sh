@@ -33,7 +33,25 @@ eq "$(FAKE_LOGIN="Logged in using an API key - sk-***" codex_auth_state dev)" ap
 eq "$(FAKE_LOGIN="Not logged in" FAKE_RC=1 codex_auth_state dev)" none "входа нет"
 eq "$(FAKE_LOGIN="???" FAKE_RC=0 codex_auth_state dev)" unknown "непонятный ответ — не тревога"
 eq "$(PATH=/nonexistent HOME="$TMP" CODEX_BIN="$TMP/missing" codex_auth_state dev)" "unknown" "бинаря нет — не тревога о входе"
-case "$(codex_login_hint dev)" in *"CODEX_HOME=$TMP/lab/dev/.codex codex login --device-auth"*) pass=$((pass + 1)) ;; *) fail=$((fail + 1)); echo "FAIL: подсказка входа" ;; esac
+case "$(codex_login_hint dev)" in *"CODEX_HOME=$TMP/lab/shared/codex codex login --device-auth"*) pass=$((pass + 1)) ;; *) fail=$((fail + 1)); echo "FAIL: подсказка входа" ;; esac
+eq "$(FAKE_LOGIN="Logged in using ChatGPT" codex_auth_state_home "$TMP/lab/shared/codex")" chatgpt "вход по общему CODEX_HOME"
+eq "$(cat "$TMP/home.log")" "$TMP/lab/shared/codex" "общий вход проверяется в общем каталоге"
+
+# Общий вход: ссылки на auth.json и lock-файлы; свой вход агента переезжает в общий.
+mkdir -p "$TMP/lab/a1/.codex" "$TMP/lab/a2/.codex"
+echo '{"own":1}' > "$TMP/lab/a1/.codex/auth.json"
+codex_link_shared_auth a1; eq "$?" 0 "ссылки агента a1"
+eq "$(readlink "$TMP/lab/a1/.codex/auth.json")" "$TMP/lab/shared/codex/auth.json" "auth.json — ссылка на общий"
+eq "$(cat "$TMP/lab/shared/codex/auth.json")" '{"own":1}' "свой вход a1 стал общим"
+eq "$(stat -c %a "$TMP/lab/shared/codex/auth.json")" 600 "общий auth.json 600"
+eq "$(stat -c %a "$TMP/lab/shared/codex")" 700 "общий каталог 700"
+[ -f "$TMP/lab/shared/codex/auth.lock" ] && [ -L "$TMP/lab/a1/.codex/auth.json.lock" ]; eq "$?" 0 "lock-файлы общие"
+echo '{"other":1}' > "$TMP/lab/a2/.codex/auth.json"
+codex_link_shared_auth a2
+eq "$(cat "$TMP/lab/a2/.codex/auth.json")" '{"own":1}' "второй агент видит общий вход"
+eq "$(ls "$TMP/lab/a2/.codex" | grep -c '^auth.json.bak-')" 1 "чужой вход a2 отложен в .bak"
+codex_link_shared_auth a2; eq "$?" 0 "повторный вызов идемпотентен"
+eq "$(ls "$TMP/lab/a2/.codex" | grep -c '^auth.json.bak-')" 1 "повтор ничего не откладывает"
 
 HB="$TMP/hb"
 codex_heartbeat_stale "$HB" 60; eq "$?" 0 "нет heartbeat = устарел"

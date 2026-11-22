@@ -4,6 +4,9 @@
 #
 #   pii-setup.sh host            # один раз на хост: сервис псевдонимизации
 #   pii-setup.sh agent <agent>   # на каждого агента: свой pii-proxy + settings.json
+#                                # (рой на Codex: прокси к бэкенду ChatGPT; адрес прокси
+#                                #  попадает в config.toml при рендере воркспейса, поэтому
+#                                #  для Codex этот шаг выполняется ДО него)
 #
 # Зачем: агент должен ходить в модель ТОЛЬКО через локальный pii-proxy, иначе ПДн уходят
 # провайдеру немаскированными (152-ФЗ). По умолчанию включено; отключение - SKIP_PII_PROXY=1
@@ -30,6 +33,8 @@ HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
 . "$HERE/lib/ui.sh"
 # shellcheck source=lib/pii.sh
 . "$HERE/lib/pii.sh"
+# shellcheck source=lib/harness.sh
+. "$HERE/lib/harness.sh"
 
 SRC_DIR="${PII_SRC_DIR:-$(cd "$HERE/../.." && pwd)}"
 RUNTIME_DIR="${PII_RUNTIME_DIR:-$HOME/labops-pii-runtime}"
@@ -336,11 +341,21 @@ warn_no_tesseract_agent() {
 
 cmd_agent() {
   local agent="${1:?использование: pii-setup.sh agent <agent-id>}" env_file port token_file ws settings
+  local harness upstream
   if ! pii_enabled; then warn_disabled; return 0; fi
   [[ "$agent" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || die "недопустимое имя агента: $agent"
+  harness="$(harness_current)" || die "не прочитать харнес роя"
   ws="$(pii_lab)/$agent/.claude"
   settings="$ws/settings.json"
-  [ -f "$settings" ] || die "нет $settings - сначала создайте воркспейс агента"
+  if [ "$harness" = "codex" ]; then
+    # Codex при входе через ChatGPT ходит на chatgpt.com/backend-api/codex/responses; прокси
+    # передаёт путь как есть. settings.json у Codex нет: адрес прокси — model_provider в
+    # config.toml, его вписывает рендер воркспейса (PII_PROXY_URL).
+    upstream="https://chatgpt.com"
+  else
+    upstream="https://api.anthropic.com"
+    [ -f "$settings" ] || die "нет $settings - сначала создайте воркспейс агента"
+  fi
   token_file="$CONFIG_DIR/pseudonymizer.token"
   [ -s "$token_file" ] || die "нет токена сервиса ($token_file) - сначала: pii-setup.sh host"
   say "pii-proxy агента $agent"
@@ -355,7 +370,7 @@ cmd_agent() {
     {
       echo "PII_PROXY_PORT=$port"
       echo "PII_PROXY_HOST=127.0.0.1"
-      echo "PII_PROXY_UPSTREAM=https://api.anthropic.com"
+      echo "PII_PROXY_UPSTREAM=$upstream"
       echo "PII_PROXY_AGENT_ID=$agent"
       echo "PII_PROXY_ALERT_FILE=$(pii_stuck_file "$agent")"
       echo "PSEUDONYMIZER_URL=$PII_PSEUDONYMIZER_URL_DEFAULT"
@@ -382,10 +397,15 @@ cmd_agent() {
   ucmd daemon-reload
   ucmd enable --now "labops-pii-proxy@$agent.service" \
     || warn "не удалось запустить labops-pii-proxy@$agent (watchdog попробует сам)"
-  # ANTHROPIC_BASE_URL пишем в settings.json ПОСЛЕ создания юнита: если установка оборвётся
-  # раньше, агент не окажется настроенным на несуществующий прокси.
-  patch_settings "$settings" "http://127.0.0.1:$port" "$agent"
-  ok "settings.json: ANTHROPIC_BASE_URL=http://127.0.0.1:$port, хук SessionEnd"
+  if [ "$harness" = "codex" ]; then
+    # Хука SessionEnd для сервиса нет: таблицу замен нити чистит срок хранения сервиса.
+    ok "pii-proxy агента: http://127.0.0.1:$port → $upstream (адрес войдёт в config.toml)"
+  else
+    # ANTHROPIC_BASE_URL пишем в settings.json ПОСЛЕ создания юнита: если установка оборвётся
+    # раньше, агент не окажется настроенным на несуществующий прокси.
+    patch_settings "$settings" "http://127.0.0.1:$port" "$agent"
+    ok "settings.json: ANTHROPIC_BASE_URL=http://127.0.0.1:$port, хук SessionEnd"
+  fi
   wait_health "http://127.0.0.1:$port" "pii-proxy $agent" "labops-pii-proxy@$agent" || true
 }
 

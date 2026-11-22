@@ -202,6 +202,21 @@ echo "── 8a. Харнес роя (lib/harness.sh) ──"
 unit "harness.sh: харнес роя из swarm.env, умолчание claude, смена при агентах запрещена — юнит-тест зелёный" "harness.sh: юнит-тест провален (orchestration/lib/harness.test.sh)" bash orchestration/lib/harness.test.sh
 unit "codex-watch.sh: вход ChatGPT / heartbeat / шаблоны процессов драйвера — юнит-тест зелёный" "codex-watch.sh: юнит-тест провален (orchestration/lib/codex-watch.test.sh)" bash orchestration/lib/codex-watch.test.sh
 unit "рендер воркспейса: claude как раньше, codex — AGENTS.md + config.toml через pii-proxy — юнит-тест зелёный" "рендер воркспейса по харнесу: юнит-тест провален (agent-template/codex-workspace.test.sh)" bash agent-template/codex-workspace.test.sh
+unit "codex-install.sh: пакет релиза закреплённой версии, sha256, ссылка в ~/.local/bin — юнит-тест зелёный" "codex-install.sh: юнит-тест провален (orchestration/lib/codex-install.test.sh)" bash orchestration/lib/codex-install.test.sh
+# Харнес — первый вопрос: от него зависит, какие хосты проверять и что ставить.
+_harness_line="$(grep -n '^  choose_harness$' install.sh | head -1 | cut -d: -f1)"
+_preflight_line="$(grep -n 'say "0. Доступность внешних хостов"' install.sh | head -1 | cut -d: -f1)"
+if [ -n "$_harness_line" ] && [ -n "$_preflight_line" ] && [ "$_harness_line" -lt "$_preflight_line" ]; then
+  ok "install.sh: харнес роя спрашивается первым, до проверки хостов"
+else
+  bad "install.sh: вопрос о харнесе не стоит первым (до шага 0)"
+fi
+# Codex — в каталог пользователя, не в /usr/local/bin (общий бинарь зациклил рестарты роя).
+if grep -v '^[[:space:]]*#' orchestration/lib/codex-install.sh | grep -q '/usr/local/bin'; then
+  bad "codex-install.sh ставит codex в /usr/local/bin"
+else
+  ok "codex-install.sh: codex ставится в ~/.local, не в /usr/local/bin"
+fi
 
 echo "── 9. Изоляция плагина по агентам (lib/plugin.sh) ──"
 unit "plugin.sh: приватная копия / миграция симлинка / разный cwd — юнит-тест зелёный" "plugin.sh: юнит-тест провален (orchestration/lib/plugin.test.sh)" bash orchestration/lib/plugin.test.sh

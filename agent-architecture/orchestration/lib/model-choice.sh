@@ -28,8 +28,22 @@
 # shellcheck source=ui.sh
 . "$(dirname "${BASH_SOURCE[0]}")/ui.sh"
 
-# sonnet по умолчанию: владелец выбрал его для новых агентов (13.09.2026).
-MODEL_CHOICE_DEFAULT="${MODEL_CHOICE_DEFAULT:-sonnet}"
+# Харнес роя (claude|codex): модели у них разные. Вызывающий может задать HARNESS сам; иначе
+# читаем swarm.env (lib/harness.sh), а без него — claude, как у установок до выбора харнеса.
+if [ -z "${HARNESS:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/harness.sh" ]; then
+  # shellcheck source=harness.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/harness.sh"
+  HARNESS="$(harness_current 2>/dev/null || echo claude)"
+fi
+if [ "${HARNESS:-claude}" = "codex" ]; then
+  # gpt-6.2-sol по умолчанию для агентов на Codex — решение владельца (22.11.2026).
+  MODEL_CHOICE_DEFAULT="${MODEL_CHOICE_DEFAULT:-gpt-6.2-sol}"
+  MODEL_CHOICE_HINT="gpt-6.2-sol или другое имя модели Codex"
+else
+  # sonnet по умолчанию: владелец выбрал его для новых агентов (13.09.2026).
+  MODEL_CHOICE_DEFAULT="${MODEL_CHOICE_DEFAULT:-sonnet}"
+  MODEL_CHOICE_HINT="fable / opus / sonnet"
+fi
 
 # is_haiku_model <модель> — алиас haiku или полное имя из семейства Haiku.
 is_haiku_model() {
@@ -54,7 +68,7 @@ is_valid_model_name() {
 # Пробелы по краям срезаются: их не видно, а имя модели с ними не находится.
 ask_model_again() {
   local answer=""
-  printf "${UI_INFO}[?]${UI_RESET} Модель (fable / opus / sonnet) [%s]: " "$MODEL_CHOICE_DEFAULT"
+  printf "${UI_INFO}[?]${UI_RESET} Модель (%s) [%s]: " "$MODEL_CHOICE_HINT" "$MODEL_CHOICE_DEFAULT"
   if ! read -r answer; then echo; return 1; fi
   answer="${answer#"${answer%%[![:space:]]*}"}"
   answer="${answer%"${answer##*[![:space:]]}"}"
@@ -70,7 +84,7 @@ confirm_primary_model() {
     if ! is_valid_model_name "${PRIMARY_MODEL:-}"; then
       # %q показывает непечатаемые байты ($'\321...'), а не «ы�» — видно, что не так.
       err "Недопустимое имя модели: $(printf '%q' "${PRIMARY_MODEL:-}")"
-      echo "  Допустимы латиница, цифры и . _ - [ ]: fable, opus, sonnet, claude-opus-5[1m]."
+      echo "  Допустимы латиница, цифры и . _ - [ ]: $MODEL_CHOICE_HINT."
       echo "  Возможно, ввод начат в русской раскладке."
       if [ "${NONINTERACTIVE:-0}" = "1" ]; then
         die "задайте PRIMARY_MODEL латиницей и запустите установку снова"
@@ -78,6 +92,8 @@ confirm_primary_model() {
       ask_model_again || die "ввода нет — задайте PRIMARY_MODEL латиницей и запустите установку снова"
       continue
     fi
+    # Правило про Haiku — про модели Claude; у Codex его нет.
+    [ "${HARNESS:-claude}" != "codex" ] || return 0
     is_haiku_model "$PRIMARY_MODEL" || return 0
     err "Модель ${PRIMARY_MODEL} не поддерживается: агент на Haiku не отвечает в Telegram —"
     echo "  сообщения доходят, но ответ остаётся в терминале. Выберите fable, opus или sonnet."

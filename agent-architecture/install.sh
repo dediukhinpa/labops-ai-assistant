@@ -54,6 +54,9 @@
 #                             # оператором; в режиме --test-only игнорируется)
 #   SKIP_CLAUDE_LOGIN=1       # не входить в Claude Code при установке: агент создаётся, но к
 #                             # модели не подключится, пока не выполните вход (см. итог установки)
+#   HARNESS=claude|codex      # харнес роя без вопроса (первый вопрос установки). Один на весь
+#                             # рой: все агенты на Claude Code или все на Codex (подписка ChatGPT)
+#   SKIP_CODEX_LOGIN=1        # рой на Codex: не входить в ChatGPT при установке (войти позже)
 #
 # Монорепо (обычно задаётся корневым ../install.sh — единой точкой входа):
 #   TG_PLUGIN_DIR=<path>      # взять tg-plugin из локального дерева, НЕ клонировать
@@ -82,6 +85,13 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # openai_adapter_install: адаптер Claude Code -> OpenAI, только по --openai-adapter.
 # shellcheck source=orchestration/lib/openai-adapter-install.sh
 . "$REPO_DIR/orchestration/lib/openai-adapter-install.sh"
+# Харнес роя (claude|codex), установка Codex закреплённой версии и общий вход роя в ChatGPT.
+# shellcheck source=orchestration/lib/harness.sh
+. "$REPO_DIR/orchestration/lib/harness.sh"
+# shellcheck source=orchestration/lib/codex-watch.sh
+. "$REPO_DIR/orchestration/lib/codex-watch.sh"
+# shellcheck source=orchestration/lib/codex-install.sh
+. "$REPO_DIR/orchestration/lib/codex-install.sh"
 
 MODE="full"
 [ "${1:-}" = "--test-only" ] && MODE="test"
@@ -94,6 +104,52 @@ echo "  labops-agent-architecture · установка"
 echo "════════════════════════════════════════════"
 
 command -v bash >/dev/null || die "нужен bash"
+
+# ── Харнес роя — первый вопрос установки ──────────────────────────
+# Один на весь рой (решение владельца 22.11.2026): все агенты на Claude Code или все на Codex
+# по подписке ChatGPT. От ответа зависят проверка хостов, что ставится (claude или codex), вход
+# и шаблоны агентов. Ответ уходит дальше через окружение (HARNESS доживает до перезапуска от
+# пользователя агентов) и записывается в shared/swarm.env на шаге 3.
+choose_harness() {
+  local answer="" existing
+  if [ -n "${HARNESS:-}" ]; then
+    harness_is_known "$HARNESS" || die "HARNESS=$HARNESS — ожидается: $HARNESS_KNOWN"
+    note "харнес роя задан окружением: $HARNESS"
+    return 0
+  fi
+  existing="$(harness_read_swarm 2>/dev/null || true)"
+  if [ -n "$existing" ]; then
+    HARNESS="$existing"
+    note "харнес роя уже выбран: $HARNESS ($(harness_swarm_env))"
+    return 0
+  fi
+  if [ "${NONINTERACTIVE:-0}" = "1" ]; then
+    HARNESS="$HARNESS_DEFAULT"
+    note "харнес роя по умолчанию: $HARNESS (другой — HARNESS=codex)"
+    return 0
+  fi
+  echo "  Харнес — программа, в которой живут агенты. Выбирается один на весь рой:"
+  echo "    claude — Claude Code по подписке Claude (Max/Pro)"
+  echo "    codex  — Codex CLI по подписке ChatGPT"
+  while :; do
+    printf "${UI_INFO}[?]${UI_RESET} Харнес роя (claude / codex) [%s]: " "$HARNESS_DEFAULT"
+    if ! read -r answer; then echo; answer=""; fi
+    answer="$(printf '%s' "$answer" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+    case "$answer" in
+      "") HARNESS="$HARNESS_DEFAULT"; break ;;
+      claude|codex) HARNESS="$answer"; break ;;
+      *) warn "введите claude или codex (латиницей)" ;;
+    esac
+  done
+  ok "харнес роя: $HARNESS"
+}
+if [ "$MODE" = "full" ] || [ "$MODE" = "prep" ]; then
+  say "Харнес роя"
+  choose_harness
+else
+  HARNESS="${HARNESS:-$(harness_current 2>/dev/null || echo "$HARNESS_DEFAULT")}"
+fi
+export HARNESS
 
 # root не нуждается в sudo, а на голых серверах его вообще может не быть.
 SUDO=""
@@ -338,6 +394,16 @@ if [ "$MODE" != "test" ] && [ "${PREFLIGHT_DONE:-0}" != "1" ]; then
   # claude.ai — только редирект, сам дистрибутив лежит на downloads.claude.ai.
   # Поэтому фронт помечен optional: при его 403 установка идёт в обход, напрямую
   # (см. шаг 3). Критичен именно downloads — без него ставить нечего.
+  if [ "$HARNESS" = "codex" ]; then
+    # Пакет codex лежит в релизах GitHub; весь рабочий трафик агента — бэкенд ChatGPT; вход
+    # в подписку — auth.openai.com.
+    probe_host "github.com — пакет Codex CLI" \
+               "https://github.com/openai/codex/releases" critical
+    probe_host "chatgpt.com — рантайм агента (бэкенд Codex)" \
+               "https://chatgpt.com/backend-api/codex/responses" critical
+    probe_host "auth.openai.com — вход в ChatGPT" \
+               "https://auth.openai.com/codex/device" critical
+  else
   if ! command -v claude >/dev/null 2>&1; then
     probe_host "downloads.claude.ai — дистрибутив Claude Code" \
                "https://downloads.claude.ai/claude-code-releases/latest" critical
@@ -347,6 +413,7 @@ if [ "$MODE" != "test" ] && [ "${PREFLIGHT_DONE:-0}" != "1" ]; then
   # Сюда идёт весь рабочий трафик агента. Закрыт — установка бессмысленна.
   probe_host "api.anthropic.com — рантайм агента" \
              "https://api.anthropic.com/v1/messages" critical
+  fi
   if [ "${SKIP_SECOND_BRAIN:-0}" != "1" ] || [ "${SKIP_TG_PLUGIN:-0}" != "1" ]; then
     probe_host "github.com — клонирование репозиториев" "https://github.com" critical
   fi
@@ -360,9 +427,8 @@ if [ "$MODE" != "test" ] && [ "${PREFLIGHT_DONE:-0}" != "1" ]; then
   if [ -n "$PF_BLOCKED" ]; then
     die "недоступно с этой машины, HTTP 403:$PF_BLOCKED
 
-    403 отдаём не мы, а сторона Anthropic/Cloudflare. Так отвечают на закрытый
-    регион (https://www.anthropic.com/supported-countries) и на адрес датацентра
-    с плохой репутацией. Повторный запуск, смена DNS и ожидание не помогут.
+    403 отдаём не мы, а сторона провайдера модели либо Cloudflare перед ним. Так
+    отвечают на закрытый регион и на адрес датацентра с плохой репутацией. Повторный запуск, смена DNS и ожидание не помогут.
     Проверить вручную:
       curl -sSI -o /dev/null -w '%{http_code}\\n' <адрес>
     Выход — ставить на хост в поддерживаемом регионе либо пускать трафик агента
@@ -598,8 +664,12 @@ fi
 
 LAB_DIR="${CLAUDE_LAB:-$HOME/.claude-lab}"
 
-# ── 3. Claude Code и остальное окружение ─────────────────────────
-say "3. Claude Code и окружение"
+# ── 3. Claude Code (или Codex) и остальное окружение ─────────────
+if [ "$HARNESS" = "codex" ]; then say "3. Codex и окружение"; else say "3. Claude Code и окружение"; fi
+# Выбор харнеса записывается здесь: шаг 3 идёт уже от пользователя агентов, а swarm.env
+# лежит в его лаборатории. Если рой уже работает на другом харнесе, установка останавливается:
+# смена харнеса у существующего роя установщиком не делается.
+harness_set_swarm "$HARNESS" || die "харнес роя не записан — см. сообщение выше"
 # Нативный установщик claude.ai кладёт бинарник в ~/.local/bin и правит PATH
 # только в ~/.bashrc — а install.sh запускается не-login шеллом (sudo -u ... -H
 # bash install.sh), rc-файлы не подгружаются. Подмешиваем каталог в PATH ЗАРАНЕЕ,
@@ -626,7 +696,14 @@ fetch_and_run() {   # <url> → 0 успех, 1 не скачалось, 2 ск�
   return "$rc"
 }
 
-if ! command -v claude >/dev/null 2>&1; then
+if [ "$HARNESS" = "codex" ]; then
+  # Codex закреплённой версии: драйвер агента опирается на протокол app-server этой версии.
+  step "ставлю Codex CLI $CODEX_PINNED_VERSION (пакет релиза openai/codex, проверка sha256)"
+  CODEX_INSTALLED="$(codex_install_pinned)" || die "установка Codex CLI не удалась — причина выше.
+    Повторите ./install.sh; если github.com с этой машины недоступен, нужен другой маршрут."
+  ok "codex $(codex_version_of "$CODEX_INSTALLED") — $CODEX_INSTALLED"
+  echo "    Модель подключается через подписку ChatGPT — вход будет запрошен ниже, перед созданием агента."
+elif ! command -v claude >/dev/null 2>&1; then
   # Скачиваем в файл и запускаем отдельной командой, а НЕ конвейером
   # `curl -fsSL … | bash`. Конвейер под `set -e` + `pipefail` обрывал установку
   # молча: curl -f отдаёт 22, конвейер падает, и die двумя строками ниже уже не
@@ -641,7 +718,9 @@ if ! command -v claude >/dev/null 2>&1; then
     fetch_and_run "https://downloads.claude.ai/claude-code-releases/bootstrap.sh" || true
   fi
 fi
-if command -v claude >/dev/null 2>&1; then
+if [ "$HARNESS" = "codex" ]; then
+  :
+elif command -v claude >/dev/null 2>&1; then
   ok "claude найден"
   echo "    Модель подключается через подписку (Max/Pro) — авторизация будет запрошена ниже, перед созданием агента, если ещё не входили."
 else
@@ -803,7 +882,11 @@ fi
 # ── 6. Первый агент — Developer ──────────────────────────────────
 if [ "$MODE" = "prep" ]; then
   say "Подготовка завершена (--no-agent). Чтобы создать первого агента:"
-  echo "    claude --dangerously-skip-permissions   # один раз, войдите в браузере, затем /exit"
+  if [ "$HARNESS" = "codex" ]; then
+    echo "    CODEX_HOME=$(codex_shared_home) codex login --device-auth   # один раз на рой"
+  else
+    echo "    claude --dangerously-skip-permissions   # один раз, войдите в браузере, затем /exit"
+  fi
   echo "    bash skills/create-agent/new-agent.sh"
   exit 0
 fi
@@ -816,12 +899,17 @@ fi
 . "$REPO_DIR/orchestration/lib/pii.sh"
 say "5b. Маскирование персональных данных (pii-proxy)"
 pii_geo_check
+if [ "$HARNESS" = "codex" ] && ! pii_enabled; then
+  die "рой на Codex без маскирования ПДн не ставится (решение владельца): уберите SKIP_PII_PROXY=1"
+fi
 if pii_enabled; then
   # PII_SRC_DIR: new-agent.sh запускается из копии роя в /opt, где pii-* нет, - код берём отсюда.
   if [ -d "$REPO_DIR/../pii-proxy" ] && [ -d "$REPO_DIR/../vendor/labops-pii" ]; then
     export PII_SRC_DIR="$(cd "$REPO_DIR/.." && pwd)"
   fi
   if ! bash "$REPO_DIR/orchestration/pii-setup.sh" host; then
+    [ "$HARNESS" != "codex" ] || die "сервис маскирования НЕ установлен, а агент на Codex без него не ставится.
+    Повторить: bash $REPO_DIR/orchestration/pii-setup.sh host, затем ./install.sh"
     warn "сервис маскирования НЕ установлен - агент будет создан БЕЗ маскирования ПДн."
     warn "Повторить: bash $REPO_DIR/orchestration/pii-setup.sh host  (или SKIP_PII_PROXY=1 осознанно)"
   fi
@@ -862,7 +950,43 @@ creds_valid() {
 # подписку подключат позже. new-agent.sh без входа не падает: агент создаётся и
 # помечается degraded, войти можно потом одной командой (печатаем её в итоге).
 CLAUDE_LOGIN_SKIPPED=0
-if creds_valid; then
+CODEX_LOGIN_SKIPPED=0
+if [ "$HARNESS" = "codex" ]; then
+  # Один вход на весь рой: в общий каталог, у каждого агента — ссылки на него (см.
+  # lib/codex-watch.sh, codex_link_shared_auth). Вход по коду: codex печатает ссылку и код,
+  # оператор вводит код в браузере на любом устройстве — браузер на сервере не нужен.
+  CODEX_SHARED="$(codex_shared_home)"
+  mkdir -p "$CODEX_SHARED" && chmod 700 "$CODEX_SHARED"
+  CODEX_AUTH_NOW="$(codex_auth_state_home "$CODEX_SHARED")"
+  if [ "$CODEX_AUTH_NOW" = "chatgpt" ]; then
+    ok "Codex уже вошёл в ChatGPT ($CODEX_SHARED)"
+  elif [ "${SKIP_CODEX_LOGIN:-0}" = "1" ]; then
+    CODEX_LOGIN_SKIPPED=1
+    warn "вход в ChatGPT пропущен (SKIP_CODEX_LOGIN=1) — агент не подключится к модели до входа"
+  else
+    say "Вход в ChatGPT (подписка, один вход на весь рой)"
+    [ "$CODEX_AUTH_NOW" != "apikey" ] || warn "сейчас Codex вошёл по API-ключу — рой работает по подписке, войдите через ChatGPT"
+    echo "  Codex покажет ссылку и код. Откройте ссылку на любом устройстве, войдите в"
+    echo "  аккаунт ChatGPT, подписку которого будет использовать рой, и введите код."
+    echo "  Войти позже: введите s — установка продолжится без входа."
+    printf "${UI_INFO}[?]${UI_RESET} %s" "Enter — войти сейчас, s — пропустить: "
+    LOGIN_CHOICE=""
+    read -r LOGIN_CHOICE || LOGIN_CHOICE="s"
+    case "$LOGIN_CHOICE" in
+      s|S|ы|Ы)
+        CODEX_LOGIN_SKIPPED=1
+        warn "вход отложен — агент будет создан, но к модели не подключится до входа" ;;
+      *)
+        CODEX_HOME="$CODEX_SHARED" "$(codex_bin || echo codex)" login --device-auth \
+          || warn "codex login завершился с ошибкой"
+        if [ "$(codex_auth_state_home "$CODEX_SHARED")" = "chatgpt" ]; then
+          ok "Codex вошёл в ChatGPT ($CODEX_SHARED)"
+        else
+          die "вход не завершён — перезапустите ./install.sh, когда будете готовы войти, или продолжите без входа: SKIP_CODEX_LOGIN=1 ./install.sh"
+        fi ;;
+    esac
+  fi
+elif creds_valid; then
   ok "Claude Code уже авторизован (\$HOME/.claude/.credentials.json)"
 elif [ "${SKIP_CLAUDE_LOGIN:-0}" = "1" ]; then
   CLAUDE_LOGIN_SKIPPED=1
@@ -890,7 +1014,7 @@ else
   esac
 fi
 
-if [ "$CLAUDE_LOGIN_SKIPPED" = "0" ] && ! creds_valid; then
+if [ "$HARNESS" != "codex" ] && [ "$CLAUDE_LOGIN_SKIPPED" = "0" ] && ! creds_valid; then
   LOGIN_SESSION="installer-login-$$"
   tmux new-session -d -s "$LOGIN_SESSION" \
     "claude --dangerously-skip-permissions; sleep 2"
@@ -1061,6 +1185,12 @@ if [ "$NEW_AGENT_STATUS" = "ok" ]; then
 else
   printf "  ${UI_WARN}Developer создан, но не всё включено — см. список «Что НЕ работает» выше.${UI_RESET}\n"
   echo "  Пока эти пункты не закрыты, агент может не отвечать в Telegram."
+fi
+if [ "$CODEX_LOGIN_SKIPPED" = "1" ] \
+   && [ "$(codex_auth_state_home "$(codex_shared_home)")" != "chatgpt" ]; then
+  printf "  ${UI_WARN}Вход в ChatGPT отложен — агенты не ответят, пока вы не войдёте (один раз на рой):${UI_RESET}\n"
+  printf "    ${UI_BOLD}CODEX_HOME=%s codex login --device-auth${UI_RESET}\n" "$(codex_shared_home)"
+  echo "  Агент поднимется сам: watchdog следит за входом."
 fi
 if [ "$CLAUDE_LOGIN_SKIPPED" = "1" ] && ! creds_valid; then
   printf "  ${UI_WARN}Вход в Claude Code отложен — агент не ответит, пока вы не войдёте:${UI_RESET}\n"

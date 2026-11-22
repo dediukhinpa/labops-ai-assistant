@@ -75,12 +75,14 @@ prompt() {
 
 echo ""
 echo "============================================"
-echo "  Claude Code Agent -- Workspace Installer"
+echo "  $( [ "$HARNESS" = "codex" ] && echo "Codex" || echo "Claude Code" ) Agent -- Workspace Installer"
 echo "============================================"
 echo ""
 
 if [ "$HARNESS" = "codex" ]; then
-    if ! command -v codex &>/dev/null; then
+    # Где ищет codex оркестрация (lib/codex-watch.sh codex_bin): CODEX_BIN, копия установщика
+    # в ~/.local/bin, затем PATH.
+    if ! { [ -x "${CODEX_BIN:-}" ] || [ -x "$HOME/.local/bin/codex" ] || command -v codex &>/dev/null; }; then
         warn "Codex CLI not found (the swarm installer puts it in place before agents start)."
         warn "Continuing anyway (workspace will be ready when you install the CLI)."
     fi
