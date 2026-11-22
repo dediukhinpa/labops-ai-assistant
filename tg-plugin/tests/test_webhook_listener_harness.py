@@ -35,7 +35,16 @@ _TOUCHED_ENV = (
     "CLAUDE_LAB", "WEBHOOK_CODEX_HOME", "CODEX_BIN", "CLAUDE_BIN",
     "WEBHOOK_SECOND_BRAIN_AGENT_ROUTER_URL", "WEBHOOK_OWNER_CHAT_ID",
     "ANTHROPIC_API_KEY", "CLAUDE_HARNESS_MARKER", "SECRET_FOO", "OPENAI_API_KEY",
+    "INVOCATION_TIMEOUT_SEC",
 )
+PROXY_TOML = (
+    'model_provider = "labops-pii"\n'
+    "[model_providers.labops-pii]\n"
+    'base_url = "http://127.0.0.1:6399/backend-api/codex"\n'
+)
+# Сколько ждём, пока убитая по таймауту группа процессов исчезнет.
+KILL_WAIT_SEC = 10
+POLL_SEC = 0.1
 
 
 class _Lab:
@@ -52,9 +61,9 @@ class _Lab:
     def set_swarm(self, text: str) -> None:
         (self.lab / "shared" / "swarm.env").write_text(text, encoding="utf-8")
 
-    def add_codex_config(self) -> None:
+    def add_codex_config(self, text: str = 'model = "m"\n') -> None:
         self.codex_home.mkdir(parents=True, exist_ok=True)
-        (self.codex_home / "config.toml").write_text('model = "m"\n', encoding="utf-8")
+        (self.codex_home / "config.toml").write_text(text, encoding="utf-8")
 
     def set_agent_env(self, text: str) -> None:
         (self.workspace / "agent.env").write_text(text, encoding="utf-8")
@@ -87,7 +96,7 @@ class _EnvGuard(unittest.TestCase):
 
     def setUp(self) -> None:
         self._saved = {k: os.environ.get(k) for k in _TOUCHED_ENV}
-        for key in ("WEBHOOK_CODEX_HOME", "CODEX_BIN", "CLAUDE_BIN"):
+        for key in ("WEBHOOK_CODEX_HOME", "CODEX_BIN", "CLAUDE_BIN", "INVOCATION_TIMEOUT_SEC"):
             os.environ.pop(key, None)
         self._tmp = tempfile.TemporaryDirectory()
         self.lab = _Lab(Path(self._tmp.name))
@@ -222,6 +231,123 @@ class CodexCommandTest(_EnvGuard):
         self.assertIs(seen["stdin"], asyncio.subprocess.DEVNULL)
         self.assertEqual(seen["cwd"], str(self.lab.workspace))
         self.assertEqual(seen["env"]["CODEX_HOME"], str(self.lab.codex_home))
+
+
+class PiiProxyGateTest(_EnvGuard):
+    """codex не запускается, пока pii-proxy агента не отвечает на /health."""
+
+    def _load_codex(self, toml: str = PROXY_TOML) -> ModuleType:
+        self.lab.add_codex_config(toml)
+        self.lab.set_swarm("HARNESS=codex\n")
+        return self.lab.load()
+
+    def test_proxy_url_parsed_from_config(self) -> None:
+        module = self._load_codex()
+        self.assertEqual(
+            module._codex_pii_proxy_url(self.lab.codex_home / "config.toml"),
+            "http://127.0.0.1:6399")
+
+    def test_non_local_or_missing_provider_means_no_proxy(self) -> None:
+        module = self._load_codex()
+        cfg = self.lab.codex_home / "config.toml"
+        for text in ('model = "m"\n',
+                     PROXY_TOML.replace("127.0.0.1:6399", "example.com:443"),
+                     "not = [toml"):
+            cfg.write_text(text, encoding="utf-8")
+            self.assertEqual(module._codex_pii_proxy_url(cfg), "")
+
+    def test_ready_depends_on_health(self) -> None:
+        module = self._load_codex()
+        for healthy in (True, False):
+            async def _fake_health(url: str, _ok: bool = healthy) -> bool:
+                self.assertEqual(url, "http://127.0.0.1:6399")
+                return _ok
+            module._pii_proxy_healthy = _fake_health
+            self.assertIs(asyncio.run(module._harness_ready()), healthy)
+
+    def test_ready_without_proxy_or_for_claude(self) -> None:
+        module = self._load_codex('model = "m"\n')
+        self.assertTrue(asyncio.run(module._harness_ready()))
+        self.lab.set_swarm("HARNESS=claude\n")
+        module = self.lab.load()
+        self.assertTrue(asyncio.run(module._harness_ready()))
+
+    def test_unreachable_proxy_reports_unhealthy(self) -> None:
+        # Порт 1 на loopback никто не слушает: соединение отклоняется сразу.
+        module = self._load_codex()
+        self.assertFalse(asyncio.run(module._pii_proxy_healthy("http://127.0.0.1:1")))
+
+    def test_webhook_with_dead_proxy_is_not_acked_or_spawned(self) -> None:
+        module = self._load_codex()
+        calls: list[str] = []
+
+        async def _dead(_url: str) -> bool:
+            return False
+
+        async def _fake_spawn(_prompt: str, _task_id: str) -> None:
+            calls.append("spawn")
+
+        async def _fake_notify(*_args: Any) -> None:
+            calls.append("notify")
+
+        module._pii_proxy_healthy = _dead
+        module._spawn_headless = _fake_spawn
+        module._notify_owner = _fake_notify
+
+        class _FakeRequest:
+            remote = "127.0.0.1"
+            headers = {"Authorization": "Bearer listener-bearer"}
+
+            async def read(self) -> bytes:
+                return b'{"task_id": "t-1", "from_agent": "boss", "title": "x"}'
+
+        resp = asyncio.run(module.handle_webhook(_FakeRequest()))
+        # Не 2xx — воркер доставки не помечает задачу acked и повторит доставку.
+        self.assertEqual(resp.status, 503)
+        self.assertEqual(calls, [])
+
+
+class CodexTimeoutKillTest(_EnvGuard):
+    """По INVOCATION_TIMEOUT_SEC убивается вся группа процессов codex, а не только он."""
+
+    def test_timeout_kills_process_group(self) -> None:
+        self.lab.add_codex_config()
+        self.lab.set_swarm("HARNESS=codex\n")
+        child_pid_file = self.lab.root / "child.pid"
+        fake_codex = self.lab.root / "codex"
+        fake_codex.write_text(
+            "#!/bin/sh\n"
+            f"sleep 300 &\necho $! > '{child_pid_file}'\nwait\n",
+            encoding="utf-8")
+        fake_codex.chmod(0o755)
+        os.environ["CODEX_BIN"] = str(fake_codex)
+        os.environ["INVOCATION_TIMEOUT_SEC"] = "1"
+        module = self.lab.load()
+
+        def _alive(pid: int) -> bool:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            return True
+
+        async def run() -> int:
+            await module._spawn_headless(PROMPT, "task-timeout")
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + KILL_WAIT_SEC
+            pid = 0
+            while loop.time() < deadline:
+                if not pid and child_pid_file.exists():
+                    text = child_pid_file.read_text().strip()
+                    pid = int(text) if text else 0
+                if pid and not _alive(pid):
+                    break
+                await asyncio.sleep(POLL_SEC)
+            return pid
+
+        pid = asyncio.run(run())
+        self.assertTrue(pid, "fake codex did not start its child")
+        self.assertFalse(_alive(pid), "child of codex survived the timeout kill")
 
 
 if __name__ == "__main__":

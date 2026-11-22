@@ -27,8 +27,10 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 from aiohttp import web
@@ -82,6 +84,11 @@ CLAUDE_LAB = Path(os.environ.get("CLAUDE_LAB") or str(Path.home() / ".claude-lab
 SWARM_ENV_PATH = CLAUDE_LAB / "shared" / "swarm.env"
 # Плейсхолдер bearer из agent.env: настоящего токена нет, отдавать его codex незачем.
 AGENT_BEARER_PLACEHOLDER = "CHANGE_ME"
+# Сколько ждём ответа pii-proxy на /health (как PII_HEALTH_TIMEOUT_SEC в lib/pii.sh).
+PII_HEALTH_TIMEOUT_SEC = 3
+# Корень локального pii-proxy в base_url провайдера: только 127.0.0.1/localhost, как в
+# pii_agent_base_url (lib/pii.sh). Путь (/backend-api/codex) для /health отбрасывается.
+_PII_LOCAL_URL = re.compile(r"^(http://(?:127\.0\.0\.1|localhost):[0-9]+)(?:/|$)")
 
 _TOXIC = re.compile(
     r"(Bearer\s+\S+|sk-[A-Za-z0-9_-]+|password=\S+)",
@@ -333,6 +340,63 @@ def _headless_command(prompt: str) -> tuple[list[str], dict[str, str]]:
     return [CLAUDE_BIN, "-p", prompt, "--dangerously-skip-permissions"], _build_subprocess_env()
 
 
+def _codex_pii_proxy_url(config_path: Path) -> str:
+    """Корень pii-proxy агента из config.toml codex (пусто — прокси у агента нет).
+
+    Берётся base_url провайдера, указанного в model_provider, — то же, что делает
+    pii_agent_base_url в agent-architecture/orchestration/lib/pii.sh.
+    """
+    try:
+        with config_path.open("rb") as fh:
+            cfg = tomllib.load(fh)
+        providers = cfg.get("model_providers", {})
+        url = providers.get(cfg.get("model_provider", ""), {}).get("base_url", "")
+    except (OSError, tomllib.TOMLDecodeError, AttributeError):
+        return ""
+    match = _PII_LOCAL_URL.match(url if isinstance(url, str) else "")
+    return match.group(1) if match else ""
+
+
+async def _pii_proxy_healthy(base_url: str) -> bool:
+    """Отвечает ли pii-proxy на GET /health кодом 2xx."""
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{base_url.rstrip('/')}/health",
+                timeout=aiohttp.ClientTimeout(total=PII_HEALTH_TIMEOUT_SEC),
+            ) as resp:
+                return 200 <= resp.status < 300
+    except Exception:  # noqa: BLE001 — любой сбой сети значит «не отвечает»
+        return False
+
+
+async def _harness_ready() -> bool:
+    """Можно ли запускать headless-агента прямо сейчас.
+
+    codex exec при молчащем pii-proxy не падает, а бесконечно переподключается
+    («Reconnecting… waiting for network») до таймаута задачи. Поэтому для codex прокси
+    проверяется заранее, как pii_gate в lib/pii.sh: прокси не настроен — можно, настроен
+    и жив — можно, настроен и молчит — нельзя. Для claude проверки нет (как и раньше).
+    """
+    if HARNESS != HARNESS_CODEX:
+        return True
+    url = _codex_pii_proxy_url(CODEX_HOME / "config.toml")
+    if not url:
+        return True
+    return await _pii_proxy_healthy(url)
+
+
+def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Убить процесс и всю его группу (codex запускает команды и MCP-серверы детьми)."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        proc.kill()
+
+
 async def _spawn_headless(prompt: str, task_id: str) -> None:
     ts = int(time.time())
     safe_id = _sanitize_task_id(task_id)
@@ -350,6 +414,9 @@ async def _spawn_headless(prompt: str, task_id: str) -> None:
         stdin=asyncio.subprocess.DEVNULL,
         stdout=log_fh,
         stderr=asyncio.subprocess.STDOUT,
+        # codex — в своей группе процессов, чтобы по таймауту убить и его детей.
+        # Запуск claude прежний.
+        **({"start_new_session": True} if HARNESS == HARNESS_CODEX else {}),
     )
 
     async def _wait_and_close() -> None:
@@ -358,7 +425,11 @@ async def _spawn_headless(prompt: str, task_id: str) -> None:
             log.info("%s task_id=%s exited rc=%s", HARNESS, task_id, proc.returncode)
         except asyncio.TimeoutError:
             log.warning("%s task_id=%s timed out, killing", HARNESS, task_id)
-            proc.kill()
+            if HARNESS == HARNESS_CODEX:
+                _kill_process_group(proc)
+                await proc.wait()
+            else:
+                proc.kill()
         finally:
             log_fh.close()
 
@@ -596,6 +667,15 @@ async def handle_webhook(request: web.Request) -> web.Response:
         # the sanitized form.
         task_id = _sanitize_task_id(str(task_id))
         payload["task_id"] = task_id
+
+    if not await _harness_ready():
+        # Не 2xx: воркер доставки не помечает задачу acked и повторит её позже, задача
+        # остаётся pending в second_brain. Владельцу «Task accepted» тоже не шлём.
+        log.warning(
+            "pii-proxy of agent %s is not answering /health — task_id=%s not started, "
+            "left pending for redelivery", AGENT_NAME, task_id,
+        )
+        return web.json_response({"status": "harness_unavailable"}, status=503)
 
     title = payload.get("title") or "(no title)"
     await _notify_owner(from_agent, task_id, title)
