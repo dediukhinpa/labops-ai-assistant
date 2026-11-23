@@ -146,6 +146,16 @@ On Codex the proxy forwards to `https://chatgpt.com`, masks the OpenAI Responses
 Codex sends and restores the values in the streamed answer. Details:
 [`pii-proxy/README.md`](../../pii-proxy/README.md).
 
+### Web search goes around the proxy
+
+Codex has its own web search, so agents on Codex need no separate search skill. That search
+runs inside chatgpt.com (`codex_apps`), **not through pii-proxy**: a query leaves exactly as the
+model wrote it. The owner decided on 23.11.2026 to keep search on and accept this. As a safeguard,
+the agent's instructions (`AGENTS.md`) forbid putting personal data from the conversation into a
+search query. To switch search off for one agent, add `web_search = "disabled"` and, under `[features]`,
+`apps = false` to its `.codex/config.toml` (the search tool comes from the apps feature) and
+restart the agent.
+
 ## 6. How the agent runs: the driver
 
 On Claude, the watchdog starts the Claude Code terminal app in tmux and the Telegram plugin

@@ -64,6 +64,14 @@ more things deserve care:
   `--dangerously-skip-permissions`. The only boundary is the OS user, so agents must run as a
   dedicated **non-root** user **without sudo rights**. Codex has no equivalent of Claude Code's
   `Bash(sudo *)` deny rule in this setup.
+- **Built-in web search bypasses pii-proxy.** Codex 0.171 searches the web through a tool
+  of chatgpt.com itself (`codex_apps` / `search_service_web_run`), not through the local proxy.
+  The proxy has already restored real values in the model's output, so if the model puts a
+  name or a phone number from the conversation into a search query, that query leaves
+  **unmasked**. Owner decision of 23.11.2026: search stays on and the risk is accepted; as a
+  mitigation, the agent's `AGENTS.md` forbids putting personal data into search queries.
+  To turn search off for an agent, set `web_search = "disabled"` and, under `[features]`,
+  `apps = false` in its `config.toml` (the search tool comes from the apps feature).
 - **Headless runs.** `codex exec` (used by the webhook-listener for agent-to-agent jobs on a
   Codex swarm) is allowed: it uses the same ChatGPT sign-in, config and pii-proxy as the agent
   (directly, without the proxy, while the proxy is down — see above).
