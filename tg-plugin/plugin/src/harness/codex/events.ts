@@ -160,10 +160,22 @@ export function stopHook(ctx: HookContext): Record<string, unknown> {
   return { ...common(ctx), hook_event_name: 'Stop' }
 }
 
-/** Последнее сообщение агента в элементах хода. */
+/**
+ * Сообщение агента, отправленное посреди хода асинхронным инструментом (request_user_input_async,
+ * send_message_to_user_async): у элемента agentMessage поле delivery = "async". Это не ответ
+ * хода — драйвер доставляет его сам, сразу, и в финальное сообщение оно попасть не должно.
+ *
+ * @param item Элемент нити app-server.
+ */
+export function isAsyncAgentMessage(item: Record<string, unknown>): boolean {
+  return item.type === 'agentMessage' && item.delivery === 'async'
+}
+
+/** Последнее сообщение агента в элементах хода (асинхронные вопросы и сообщения не в счёт). */
 export function lastAgentMessage(items: readonly unknown[]): string {
   for (let i = items.length - 1; i >= 0; i -= 1) {
     const item = record(items[i])
+    if (isAsyncAgentMessage(item)) continue
     if (item.type === 'agentMessage' && str(item.text).trim() !== '') return str(item.text)
   }
   return ''
