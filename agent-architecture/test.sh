@@ -280,6 +280,11 @@ echo "── 9a. channel.env сорсится при любом имени аг�
 # не поднимал ни сессию, ни порт канала.
 unit "channel.env: пробел в имени агента не ломает сорсинг — юнит-тест зелёный" "channel.env: юнит-тест провален (skills/create-agent/channel-env.test.sh)" bash skills/create-agent/channel-env.test.sh
 
+echo "── 9a2. Песочница запуска скриптов (скилл sandbox-run) ──"
+# Прототип: агент гоняет скрипт в изоляции и получает структурированный результат.
+# Проверяем запуск/коды/таймаут/входы-выходы и безопасный дефолт без изоляции.
+unit "sandbox-run.sh: запуск, коды, таймаут, входы/выходы, безопасный дефолт — юнит-тест зелёный" "sandbox-run.sh: юнит-тест провален (skills/sandbox-run/sandbox-run.test.sh)" bash skills/sandbox-run/sandbox-run.test.sh
+
 echo "── 9b. Классификатор панели: overlay ≠ зависание (lib/pane.sh) ──"
 unit "pane.sh: слеш-команда не принимается за смерть TUI — юнит-тест зелёный" "pane.sh: юнит-тест провален (orchestration/lib/pane.test.sh)" bash orchestration/lib/pane.test.sh
 
