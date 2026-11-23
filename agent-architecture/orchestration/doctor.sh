@@ -398,11 +398,46 @@ check_codex_driver() {
   return 0
 }
 
+# Codex молча обрезает AGENTS.md сверх project_doc_max_bytes, а память (decisions.md,
+# preferences.md) только растёт. Размер пишет сборка AGENTS.md (codex_workspace.py) в
+# state/agents-md-size.json; здесь он превращается в вердикт: выше порога — предупреждение,
+# выше предела — поломка (агент работает, но часть памяти для него уже не существует).
+# Нет файла — сборки ещё не было или агент старый: молчим, выдумывать поломку незачем.
+check_codex_agents_md_size() {
+  local status="$AGENT_WS/state/agents-md-size.json" level="" detail=""
+  [ -f "$status" ] || return 0
+  # Две строки: уровень (ok|warn|over) и описание «N из M байт; крупнейшие: …».
+  { read -r level; read -r detail; } < <(python3 - "$status" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+TOP = 3  # сколько источников назвать в вердикте для Telegram
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+    size, limit = int(data["bytes"]), int(data["limit"])
+    fraction = float(data.get("warn_fraction", 0.75))
+    level = "over" if size > limit else "warn" if size >= limit * fraction else "ok"
+    top = ", ".join(f"{s['path']} ({s['bytes']} Б)" for s in data.get("sources", [])[:TOP])
+    print(level)
+    print(f"{size} из {limit} байт; крупнейшие: {top}")
+except Exception:
+    pass
+PY
+) || true
+  case "$level" in
+    over) add_broken "AGENTS.md агента больше предела Codex ($detail) — хвост памяти обрезается; сократить или консолидировать decisions.md / preferences.md" ;;
+    warn) add_warn "AGENTS.md агента близок к пределу Codex ($detail) — пора сократить или консолидировать decisions.md / preferences.md" ;;
+  esac
+  return 0
+}
+
 if [ "$DOCTOR_HARNESS" = "codex" ]; then
   check_codex_login
   check_unit
   check_session
   check_codex_driver
+  check_codex_agents_md_size
   check_plumbing
   check_second_brain
   check_pii
