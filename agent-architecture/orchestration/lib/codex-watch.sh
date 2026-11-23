@@ -89,14 +89,17 @@ codex_auth_state() {
 
 # codex_auth_state_home <codex-home> — то же для произвольного CODEX_HOME (общий вход роя).
 codex_auth_state_home() {
-  local bin out rc=0
+  local bin out
   bin="$(codex_bin)" || { echo unknown; return 0; }
-  out="$(CODEX_HOME="$1" timeout 20 "$bin" login status 2>&1)" || rc=$?
+  out="$(CODEX_HOME="$1" timeout 20 "$bin" login status 2>&1)" || true
   case "$out" in
     *"Logged in using ChatGPT"*) echo chatgpt ;;
     *"API key"*|*"api key"*) echo apikey ;;
     *"Not logged in"*) echo none ;;
-    *) if [ "$rc" -ne 0 ]; then echo none; else echo unknown; fi ;;
+    # Таймаут (код 124), падение или непонятный ответ — это НЕ «не вошёл»: прежде ненулевой код
+    # без текста считался none, и зависший `login status` поднимал тревогу оператору и рестарт
+    # здорового агента. Явное «Not logged in» выше — единственный признак отсутствия входа.
+    *) echo unknown ;;
   esac
   return 0
 }

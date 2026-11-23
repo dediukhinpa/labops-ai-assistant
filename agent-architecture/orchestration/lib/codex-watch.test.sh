@@ -32,6 +32,8 @@ eq "$(cat "$TMP/home.log")" "$TMP/lab/dev/.codex" "login status зовётся �
 eq "$(FAKE_LOGIN="Logged in using an API key - sk-***" codex_auth_state dev)" apikey "вход по ключу API"
 eq "$(FAKE_LOGIN="Not logged in" FAKE_RC=1 codex_auth_state dev)" none "входа нет"
 eq "$(FAKE_LOGIN="???" FAKE_RC=0 codex_auth_state dev)" unknown "непонятный ответ — не тревога"
+eq "$(FAKE_LOGIN="" FAKE_RC=124 codex_auth_state dev)" unknown "таймаут login status — не «не вошёл»"
+eq "$(FAKE_LOGIN="panic: boom" FAKE_RC=101 codex_auth_state dev)" unknown "падение codex — не «не вошёл»"
 eq "$(PATH=/nonexistent HOME="$TMP" CODEX_BIN="$TMP/missing" codex_auth_state dev)" "unknown" "бинаря нет — не тревога о входе"
 case "$(codex_login_hint dev)" in *"CODEX_HOME=$TMP/lab/shared/codex codex login --device-auth"*) pass=$((pass + 1)) ;; *) fail=$((fail + 1)); echo "FAIL: подсказка входа" ;; esac
 eq "$(FAKE_LOGIN="Logged in using ChatGPT" codex_auth_state_home "$TMP/lab/shared/codex")" chatgpt "вход по общему CODEX_HOME"
