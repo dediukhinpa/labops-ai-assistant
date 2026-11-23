@@ -10,6 +10,7 @@ import type { AskUserQuestionUi } from '../../telegram/ask-user-question.js'
 import { ClaudeHookPayloadSchema } from '../../schemas.js'
 import {
   CodexDriver,
+  DONE_REACTION,
   READ_REACTION,
   type PiiMode,
   type UserInputAnswers,
@@ -196,6 +197,7 @@ export function createCodexDriver(deps: CodexBootstrapDeps): CodexDriver {
         }
       },
       markRead: (chatId, messageId) => deps.react(chatId, messageId, READ_REACTION),
+      markDone: (chatId, messageId) => deps.react(chatId, messageId, DONE_REACTION),
     },
   })
   return driver

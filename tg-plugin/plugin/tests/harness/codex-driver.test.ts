@@ -104,6 +104,7 @@ interface Recorded {
   finals: Array<{ chatId: string; text: string }>
   memory: Array<{ hook: MemoryHook; payload: Record<string, unknown> }>
   reads: Array<{ chatId: string; messageId: number }>
+  dones: Array<{ chatId: string; messageId: number }>
   rebuilds: number
   asks: number
 }
@@ -125,7 +126,7 @@ function setup(
     writeFileSync(stateFile, JSON.stringify({ threadId: opts.saved }))
   }
   const server = new FakeServer()
-  const rec: Recorded = { status: [], finals: [], memory: [], reads: [], rebuilds: 0, asks: 0 }
+  const rec: Recorded = { status: [], finals: [], memory: [], reads: [], dones: [], rebuilds: 0, asks: 0 }
   const effects: DriverEffects = {
     status: async p => {
       rec.status.push(p)
@@ -146,6 +147,9 @@ function setup(
     },
     markRead: async (chatId, messageId) => {
       rec.reads.push({ chatId, messageId })
+    },
+    markDone: async (chatId, messageId) => {
+      rec.dones.push({ chatId, messageId })
     },
   }
   // С opts.servers каждый запуск app-server — новый поддельный сервер (смена режима pii-proxy).
@@ -236,6 +240,43 @@ describe('входящие', () => {
     expect(steer.params).toMatchObject({ threadId: 'thr-new', expectedTurnId: 'turn-1' })
     expect(server.requests('turn/start')).toHaveLength(1)
     expect(rec.reads.map(r => r.messageId)).toEqual([1, 2])
+  })
+
+  test('конец хода — 👌 на все его сообщения (как Stop-хук у Claude), до конца — нет', async () => {
+    const { driver, server, rec } = setup()
+    await driver.start()
+    await driver.deliver(msg('42', 'Первое', 1))
+    await tick()
+    await driver.deliver(msg('42', 'Дописка', 2))
+    await tick()
+    expect(rec.dones).toEqual([])
+    server.notify('turn/completed', {
+      threadId: 'thr-new',
+      turn: { id: 'turn-1', status: 'completed', items: [{ type: 'agentMessage', id: 'a', text: 'Ок' }] },
+    })
+    await tick()
+    expect(rec.dones).toEqual([
+      { chatId: '42', messageId: 1 },
+      { chatId: '42', messageId: 2 },
+    ])
+  })
+
+  test('ход с ошибкой тоже закрывается 👌; задача без message_id — без реакции', async () => {
+    const { driver, server, rec } = setup()
+    await driver.start()
+    await driver.deliver(msg('42', 'Сломай', 5))
+    await tick()
+    server.notify('turn/completed', {
+      threadId: 'thr-new',
+      turn: { id: 'turn-1', status: 'failed', error: { message: 'boom' }, items: [] },
+    })
+    await tick()
+    expect(rec.dones).toEqual([{ chatId: '42', messageId: 5 }])
+    await driver.deliver(msg('42', 'задача'))
+    await tick()
+    server.notify('turn/completed', { threadId: 'thr-new', turn: { id: 'turn-2', status: 'completed', items: [] } })
+    await tick()
+    expect(rec.dones).toHaveLength(1)
   })
 
   test('другой чат во время хода ждёт конца хода', async () => {
@@ -530,6 +571,11 @@ describe('режим pii-proxy', () => {
     // Прерванный ход — не ответ и не ошибка: пользователю ничего не уходит, «прочитано» — раз.
     expect(rec.finals).toHaveLength(0)
     expect(rec.reads).toEqual([{ chatId: '42', messageId: 7 }])
+    // 👌 — не на прерванном ходе, а на конце повтора.
+    expect(rec.dones).toEqual([])
+    fresh.notify('turn/completed', { threadId: 'thr-old', turn: { id: 'turn-1', status: 'completed', items: [] } })
+    await tick()
+    expect(rec.dones).toEqual([{ chatId: '42', messageId: 7 }])
   })
 
   test('ход успел закончиться сам до прерывания — ответ один, повтора нет', async () => {
