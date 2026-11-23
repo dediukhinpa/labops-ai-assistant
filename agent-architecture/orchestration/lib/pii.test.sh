@@ -166,4 +166,13 @@ PII_GEO_CMD="false" out="$(pii_geo_check)"; rc=$?
 PII_GEO_CMD="echo <html>blocked" out="$(pii_geo_check)"
 echo "$out" | grep -q 'NOTE' || fail "мусорный ответ считается неопределённым"
 
+# Адрес сервиса псевдонимизации: по умолчанию прежний 8300, окружение его переопределяет.
+eq "$PII_PSEUDONYMIZER_URL_DEFAULT" "http://127.0.0.1:8300" "адрес псевдонимизатора по умолчанию"
+eq "$(env -u PII_PSEUDONYMIZER_URL PII_PSEUDONYMIZER_PORT=28300 bash -c \
+  ". '$HERE/pii.sh'; printf '%s' \"\$PII_PSEUDONYMIZER_URL_DEFAULT\"")" \
+  "http://127.0.0.1:28300" "порт псевдонимизатора из окружения"
+eq "$(PII_PSEUDONYMIZER_URL=http://10.0.0.5:9000 bash -c \
+  ". '$HERE/pii.sh'; printf '%s' \"\$PII_PSEUDONYMIZER_URL_DEFAULT\"")" \
+  "http://10.0.0.5:9000" "адрес псевдонимизатора из окружения"
+
 echo "OK: pii.test.sh"

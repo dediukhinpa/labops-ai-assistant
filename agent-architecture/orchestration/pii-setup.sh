@@ -212,7 +212,7 @@ cmd_host() {
       # Адреса маскируются по решению владельца (этап Г плана 152-ФЗ): профиль labops их не включает
       echo "PSEUDONYMIZER_ADDRESS_MASK=true"
       echo "PSEUDONYMIZER_HOST=127.0.0.1"
-      echo "PSEUDONYMIZER_PORT=8300"
+      echo "PSEUDONYMIZER_PORT=$PII_PSEUDONYMIZER_PORT"
     } > "$env_file"
   fi
   chmod 600 "$env_file"
