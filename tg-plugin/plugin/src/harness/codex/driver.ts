@@ -52,12 +52,22 @@ export const TURN_WATCH_INTERVAL_MS = 15_000
  * Сколько ход может идти без единого уведомления нити, прежде чем драйвер его прервёт.
  * Должно быть заметно меньше порога watchdog (WATCHDOG_CODEX_HEARTBEAT_STALE_SEC, 300 с):
  * во время хода heartbeat пишется только по уведомлениям, и при пороге выше watchdog
- * перезапустил бы агента раньше, без предупреждения в чат. Цена — тихая команда дольше
- * предела (без вывода) тоже будет прервана; предел переопределяется TURN_STALL_ENV.
+ * перезапустил бы агента раньше, без предупреждения в чат. Действует, только пока у хода
+ * нет незавершённых элементов (иначе — ITEM_STALL_DEFAULT_MS); переопределяется TURN_STALL_ENV.
  */
 export const TURN_STALL_DEFAULT_MS = 180_000
 /** Переменная окружения: предел молчания хода в секундах. */
 export const TURN_STALL_ENV = 'LABOPS_CODEX_TURN_STALL_SEC'
+/**
+ * Предел молчания, пока у хода есть незавершённый элемент (item/started без item/completed:
+ * команда, MCP-вызов, рассуждение, правка файлов и т. п.). Ход не завис, а ждёт инструмент или
+ * модель: тихая сборка, тесты, sleep, долгое рассуждение без summaries законно молчат минутами.
+ * Короткий TURN_STALL_DEFAULT_MS действует только когда незавершённых элементов нет — сервер
+ * замолчал между элементами.
+ */
+export const ITEM_STALL_DEFAULT_MS = 1_800_000
+/** Переменная окружения: предел молчания при незавершённом элементе, в секундах. */
+export const ITEM_STALL_ENV = 'LABOPS_CODEX_ITEM_STALL_SEC'
 /** Сколько ждать конца хода после turn/interrupt сторожа, прежде чем выйти с ошибкой. */
 export const STALL_INTERRUPT_GRACE_MS = 30_000
 /** Сколько подряд неудачных thread/resume (не «нити нет») терпеть, прежде чем начать новую. */
@@ -152,8 +162,10 @@ export interface CodexDriverDeps {
   identityHash?: () => string
   /** Файл очереди входящих; по умолчанию codex-queue.json рядом с stateFile. */
   queueFile?: string
-  /** Предел молчания хода, мс (по умолчанию TURN_STALL_DEFAULT_MS). */
+  /** Предел молчания хода без незавершённых элементов, мс (по умолчанию TURN_STALL_DEFAULT_MS). */
   turnStallMs?: number
+  /** Предел молчания при незавершённом элементе, мс (по умолчанию ITEM_STALL_DEFAULT_MS). */
+  itemStallMs?: number
   /** Шаг сторожа хода и heartbeat в простое, мс (тесты ставят меньше). */
   turnWatchMs?: number
   /** Сколько ждать конца хода после прерывания сторожем, мс. */
@@ -239,6 +251,8 @@ export class CodexDriver {
   private lastTurnActivity = 0
   /** Идёт обработка зависшего хода (прерывание, выход). */
   private stallHandling = false
+  /** Незавершённые элементы текущего хода: id → тип (item/started без item/completed). */
+  private readonly openItems = new Map<string, string>()
   /** Сколько вопросов пользователю ждут ответа: ход законно молчит, пока человек думает. */
   private waitingOnUser = 0
   /** Отпечаток инструкций текущей нити. */
@@ -401,8 +415,9 @@ export class CodexDriver {
 
   /**
    * Шаг таймера: heartbeat в простое и сторож хода. Во время хода heartbeat пишут только
-   * уведомления нити (onNotification) — иначе watchdog не увидит зависший ход. Исключение —
-   * ожидание ответа человека на вопрос: ход законно молчит.
+   * уведомления нити (onNotification) — иначе watchdog не увидит зависший ход. Исключения —
+   * ожидание ответа человека на вопрос и незавершённый элемент хода (ждём инструмент или
+   * модель): тогда heartbeat тикает, а предел молчания длинный (itemStallMs).
    */
   private async watchTick(): Promise<void> {
     if (!this.ready || this.stopping || this.switching) return
@@ -418,8 +433,20 @@ export class CodexDriver {
       return
     }
     if (this.stallHandling || this.interrupting !== undefined) return
-    const limit = this.deps.turnStallMs ?? TURN_STALL_DEFAULT_MS
-    if (t - this.lastTurnActivity >= limit) await this.onTurnStall(turn, t - this.lastTurnActivity)
+    const waitingOnItem = this.openItems.size > 0
+    const limit = waitingOnItem
+      ? (this.deps.itemStallMs ?? ITEM_STALL_DEFAULT_MS)
+      : (this.deps.turnStallMs ?? TURN_STALL_DEFAULT_MS)
+    const silent = t - this.lastTurnActivity
+    if (silent < limit) {
+      if (waitingOnItem) await this.heartbeat(false)
+      return
+    }
+    this.deps.log.error('codex turn silent past the limit', {
+      open_items: [...this.openItems.values()],
+      limit_ms: limit,
+    })
+    await this.onTurnStall(turn, silent)
   }
 
   /**
@@ -829,6 +856,7 @@ export class CodexDriver {
     }
     this.replayMessageIds.delete(first.chatId)
     this.active = turn
+    this.openItems.clear()
     this.lastTurnActivity = this.now()
     const input: Array<Record<string, unknown>> = []
     if (this.sessionContext !== '') {
@@ -875,6 +903,7 @@ export class CodexDriver {
     if (p.threadId === this.threadId) {
       this.lastTurnActivity = this.now()
       void this.heartbeat(false)
+      this.trackItem(method, record(p.item))
     }
     const turn = this.active
     switch (method) {
@@ -924,12 +953,20 @@ export class CodexDriver {
     }
   }
 
+  /** Учёт незавершённых элементов хода (любого типа: список типов у Codex растёт). */
+  private trackItem(method: string, item: Record<string, unknown>): void {
+    if (typeof item.id !== 'string' || item.id === '') return
+    if (method === 'item/started') this.openItems.set(item.id, typeof item.type === 'string' ? item.type : '?')
+    else if (method === 'item/completed') this.openItems.delete(item.id)
+  }
+
   private async finishTurn(turnData: Record<string, unknown>): Promise<void> {
     const turn = this.active
     if (turn === undefined) return
     const id = typeof turnData.id === 'string' ? turnData.id : ''
     if (turn.id !== '' && id !== '' && id !== turn.id) return
     this.active = undefined
+    this.openItems.clear()
     const status = String(turnData.status ?? '')
 
     // Ход прерван ради перехода напрямую или упал, пока прокси уже признан мёртвым: не ответ и

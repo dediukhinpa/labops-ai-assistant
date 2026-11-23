@@ -17,6 +17,7 @@ import {
   codexChildEnv,
   codexHarnessEnabled,
   instructionsHash,
+  itemStallFromEnv,
   piiModeReader,
   turnStallFromEnv,
 } from '../../src/harness/codex/bootstrap.js'
@@ -238,5 +239,7 @@ describe('отпечаток инструкций и предел молчани
     expect(turnStallFromEnv({ LABOPS_CODEX_TURN_STALL_SEC: '0' })).toBeUndefined()
     expect(turnStallFromEnv({ LABOPS_CODEX_TURN_STALL_SEC: 'abc' })).toBeUndefined()
     expect(turnStallFromEnv({})).toBeUndefined()
+    expect(itemStallFromEnv({ LABOPS_CODEX_ITEM_STALL_SEC: '3600' })).toBe(3_600_000)
+    expect(itemStallFromEnv({})).toBeUndefined()
   })
 })

@@ -13,6 +13,7 @@ import {
   CodexDriver,
   DONE_REACTION,
   READ_REACTION,
+  ITEM_STALL_ENV,
   TURN_STALL_ENV,
   type PiiMode,
   type UserInputAnswers,
@@ -80,7 +81,16 @@ export function instructionsHash(workspace: string, codexHome: string): string {
  * undefined (умолчание драйвера).
  */
 export function turnStallFromEnv(env: NodeJS.ProcessEnv): number | undefined {
-  const raw = env[TURN_STALL_ENV]
+  return secondsFromEnv(env, TURN_STALL_ENV)
+}
+
+/** Предел молчания при незавершённом элементе хода из окружения (секунды → мс). */
+export function itemStallFromEnv(env: NodeJS.ProcessEnv): number | undefined {
+  return secondsFromEnv(env, ITEM_STALL_ENV)
+}
+
+function secondsFromEnv(env: NodeJS.ProcessEnv, name: string): number | undefined {
+  const raw = env[name]
   if (raw === undefined || !/^\d+$/.test(raw.trim())) return undefined
   const sec = Number.parseInt(raw.trim(), 10)
   return sec > 0 ? sec * 1000 : undefined
@@ -209,6 +219,7 @@ export function createCodexDriver(deps: CodexBootstrapDeps): CodexDriver {
   const childEnv = codexChildEnv(env, deps.channelToken)
   const modeFile = env[PII_MODE_FILE_ENV] ?? ''
   const turnStallMs = turnStallFromEnv(env)
+  const itemStallMs = itemStallFromEnv(env)
   const codexHome = env.CODEX_HOME ?? ''
   let driver: CodexDriver | undefined
   driver = new CodexDriver({
@@ -218,6 +229,7 @@ export function createCodexDriver(deps: CodexBootstrapDeps): CodexDriver {
     log: deps.log,
     identityHash: () => instructionsHash(deps.workspace, codexHome),
     ...(turnStallMs !== undefined ? { turnStallMs } : {}),
+    ...(itemStallMs !== undefined ? { itemStallMs } : {}),
     ...(modeFile !== '' ? { piiMode: piiModeReader(modeFile) } : {}),
     connect: mode =>
       spawnAppServer({

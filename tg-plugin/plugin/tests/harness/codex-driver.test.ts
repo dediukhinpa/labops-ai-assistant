@@ -131,6 +131,7 @@ function setup(
     identityHash?: () => string
     now?: () => number
     turnStallMs?: number
+    itemStallMs?: number
     turnWatchMs?: number
     stallGraceMs?: number
     /** Задержка ответа человека на вопрос. */
@@ -201,6 +202,7 @@ function setup(
     ...(opts.identityHash !== undefined ? { identityHash: opts.identityHash } : {}),
     ...(opts.now !== undefined ? { now: opts.now } : {}),
     ...(opts.turnStallMs !== undefined ? { turnStallMs: opts.turnStallMs } : {}),
+    ...(opts.itemStallMs !== undefined ? { itemStallMs: opts.itemStallMs } : {}),
     ...(opts.turnWatchMs !== undefined ? { turnWatchMs: opts.turnWatchMs } : {}),
     ...(opts.stallGraceMs !== undefined ? { stallGraceMs: opts.stallGraceMs } : {}),
   })
@@ -945,5 +947,74 @@ describe('инструкции (AGENTS.md) и новая нить', () => {
     await expect(driver.start()).rejects.toThrow()
     expect(server.requests('thread/start')).toHaveLength(0)
     expect(JSON.parse(readFileSync(stateFile, 'utf8'))).toMatchObject({ threadId: 'thr-old', identityHash: 'aaa' })
+  })
+})
+
+describe('незавершённые элементы хода', () => {
+  const MIN = 60_000
+  function startCommand(server: FakeServer, id = 'c1'): void {
+    server.notify('item/started', {
+      threadId: 'thr-new',
+      turnId: 'turn-1',
+      item: { type: 'commandExecution', id, command: 'make build', status: 'inProgress' },
+    })
+  }
+
+  test('тихая команда 10 минут не прерывается, heartbeat тикает', async () => {
+    let clock = 1_000_000
+    const { driver, server, rec } = setup({ now: () => clock, turnWatchMs: 5 })
+    await driver.start()
+    await driver.deliver(msg('42', 'собери'))
+    await tick()
+    startCommand(server)
+    await tick()
+    const beats = (): number => rec.memory.filter(m => m.hook === 'heartbeat').length
+    const before = beats()
+    for (let minute = 0; minute < 10; minute++) {
+      clock += MIN
+      for (let i = 0; i < 3; i++) await tick()
+    }
+    expect(server.requests('turn/interrupt')).toHaveLength(0)
+    expect(driver.busy).toBe(true)
+    expect(beats()).toBeGreaterThanOrEqual(before + 10)
+  })
+
+  test('молчание без незавершённых элементов — прерывание по короткому пределу', async () => {
+    let clock = 1_000_000
+    const { driver, server } = setup({ now: () => clock, turnWatchMs: 5, stallGraceMs: 100 })
+    driver.onExit(() => undefined)
+    server.interruptStatus = 'interrupted'
+    await driver.start()
+    await driver.deliver(msg('42', 'x'))
+    await tick()
+    startCommand(server)
+    server.notify('item/completed', {
+      threadId: 'thr-new',
+      turnId: 'turn-1',
+      item: { type: 'commandExecution', id: 'c1', command: 'make build', status: 'completed' },
+    })
+    await tick()
+    clock += 4 * MIN
+    await waitFor(() => server.requests('turn/interrupt').length > 0)
+    expect(server.requests('turn/interrupt')).toHaveLength(1)
+  })
+
+  test('элемент висит дольше длинного предела — прерывание', async () => {
+    let clock = 1_000_000
+    const { driver, server, rec } = setup({ now: () => clock, turnWatchMs: 5, stallGraceMs: 100 })
+    driver.onExit(() => undefined)
+    server.interruptStatus = 'interrupted'
+    await driver.start()
+    await driver.deliver(msg('42', 'x'))
+    await tick()
+    startCommand(server)
+    await tick()
+    clock += 29 * MIN
+    for (let i = 0; i < 5; i++) await tick()
+    expect(server.requests('turn/interrupt')).toHaveLength(0)
+    clock += 2 * MIN
+    await waitFor(() => server.requests('turn/interrupt').length > 0)
+    expect(server.requests('turn/interrupt')).toHaveLength(1)
+    expect(rec.finals[0]!.text).toContain('прерываю')
   })
 })
