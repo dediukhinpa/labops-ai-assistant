@@ -36,9 +36,12 @@ if [ -z "${HARNESS:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/harness.sh" ]; 
   HARNESS="$(harness_current 2>/dev/null || echo claude)"
 fi
 if [ "${HARNESS:-claude}" = "codex" ]; then
-  # gpt-6.2-sol по умолчанию для агентов на Codex — решение владельца (22.11.2026).
+  # Линейки Codex по способности: astra (самая сильная), sol (быстрый go-to, дефолт),
+  # terra (vision/computer-use). Короткий алиас резолвится в последний слаг линейки
+  # (codex_resolve_model_alias), полное имя слага тоже принимается. sol по умолчанию —
+  # решение владельца (22.11.2026).
   MODEL_CHOICE_DEFAULT="${MODEL_CHOICE_DEFAULT:-gpt-6.2-sol}"
-  MODEL_CHOICE_HINT="gpt-6.2-sol или другое имя модели Codex"
+  MODEL_CHOICE_HINT="astra / sol / terra"
 else
   # sonnet по умолчанию: владелец выбрал его для новых агентов (13.09.2026).
   MODEL_CHOICE_DEFAULT="${MODEL_CHOICE_DEFAULT:-sonnet}"
@@ -51,6 +54,20 @@ is_haiku_model() {
     *haiku*) return 0 ;;
   esac
   return 1
+}
+
+# codex_resolve_model_alias <ввод> — короткий алиас линейки Codex в последний слаг.
+# Полный слаг (gpt-6.2-astra) и всё неалиасное возвращаются как есть. Версии закреплены
+# здесь: при выходе новой линии (gpt-6.3-*) обновлять осознанно, как SHA внешних скиллов.
+# luna (дешевле/слабее) в меню не предлагается, но резолвится, если задана явно.
+codex_resolve_model_alias() {
+  case "${1,,}" in
+    astra) printf 'gpt-6.2-astra' ;;
+    sol)   printf 'gpt-6.2-sol' ;;
+    terra) printf 'gpt-6.1-terra' ;;
+    luna)  printf 'gpt-6-luna' ;;
+    *)     printf '%s' "$1" ;;
+  esac
 }
 
 # is_valid_model_name <модель> — алиас или полное имя без посторонних символов.
@@ -92,8 +109,11 @@ confirm_primary_model() {
       ask_model_again || die "ввода нет — задайте PRIMARY_MODEL латиницей и запустите установку снова"
       continue
     fi
-    # Правило про Haiku — про модели Claude; у Codex его нет.
-    [ "${HARNESS:-claude}" != "codex" ] || return 0
+    # Codex: правила про Haiku нет; короткий алиас линейки резолвим в последний слаг.
+    if [ "${HARNESS:-claude}" = "codex" ]; then
+      PRIMARY_MODEL="$(codex_resolve_model_alias "$PRIMARY_MODEL")"
+      return 0
+    fi
     is_haiku_model "$PRIMARY_MODEL" || return 0
     err "Модель ${PRIMARY_MODEL} не поддерживается: агент на Haiku не отвечает в Telegram —"
     echo "  сообщения доходят, но ответ остаётся в терминале. Выберите fable, opus или sonnet."

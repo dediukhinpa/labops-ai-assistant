@@ -282,7 +282,7 @@ fi
 # и устарело молча. Полное имя тоже принимается: им закрепляют конкретную
 # версию, когда обновление модели нежелательно.
 if [ "$HARNESS" = "codex" ]; then
-  ask PRIMARY_MODEL  "Модель Codex (по умолчанию $MODEL_CHOICE_DEFAULT)" "$MODEL_CHOICE_DEFAULT"
+  ask PRIMARY_MODEL  "Модель Codex — алиас линейки (astra / sol / terra) либо полный слаг для закрепления версии" "$MODEL_CHOICE_DEFAULT"
 else
 ask PRIMARY_MODEL    "Модель — алиас последней (fable / opus / sonnet) либо полное имя для закрепления версии" "sonnet"
 fi

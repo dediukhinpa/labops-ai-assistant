@@ -46,9 +46,12 @@ This page explains, in plain words, what changes when you pick `codex`.
 3. **Sets up PII masking — mandatory on Codex.** On a Codex swarm `SKIP_PII_PROXY=1` is
    refused, and if the masking service cannot be installed the installer stops. See section 5.
 4. **Signs the swarm in to ChatGPT** (section 3).
-5. **Asks for the model.** The default for Codex agents is **`gpt-6.2-sol`**. The model is
-   written to the agent's `config.toml` (`model = ...`). Model settings belong to the
-   operator — do not change them without the owner.
+5. **Asks for the model.** You can give a line alias — **`astra`** (most capable, complex
+   coding), **`sol`** (fast go-to, the default) or **`terra`** (vision / computer use) — which
+   is resolved to the latest slug of that line (`astra`→`gpt-6.2-astra`, `sol`→`gpt-6.2-sol`,
+   `terra`→`gpt-6.1-terra`), or a full slug to pin a version. The resolved model is written to
+   the agent's `config.toml` (`model = ...`). Model settings belong to the operator — do not
+   change them without the owner.
 6. Installs the Telegram channel (`tg-plugin`) **without** Claude Code and without Claude Code
    hooks — they are not needed on Codex.
 7. Creates the first agent (Developer), as on Claude.
