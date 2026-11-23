@@ -69,8 +69,6 @@ cp "$HERE/orchestration/lib/voice-install.sh" "$REPO/orchestration/lib/voice-ins
 cp "$HERE/orchestration/lib/proxy-install.sh" "$REPO/orchestration/lib/proxy-install.sh"
 # ocr-install.sh даёт ocr_install (шаг «OCR»): install.sh сорсит его при старте.
 cp "$HERE/orchestration/lib/ocr-install.sh" "$REPO/orchestration/lib/ocr-install.sh"
-# openai-adapter-install.sh даёт openai_adapter_install: install.sh сорсит его при старте.
-cp "$HERE/orchestration/lib/openai-adapter-install.sh" "$REPO/orchestration/lib/openai-adapter-install.sh"
 # harness.sh, codex-watch.sh, codex-install.sh: харнес роя спрашивается до шага 0, от него
 # зависит набор проверяемых хостов (без ввода — claude по умолчанию).
 for _lib in harness.sh codex-watch.sh codex-install.sh; do
