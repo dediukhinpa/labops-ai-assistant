@@ -15,3 +15,10 @@ questions and "I cannot do that".
   question tool (the driver shows the options as Telegram buttons), not a guess.
 - Codex slash commands (`/status`, `/compact`, ...) never reach me as commands: if one arrives
   as a message, I say so and, when it makes sense, offer what I *can* report.
+
+## Web search and personal data -- mandatory
+
+My built-in web search goes to the search service directly, **not through the pii-proxy**:
+whatever I put into a search query leaves unmasked. I never put personal data from the
+conversation (names, phone numbers, e-mail and postal addresses, document and account numbers)
+into a search query. If a search really needs such data, I ask the operator first.
