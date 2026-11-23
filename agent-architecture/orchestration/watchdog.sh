@@ -67,6 +67,55 @@ CLI_UPDATE_IDLE_CYCLES="${WATCHDOG_CLI_UPDATE_IDLE_CYCLES:-2}"
 
 log() { echo "[watchdog/$AGENT] $(date -u '+%H:%M:%S') $*"; }
 
+# Такт цикла надзора: WATCHDOG_TICKS пауз по WATCHDOG_TICK_SEC (около 30 с на проход). Между
+# паузами обслуживается /doctor. Переопределяется только в тестах.
+WATCHDOG_TICK_SEC="${WATCHDOG_TICK_SEC:-2}"
+WATCHDOG_TICKS="${WATCHDOG_TICKS:-15}"
+
+# Маркер «агент останавливается» (agent_stop_mark в lib/agents.sh) и остановка по сигналу.
+# shellcheck source=lib/agents.sh
+source "$ORCH_LIB/agents.sh"
+# Новый запуск watchdog = юнит стартует: маркер прошлой остановки больше не действует.
+agent_stop_clear "$AGENT"
+
+# PID start-agent.sh, который сейчас ждёт watchdog (пусто — не ждёт).
+WATCHDOG_CHILD_PID=""
+# on_term — SIGTERM/SIGINT от systemd (после ExecStop=stop-agent.sh): завершить своих детей
+# (start-agent, фоновые подталкивания) и выйти с кодом 0. Сессию агента НЕ трогаем — её снимает
+# stop-agent. Без ловушки start-agent, который watchdog ждал в этот момент, переживал главный
+# процесс (KillMode=process) и поднимал агента после остановки юнита. Всё через `|| true`:
+# под set -e ненулевой код внутри ловушки — тот самый «самоубивающийся» watchdog.
+on_term() {
+  local p k kids
+  trap - TERM INT
+  log "сигнал остановки — завершаю своих детей и выхожу (сессию снимает stop-agent)"
+  # Внуков запоминаем заранее, а гасим ПОСЛЕ самого ребёнка: в обратном порядке start-agent, у
+  # которого убили ожидаемый им процесс, успевал сделать следующий шаг — вплоть до создания
+  # сессии; а после смерти ребёнка его дети уже не находятся по -P.
+  for p in $(jobs -p 2>/dev/null || true) $WATCHDOG_CHILD_PID; do
+    kids="$(pgrep -P "$p" 2>/dev/null || true)"
+    kill -TERM "$p" 2>/dev/null || true
+    for k in $kids; do kill -TERM "$k" 2>/dev/null || true; done
+  done
+  exit 0
+}
+trap on_term TERM INT
+
+# run_start [режим-pii] — запуск start-agent.sh. В фоне с wait, а не напрямую: bash исполняет
+# ловушку сигнала только после завершения переднего процесса, а start-agent ждёт готовности до
+# 90 с — дольше, чем systemd ждёт выхода. wait же прерывается сигналом сразу.
+# LABOPS_START_FROM_WATCHDOG=1 — start-agent отказывается стартовать при маркере остановки.
+# PII_START_MODE — как start-agent выбирает режим pii-proxy (pii_mode_resolve_start).
+# Возвращает код start-agent.
+run_start() {
+  local rc=0
+  LABOPS_START_FROM_WATCHDOG=1 PII_START_MODE="${1:-}" "$START_SCRIPT" "$AGENT" &
+  WATCHDOG_CHILD_PID=$!
+  wait "$WATCHDOG_CHILD_PID" || rc=$?
+  WATCHDOG_CHILD_PID=""
+  return "$rc"
+}
+
 # pii-proxy: в норме агент ходит в модель через него (ANTHROPIC_BASE_URL в settings.json,
 # model_provider в config.toml у codex). Прокси молчит — агент работает напрямую (решение
 # владельца 23.11.2026), см. lib/pii.sh и pii_watch_cycle ниже.
@@ -188,9 +237,9 @@ else
   if [ "$WATCHDOG_HARNESS" = "codex" ]; then
     # Неудачный старт (например, нет входа в ChatGPT) не должен ронять демон под set -e:
     # цикл ниже поднимет тревогу и повторит.
-    "$START_SCRIPT" "$AGENT" || log "первый старт не удался — повторю в цикле надзора"
+    run_start || log "первый старт не удался — повторю в цикле надзора"
   else
-    "$START_SCRIPT" "$AGENT"
+    run_start
   fi
 fi
 
@@ -359,12 +408,22 @@ attempt_stuck_input_recovery() {
 restart_session() {
   # Молча: одиночный рестарт — штатное самолечение, оператору сообщать не о чем.
   # Тревога поднимается только если рестарты пошли по кругу (см. note_restart).
-  # Режим (через прокси или напрямую) выбирает сам start-agent.sh по /health прокси.
+  # Идёт `systemctl stop` (маркер ставит stop-agent.sh) — никаких рестартов: иначе агент
+  # поднимался заново, пока stop-agent ждёт сброса памяти драйвером codex.
+  if agent_stopping "$AGENT"; then
+    log "агент останавливается — рестарт ($1) пропущен"
+    return 0
+  fi
+  # Режим pii-proxy (третий аргумент → PII_START_MODE start-agent.sh): по умолчанию keep —
+  # перезапуск не возвращает агента с прямой работы на прокси в обход гистерезиса (возврат —
+  # только через pii_watch_step: PII_UP_AFTER_OKS удачных проверок подряд). pii_switch_claude
+  # передаёт direct: решение watchdog start-agent не переигрывает.
   log "restarting ($1)"
+  pii_streak_reset
   if [ "$WATCHDOG_HARNESS" = "codex" ]; then
-    "$START_SCRIPT" "$AGENT" || log "старт не удался — повторю на следующем проходе"
+    run_start "${3:-keep}" || log "старт не удался — повторю на следующем проходе"
   else
-    "$START_SCRIPT" "$AGENT"
+    run_start "${3:-keep}"
   fi
   PREV_TAIL=""; FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
   # Плановый перезапуск (второй аргумент noflap: смена режима pii-proxy) — не признак
@@ -398,10 +457,12 @@ codex_watch_loop() {
   port="$(agent_env_webhook_port "$AGENT" 2>/dev/null || true)"
   log "харнес codex: надзор за драйвером (порт ${port:-?})"
   while true; do
-    for _ in $(seq 1 15); do
-      sleep 2
+    for _ in $(seq 1 "$WATCHDOG_TICKS"); do
+      sleep "$WATCHDOG_TICK_SEC"
       if doctor_request_pending "$AGENT"; then serve_doctor_request; fi
     done
+    # Идёт остановка юнита — ничего не чиним и не перезапускаем, ждём SIGTERM.
+    if agent_stopping "$AGENT"; then continue; fi
     # Аварийный приём /doctor — как у claude: при висящей тревоге плагин, скорее всего,
     # Telegram не читает.
     if [ -f "$DOWN_FLAG" ]; then
@@ -419,13 +480,14 @@ codex_watch_loop() {
     pii_watch_cycle
     if pii_switch_due "$AGENT"; then
       log "pii-proxy: режим $(pii_mode_get "$AGENT") → $PII_WANT (переключит драйвер)"
+      # pii_mode_set при смене сбрасывает и счётчики гистерезиса.
       pii_mode_set "$AGENT" "$PII_WANT" || true
     fi
     cycle=$((cycle + 1))
 
     # Вход в ChatGPT: на первом проходе, раз в CODEX_AUTH_CHECK_CYCLES и каждый проход, пока
     # входа нет. Без входа рестарты бесполезны — ждём человека с одной тревогой.
-    if [ "$auth_bad" -eq 1 ] || [ "$((cycle % CODEX_AUTH_CHECK_CYCLES))" -eq 1 ]; then
+    if [ "$auth_bad" -eq 1 ] || codex_auth_check_due "$cycle" "$CODEX_AUTH_CHECK_CYCLES"; then
       state="$(codex_auth_state "$AGENT")"
       case "$state" in
         none|apikey)
@@ -476,11 +538,13 @@ fi
 while true; do
   # Пауза цикла нарезана мелко: прямая команда оператора не должна ждать полминуты
   # ответа. Всё остальное по-прежнему проверяется раз в ~30 секунд.
-  for _ in $(seq 1 15); do
-    sleep 2
+  for _ in $(seq 1 "$WATCHDOG_TICKS"); do
+    sleep "$WATCHDOG_TICK_SEC"
     if doctor_request_pending "$AGENT"; then serve_doctor_request; fi
     if reset_request_pending "$AGENT"; then serve_reset_request; fi
   done
+  # Идёт остановка юнита — ничего не чиним и не перезапускаем, ждём SIGTERM.
+  if agent_stopping "$AGENT"; then continue; fi
 
   # Аварийный приём: пока висит тревога, плагин почти наверняка не читает
   # Telegram — и команда /doctor нужна ровно тогда, когда доставить её нечем.

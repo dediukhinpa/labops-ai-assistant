@@ -157,6 +157,9 @@ unit "pii-replay.sh: прерывание хода, повтор входяще�
 unit "start-agent.sh: прокси молчит — старт напрямую и одно предупреждение — юнит-тест зелёный" \
      "start-agent.sh: юнит-тест провален (orchestration/start-agent.test.sh)" \
      bash orchestration/start-agent.test.sh
+unit "watchdog: systemctl stop останавливает агента (маркер, ловушка SIGTERM) — юнит-тест зелёный" \
+     "watchdog: после systemctl stop агент поднимается снова (orchestration/watchdog-stop.test.sh)" \
+     bash orchestration/watchdog-stop.test.sh
 # 4b. create-agent flow спрашивает и пробрасывает PRIMARY_MODEL
 if grep -qE '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh \
    && grep -qE 'PRIMARY_MODEL="\$PRIMARY_MODEL"' skills/create-agent/new-agent.sh; then

@@ -137,6 +137,17 @@ codex_link_shared_auth() {
   return 0
 }
 
+# codex_auth_check_due <проход> <раз-в-N-проходов> — пора ли проверять вход в ChatGPT: на первом
+# проходе (номера с 1) и далее каждые N. Прежнее `cycle % N == 1` при N=1 не выполнялось никогда
+# (остаток всегда 0), и WATCHDOG_CODEX_AUTH_CHECK_CYCLES=1 отключал проверку вместо «каждый
+# проход». N < 1 считаем за 1.
+codex_auth_check_due() {
+  local cycle="$1" every="$2"
+  case "$every" in ''|*[!0-9]*) every=1 ;; esac
+  if [ "$every" -lt 1 ]; then every=1; fi
+  [ $(( (cycle - 1) % every )) -eq 0 ]
+}
+
 # codex_heartbeat_stale <heartbeat-file> <max-age-sec> — heartbeat старше предела или нет.
 codex_heartbeat_stale() {
   local hb now

@@ -55,6 +55,12 @@ eq "$(ls "$TMP/lab/a2/.codex" | grep -c '^auth.json.bak-')" 1 "чужой вхо
 codex_link_shared_auth a2; eq "$?" 0 "повторный вызов идемпотентен"
 eq "$(ls "$TMP/lab/a2/.codex" | grep -c '^auth.json.bak-')" 1 "повтор ничего не откладывает"
 
+# Проверка входа: первый проход и каждые N; N=1 — каждый проход (раньше — никогда).
+due() { if codex_auth_check_due "$1" "$2"; then echo y; else echo n; fi; }
+eq "$(due 1 10)$(due 2 10)$(due 10 10)$(due 11 10)$(due 21 10)" "ynnyy" "проверка входа раз в 10 проходов"
+eq "$(due 1 1)$(due 2 1)$(due 3 1)" "yyy" "N=1 — каждый проход"
+eq "$(due 1 0)$(due 2 0)" "yy" "N=0 — как каждый проход, без деления на ноль"
+
 HB="$TMP/hb"
 codex_heartbeat_stale "$HB" 60; eq "$?" 0 "нет heartbeat = устарел"
 date +%s > "$HB"
