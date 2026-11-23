@@ -91,7 +91,7 @@ tmux kill-session -t "=$SESSION" 2>/dev/null || true
 # Codex: драйвер на SIGHUP от kill-session сбрасывает память в общий мозг (brain-flush) и
 # гасит app-server — даём ему это сделать, прежде чем добивать.
 if [ "$HARNESS" = "codex" ]; then
-  CODEX_STOP_WAIT="${CODEX_STOP_WAIT:-35}"
+  CODEX_STOP_WAIT="${CODEX_STOP_WAIT:-$CODEX_STOP_WAIT_DEFAULT_SEC}"
   for _ in $(seq 1 "$CODEX_STOP_WAIT"); do
     [ -z "$(codex_driver_pid "$AGENT")" ] && break
     sleep 1

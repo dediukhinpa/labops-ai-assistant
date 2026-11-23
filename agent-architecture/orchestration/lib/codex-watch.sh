@@ -42,6 +42,37 @@ codex_driver_pid() {   # <agent>
   pgrep -f "$(codex_driver_pattern "$1")" 2>/dev/null | head -1
 }
 
+# Сколько ждать, пока драйвер сам выйдет после SIGTERM/SIGHUP: перед выходом он сбрасывает
+# память в общий мозг (brain-flush), его дедлайн остановки — 30 с (SHUTDOWN_DEADLINE_MS в
+# плагине), плюс запас. Переопределяется CODEX_STOP_WAIT (как в start-agent.sh).
+CODEX_STOP_WAIT_DEFAULT_SEC=35
+
+# codex_stop_driver <agent> [webhook-port] — штатно остановить драйвер: SIGTERM, ожидание
+# brain-flush, и только потом SIGKILL; затем добить app-server агента по порту.
+# Печатает none | graceful | killed.
+codex_stop_driver() {
+  local agent="$1" port="${2:-}" wait="${CODEX_STOP_WAIT:-$CODEX_STOP_WAIT_DEFAULT_SEC}" i result
+  if [ -z "$(codex_driver_pid "$agent")" ]; then
+    result=none
+  else
+    pkill -TERM -f "$(codex_driver_pattern "$agent")" 2>/dev/null || true
+    for ((i = 0; i < wait; i++)); do
+      [ -z "$(codex_driver_pid "$agent")" ] && break
+      sleep 1
+    done
+    if [ -z "$(codex_driver_pid "$agent")" ]; then
+      result=graceful
+    else
+      pkill -9 -f "$(codex_driver_pattern "$agent")" 2>/dev/null || true
+      result=killed
+    fi
+  fi
+  if [ -n "$port" ]; then
+    pkill -9 -f "$(codex_appserver_pattern "$port")" 2>/dev/null || true
+  fi
+  printf '%s\n' "$result"
+}
+
 # Шаблон app-server агента: его отличает адрес MCP канала с портом агента.
 codex_appserver_pattern() {   # <webhook-port>
   printf 'codex.*app-server.*127\\.0\\.0\\.1:%s/mcp' "$1"
