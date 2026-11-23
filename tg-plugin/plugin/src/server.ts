@@ -1166,7 +1166,9 @@ if (codexMode) {
     shutdown(1)
     throw new Error('codex harness cannot start')
   }
+  const operatorChat = resolveCodexOperatorUserIds(config)[0]
   codexDriver = createCodexDriver({
+    ...(operatorChat !== undefined ? { operatorChatId: String(operatorChat) } : {}),
     workspace,
     stateRoot: statePaths.root,
     webhookHost: config.webhook.host,
@@ -1210,9 +1212,14 @@ if (codexMode) {
   // Задачи agent router: поллер кладёт их файлами в папку-очередь (печатать некуда).
   // Ответ на задачу уходит в личку оператора — как у Claude, где задачу вбрасывали в
   // главную сессию. Оператор — operator_user_ids/allowed_user_ids, не список разрешений.
-  const operatorChat = resolveCodexOperatorUserIds(config)[0]
+  // Файл задачи удаляется только после конца хода, который её взял (handle.ack).
   if (operatorChat !== undefined) {
-    watchInbox({ workspace, chatId: String(operatorChat), deliver: event => driver.deliver(event), log })
+    watchInbox({
+      workspace,
+      chatId: String(operatorChat),
+      deliver: (event, handle) => driver.deliver(event, handle),
+      log,
+    })
   } else {
     log.warn('codex inbox disabled: no operator user id in the allowlist')
   }

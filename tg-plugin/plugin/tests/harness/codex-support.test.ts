@@ -16,7 +16,9 @@ import {
   askViaRelay,
   codexChildEnv,
   codexHarnessEnabled,
+  instructionsHash,
   piiModeReader,
+  turnStallFromEnv,
 } from '../../src/harness/codex/bootstrap.js'
 import { runMemoryHook } from '../../src/harness/codex/memory-hooks.js'
 import { mapItemToTool, replyTextOf } from '../../src/harness/codex/events.js'
@@ -213,5 +215,28 @@ describe('вопросы кнопками', () => {
     } as unknown as AskUserQuestionRelay
     const ui = { startQuestion: async () => undefined } as unknown as AskUserQuestionUi
     expect(await askViaRelay(relay, ui, '42', [], 'i', 't')).toBeNull()
+  })
+})
+
+describe('отпечаток инструкций и предел молчания хода', () => {
+  test('instructionsHash меняется от AGENTS.md рабочей папки и глобального в CODEX_HOME', () => {
+    const ws = mkdtempSync(join(tmpdir(), 'codex-ws-'))
+    const home = mkdtempSync(join(tmpdir(), 'codex-home-'))
+    writeFileSync(join(ws, 'AGENTS.md'), 'v1')
+    const a = instructionsHash(ws, home)
+    expect(instructionsHash(ws, home)).toBe(a)
+    writeFileSync(join(ws, 'AGENTS.md'), 'v2')
+    const b = instructionsHash(ws, home)
+    expect(b).not.toBe(a)
+    writeFileSync(join(home, 'AGENTS.md'), 'global')
+    expect(instructionsHash(ws, home)).not.toBe(b)
+    expect(instructionsHash(ws, '')).toBe(b)
+  })
+
+  test('turnStallFromEnv: секунды → мс, мусор — умолчание', () => {
+    expect(turnStallFromEnv({ LABOPS_CODEX_TURN_STALL_SEC: '240' })).toBe(240_000)
+    expect(turnStallFromEnv({ LABOPS_CODEX_TURN_STALL_SEC: '0' })).toBeUndefined()
+    expect(turnStallFromEnv({ LABOPS_CODEX_TURN_STALL_SEC: 'abc' })).toBeUndefined()
+    expect(turnStallFromEnv({})).toBeUndefined()
   })
 })
