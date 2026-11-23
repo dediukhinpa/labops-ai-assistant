@@ -1,6 +1,7 @@
 // Сборка драйвера Codex из зависимостей плагина (server.ts): Telegram, статус, вопросы
 // кнопками, хуки памяти. Здесь только связывание; логика — в driver.ts.
 
+import { createHash } from 'crypto'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
@@ -12,6 +13,8 @@ import {
   CodexDriver,
   DONE_REACTION,
   READ_REACTION,
+  ITEM_STALL_ENV,
+  TURN_STALL_ENV,
   type PiiMode,
   type UserInputAnswers,
   type UserInputQuestion,
@@ -43,6 +46,55 @@ export const SECRETS_NOT_FOR_CODEX = [
   'VOICE_TRANSCRIBER_TOKEN',
   'SUPPORT_FOLLOWUP_TOKEN',
 ] as const
+
+/** Файлы инструкций, которые Codex читает при создании нити (имя в CODEX_HOME и в cwd). */
+export const INSTRUCTION_FILES = ['AGENTS.override.md', 'AGENTS.md'] as const
+
+/**
+ * Отпечаток инструкций нити: sha256 по AGENTS.md рабочей папки и глобальным файлам
+ * инструкций в CODEX_HOME (каких нет — пропускаются). Драйвер сравнивает его с сохранённым:
+ * Codex перечитывает инструкции только при создании нити, а thread/resume их не обновляет.
+ *
+ * @param workspace Рабочая папка агента.
+ * @param codexHome CODEX_HOME агента; пусто — только рабочая папка.
+ */
+export function instructionsHash(workspace: string, codexHome: string): string {
+  const h = createHash('sha256')
+  const files = [
+    ...(codexHome !== '' ? INSTRUCTION_FILES.map(name => join(codexHome, name)) : []),
+    join(workspace, 'AGENTS.md'),
+  ]
+  for (const path of files) {
+    let body: string
+    try {
+      body = readFileSync(path, 'utf8')
+    } catch {
+      continue
+    }
+    h.update(path).update('\0').update(body).update('\0')
+  }
+  return h.digest('hex')
+}
+
+/**
+ * Предел молчания хода из окружения (секунды → мс). Пусто или не положительное целое —
+ * undefined (умолчание драйвера).
+ */
+export function turnStallFromEnv(env: NodeJS.ProcessEnv): number | undefined {
+  return secondsFromEnv(env, TURN_STALL_ENV)
+}
+
+/** Предел молчания при незавершённом элементе хода из окружения (секунды → мс). */
+export function itemStallFromEnv(env: NodeJS.ProcessEnv): number | undefined {
+  return secondsFromEnv(env, ITEM_STALL_ENV)
+}
+
+function secondsFromEnv(env: NodeJS.ProcessEnv, name: string): number | undefined {
+  const raw = env[name]
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) return undefined
+  const sec = Number.parseInt(raw.trim(), 10)
+  return sec > 0 ? sec * 1000 : undefined
+}
 
 /** Рой работает на Codex. */
 export function codexHarnessEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -118,6 +170,8 @@ export interface CodexBootstrapDeps {
   react: (chatId: string, messageId: number, emoji: string) => Promise<void>
   askRelay: AskUserQuestionRelay
   askUi: AskUserQuestionUi
+  /** Личка оператора для предупреждений драйвера; не задана — только журнал. */
+  operatorChatId?: string
   env?: NodeJS.ProcessEnv
 }
 
@@ -164,11 +218,18 @@ export function createCodexDriver(deps: CodexBootstrapDeps): CodexDriver {
   const bin = env[CODEX_BIN_ENV] !== undefined && env[CODEX_BIN_ENV] !== '' ? env[CODEX_BIN_ENV] : 'codex'
   const childEnv = codexChildEnv(env, deps.channelToken)
   const modeFile = env[PII_MODE_FILE_ENV] ?? ''
+  const turnStallMs = turnStallFromEnv(env)
+  const itemStallMs = itemStallFromEnv(env)
+  const codexHome = env.CODEX_HOME ?? ''
   let driver: CodexDriver | undefined
   driver = new CodexDriver({
     workspace: deps.workspace,
     stateFile: join(deps.stateRoot, 'codex-thread.json'),
+    queueFile: join(deps.stateRoot, 'codex-queue.json'),
     log: deps.log,
+    identityHash: () => instructionsHash(deps.workspace, codexHome),
+    ...(turnStallMs !== undefined ? { turnStallMs } : {}),
+    ...(itemStallMs !== undefined ? { itemStallMs } : {}),
     ...(modeFile !== '' ? { piiMode: piiModeReader(modeFile) } : {}),
     connect: mode =>
       spawnAppServer({
@@ -198,6 +259,13 @@ export function createCodexDriver(deps: CodexBootstrapDeps): CodexDriver {
       },
       markRead: (chatId, messageId) => deps.react(chatId, messageId, READ_REACTION),
       markDone: (chatId, messageId) => deps.react(chatId, messageId, DONE_REACTION),
+      notifyOperator: async text => {
+        if (deps.operatorChatId === undefined) {
+          deps.log.warn('codex operator notice skipped: no operator chat', { text: text.slice(0, 200) })
+          return
+        }
+        await deps.sendReply(deps.operatorChatId, text)
+      },
     },
   })
   return driver

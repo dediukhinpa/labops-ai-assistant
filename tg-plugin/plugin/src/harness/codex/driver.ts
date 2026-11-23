@@ -13,9 +13,17 @@
 //
 // Подтверждения не ожидаются (approval_policy = never), но если придут — отклоняются и
 // пишутся в журнал. Вопрос пользователю (request_user_input) уходит кнопками в Telegram.
+//
+// Живучесть: heartbeat в простое — по таймеру, во время хода — только по уведомлениям нити,
+// поэтому зависший ход виден watchdog. Сверх того сторож хода внутри драйвера: нить молчит
+// дольше предела — turn/interrupt, не помогло — выход с ошибкой (watchdog перезапустит).
+//
+// Надёжность входа: сообщения, ждущие в очереди, сквозь пишутся в файл очереди и
+// восстанавливаются на старте; задачи из папки-очереди подтверждаются (файл удаляется) только
+// после конца хода, который их взял (DeliveryHandle).
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { dirname, join } from 'path'
 
 import type { Logger } from '../../log.js'
 import type { ChannelEvent } from '../../channel/notify.js'
@@ -38,6 +46,32 @@ import {
 export const HEARTBEAT_MIN_INTERVAL_MS = 15_000
 /** Heartbeat в простое: watchdog по нему отличает живой драйвер от зависшего. */
 export const IDLE_HEARTBEAT_INTERVAL_MS = 60_000
+/** Как часто сторож хода проверяет, не замолчала ли нить. */
+export const TURN_WATCH_INTERVAL_MS = 15_000
+/**
+ * Сколько ход может идти без единого уведомления нити, прежде чем драйвер его прервёт.
+ * Должно быть заметно меньше порога watchdog (WATCHDOG_CODEX_HEARTBEAT_STALE_SEC, 300 с):
+ * во время хода heartbeat пишется только по уведомлениям, и при пороге выше watchdog
+ * перезапустил бы агента раньше, без предупреждения в чат. Действует, только пока у хода
+ * нет незавершённых элементов (иначе — ITEM_STALL_DEFAULT_MS); переопределяется TURN_STALL_ENV.
+ */
+export const TURN_STALL_DEFAULT_MS = 180_000
+/** Переменная окружения: предел молчания хода в секундах. */
+export const TURN_STALL_ENV = 'LABOPS_CODEX_TURN_STALL_SEC'
+/**
+ * Предел молчания, пока у хода есть незавершённый элемент (item/started без item/completed:
+ * команда, MCP-вызов, рассуждение, правка файлов и т. п.). Ход не завис, а ждёт инструмент или
+ * модель: тихая сборка, тесты, sleep, долгое рассуждение без summaries законно молчат минутами.
+ * Короткий TURN_STALL_DEFAULT_MS действует только когда незавершённых элементов нет — сервер
+ * замолчал между элементами.
+ */
+export const ITEM_STALL_DEFAULT_MS = 1_800_000
+/** Переменная окружения: предел молчания при незавершённом элементе, в секундах. */
+export const ITEM_STALL_ENV = 'LABOPS_CODEX_ITEM_STALL_SEC'
+/** Сколько ждать конца хода после turn/interrupt сторожа, прежде чем выйти с ошибкой. */
+export const STALL_INTERRUPT_GRACE_MS = 30_000
+/** Сколько подряд неудачных thread/resume (не «нити нет») терпеть, прежде чем начать новую. */
+export const MAX_RESUME_FAILURES = 3
 /** Реакция «агент прочитал сообщение» — как у Claude (ставится, когда ход взял сообщение). */
 export const READ_REACTION = '👀'
 /** Реакция «готово» на конец хода — как Stop-хук у Claude (заменяет 👀 на сообщениях хода). */
@@ -61,6 +95,16 @@ export type PiiMode = 'proxy' | 'direct'
 
 /** Хук памяти рабочей папки агента. */
 export type MemoryHook = 'session-start' | 'stop' | 'precompact' | 'heartbeat' | 'session-end'
+
+/**
+ * Подтверждение доставки для входа, у которого есть своя постоянная копия (файл задачи):
+ * ack — ход, взявший вход, закончился, копию можно удалить; release — вход не дошёл до модели,
+ * копию можно отдать повторно.
+ */
+export interface DeliveryHandle {
+  ack(): void
+  release(): void
+}
 
 /** Вопрос request_user_input от Codex. */
 export interface UserInputQuestion {
@@ -93,6 +137,8 @@ export interface DriverEffects {
   markRead(chatId: string, messageId: number): Promise<void>
   /** Отметить сообщение Telegram обработанным: ход, взявший его, закончился (реакция). */
   markDone(chatId: string, messageId: number): Promise<void>
+  /** Предупредить оператора (личка) о событии, требующем внимания. */
+  notifyOperator(text: string): Promise<void>
 }
 
 export interface CodexDriverDeps {
@@ -109,6 +155,21 @@ export interface CodexDriverDeps {
   piiMode?: () => PiiMode
   /** Интервал сверки режима, мс (тесты ставят меньше). */
   piiModePollMs?: number
+  /**
+   * Отпечаток файлов инструкций (AGENTS.md рабочей папки и CODEX_HOME). Codex читает их только
+   * при создании нити; изменился отпечаток — нужна новая нить. Не задан — не сравнивается.
+   */
+  identityHash?: () => string
+  /** Файл очереди входящих; по умолчанию codex-queue.json рядом с stateFile. */
+  queueFile?: string
+  /** Предел молчания хода без незавершённых элементов, мс (по умолчанию TURN_STALL_DEFAULT_MS). */
+  turnStallMs?: number
+  /** Предел молчания при незавершённом элементе, мс (по умолчанию ITEM_STALL_DEFAULT_MS). */
+  itemStallMs?: number
+  /** Шаг сторожа хода и heartbeat в простое, мс (тесты ставят меньше). */
+  turnWatchMs?: number
+  /** Сколько ждать конца хода после прерывания сторожем, мс. */
+  stallGraceMs?: number
 }
 
 interface QueuedInput {
@@ -116,6 +177,8 @@ interface QueuedInput {
   chatId: string
   /** message_id сообщения Telegram (для реакции «прочитано»); у задач и webhook его нет. */
   messageId: number | undefined
+  /** Подтверждение для входа с постоянной копией (задача из папки-очереди). */
+  handle?: DeliveryHandle
 }
 
 interface ActiveTurn {
@@ -123,10 +186,36 @@ interface ActiveTurn {
   id: string
   chatId: string
   replies: Set<string>
-  userTexts: string[]
+  /** Входы хода (первые и вдогонку): на конце хода подтверждаются, при повторе — в очередь. */
+  inputs: QueuedInput[]
   lastAgentText: string
   /** message_id сообщений Telegram, взятых ходом: на конце хода им ставится 👌. */
   messageIds: number[]
+}
+
+/** Сохранённое состояние нити между перезапусками драйвера. */
+interface ThreadState {
+  threadId: string
+  /** Отпечаток инструкций, с которыми нить создана (или впервые замечена). */
+  identityHash?: string
+  /** Неудачные thread/resume подряд (не «нити нет»). */
+  resumeFailures?: number
+}
+
+/** Вход очереди в файле (без подтверждения: у задач есть свои файлы). */
+interface PersistedInput {
+  text: string
+  chatId: string
+  messageId?: number
+}
+
+/**
+ * Ошибка thread/resume говорит, что такой нити нет (а не «app-server не успел» и т. п.).
+ * Точный код ошибки в протоколе app-server не описан; сверяемся с текстом («no rollout found
+ * for thread id …» / «… not found»). НЕ проверено на живом codex 0.171.0.
+ */
+export function isThreadMissingError(err: unknown): boolean {
+  return err instanceof RpcError && /no rollout|not found/i.test(err.message)
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -158,6 +247,16 @@ export class CodexDriver {
   /** Контекст session-start для первого хода новой нити. */
   private sessionContext = ''
   private lastHeartbeat = 0
+  /** Последнее уведомление нити (или начало хода): по нему сторож хода видит зависание. */
+  private lastTurnActivity = 0
+  /** Идёт обработка зависшего хода (прерывание, выход). */
+  private stallHandling = false
+  /** Незавершённые элементы текущего хода: id → тип (item/started без item/completed). */
+  private readonly openItems = new Map<string, string>()
+  /** Сколько вопросов пользователю ждут ответа: ход законно молчит, пока человек думает. */
+  private waitingOnUser = 0
+  /** Отпечаток инструкций текущей нити. */
+  private identityHash: string | undefined
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined
   private modeTimer: ReturnType<typeof setInterval> | undefined
   /** Режим, в котором запущен текущий app-server. */
@@ -169,8 +268,13 @@ export class CodexDriver {
   private readonly exitListeners: Array<(code: number | null) => void> = []
   private readonly now: () => number
 
+  private readonly queueFile: string
+
   constructor(private readonly deps: CodexDriverDeps) {
     this.now = deps.now ?? Date.now
+    this.queueFile = deps.queueFile ?? join(dirname(deps.stateFile), 'codex-queue.json')
+    // Очередь прошлого процесса — до любого deliver(): иначе первая же запись её затрёт.
+    this.restoreQueue()
   }
 
   /** Id текущей нити (для журнала и тестов). */
@@ -201,29 +305,41 @@ export class CodexDriver {
 
     // Идентичность собирается до старта нити: Codex читает AGENTS.md при её создании.
     await this.deps.effects.rebuildIdentity()
+    const hash = this.deps.identityHash?.()
 
-    const saved = this.readSavedThread()
+    const saved = this.readState()
     let resumed = false
-    if (saved !== '') {
+    if (saved.threadId !== '') {
       try {
         const res = record(
-          await conn.request('thread/resume', { threadId: saved, excludeTurns: true }, THREAD_START_TIMEOUT_MS),
+          await conn.request('thread/resume', { threadId: saved.threadId, excludeTurns: true }, THREAD_START_TIMEOUT_MS),
         )
         this.adoptThread(record(res.thread))
         resumed = true
       } catch (err) {
-        this.deps.log.warn('codex thread resume failed — starting a new thread', {
-          thread_id: saved,
-          error: err instanceof Error ? err.message : String(err),
-        })
+        await this.onResumeFailure(saved, err)
       }
     }
-    if (!resumed) await this.startNewThread('startup')
+    // Смена нити по отпечатку — только после удачного resume: ошибка resume решается выше
+    // (выход или счётчик), а не маскируется «всё равно нужна новая нить». Нить старой версии
+    // сперва сбрасывается в общую память, как при /reset force.
+    const identityChanged =
+      resumed && hash !== undefined && saved.identityHash !== undefined && saved.identityHash !== hash
+    if (identityChanged) {
+      this.deps.log.info('codex instructions changed — starting a new thread', { old_thread_id: this.threadId })
+      await this.safeMemory('session-end', { hook_event_name: 'SessionEnd', reason: 'clear' })
+      await this.startNewThread('startup')
+    } else if (!resumed) {
+      await this.startNewThread('startup')
+    }
+    // Старая нить без отпечатка (до этой версии) не сбрасывается: отпечаток только
+    // запоминается, чтобы обновление драйвера не обнулило контекст всем агентам сразу.
+    this.identityHash = hash ?? saved.identityHash
     this.saveThread()
     this.ready = true
-    this.deps.log.info('codex thread ready', { thread_id: this.threadId, resumed })
+    this.deps.log.info('codex thread ready', { thread_id: this.threadId, resumed: resumed && !identityChanged })
     void this.heartbeat(true)
-    this.heartbeatTimer = setInterval(() => void this.heartbeat(false), IDLE_HEARTBEAT_INTERVAL_MS)
+    this.heartbeatTimer = setInterval(() => void this.watchTick(), this.deps.turnWatchMs ?? TURN_WATCH_INTERVAL_MS)
     this.heartbeatTimer.unref?.()
     if (this.deps.piiMode !== undefined) {
       this.modeTimer = setInterval(
@@ -233,6 +349,154 @@ export class CodexDriver {
       this.modeTimer.unref?.()
     }
     void this.pump()
+  }
+
+  /**
+   * thread/resume не удался. Нити нет — новая нить (сохранять нечего). Иная ошибка (таймаут
+   * медленного старта MCP, сбой app-server) — сохранённый id не трогаем и выходим с ошибкой:
+   * watchdog перезапустит, и нить, скорее всего, восстановится. Чтобы не крутиться вечно,
+   * после MAX_RESUME_FAILURES подряд старый id уходит в бэкап, нить новая, оператор
+   * предупреждён.
+   *
+   * @throws Ошибка resume, если ещё не исчерпан счётчик попыток.
+   */
+  private async onResumeFailure(saved: ThreadState, err: unknown): Promise<void> {
+    const error = err instanceof Error ? err.message : String(err)
+    if (isThreadMissingError(err)) {
+      this.deps.log.warn('codex thread not found on resume — starting a new thread', {
+        thread_id: saved.threadId,
+        error,
+      })
+      this.backupThreadId(saved.threadId, 'not-found')
+      return
+    }
+    const failures = (saved.resumeFailures ?? 0) + 1
+    if (failures < MAX_RESUME_FAILURES) {
+      this.writeState({ ...saved, resumeFailures: failures })
+      this.deps.log.error('codex thread resume failed — driver exits, saved thread kept', {
+        thread_id: saved.threadId,
+        failures,
+        error,
+      })
+      throw err instanceof Error ? err : new Error(error)
+    }
+    this.backupThreadId(saved.threadId, 'resume-failed')
+    this.deps.log.error('codex thread resume keeps failing — starting a new thread', {
+      thread_id: saved.threadId,
+      failures,
+      error,
+    })
+    try {
+      await this.deps.effects.notifyOperator(
+        `⚠️ Агент ${failures} раз подряд не смог продолжить свою нить Codex (${error.slice(0, 200)}). ` +
+          'Начинаю новую — контекст разговора потерян, id старой нити сохранён в codex-thread.backup.jsonl.',
+      )
+    } catch (notifyErr) {
+      this.deps.log.warn('codex operator notice failed', {
+        error: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+      })
+    }
+  }
+
+  /** Записать id нити, которую драйвер бросает, в журнал рядом с файлом состояния. */
+  private backupThreadId(threadId: string, reason: string): void {
+    try {
+      mkdirSync(dirname(this.deps.stateFile), { recursive: true })
+      const line = JSON.stringify({ threadId, reason, at: new Date(this.now()).toISOString() })
+      appendFileSync(this.backupFile(), `${line}\n`, { mode: 0o600 })
+    } catch (err) {
+      this.deps.log.warn('codex thread backup failed', { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  private backupFile(): string {
+    return join(dirname(this.deps.stateFile), 'codex-thread.backup.jsonl')
+  }
+
+  /**
+   * Шаг таймера: heartbeat в простое и сторож хода. Во время хода heartbeat пишут только
+   * уведомления нити (onNotification) — иначе watchdog не увидит зависший ход. Исключения —
+   * ожидание ответа человека на вопрос и незавершённый элемент хода (ждём инструмент или
+   * модель): тогда heartbeat тикает, а предел молчания длинный (itemStallMs).
+   */
+  private async watchTick(): Promise<void> {
+    if (!this.ready || this.stopping || this.switching) return
+    const t = this.now()
+    const turn = this.active
+    if (turn === undefined) {
+      if (t - this.lastHeartbeat >= IDLE_HEARTBEAT_INTERVAL_MS) await this.heartbeat(true)
+      return
+    }
+    if (this.waitingOnUser > 0) {
+      this.lastTurnActivity = t
+      await this.heartbeat(false)
+      return
+    }
+    if (this.stallHandling || this.interrupting !== undefined) return
+    const waitingOnItem = this.openItems.size > 0
+    const limit = waitingOnItem
+      ? (this.deps.itemStallMs ?? ITEM_STALL_DEFAULT_MS)
+      : (this.deps.turnStallMs ?? TURN_STALL_DEFAULT_MS)
+    const silent = t - this.lastTurnActivity
+    if (silent < limit) {
+      if (waitingOnItem) await this.heartbeat(false)
+      return
+    }
+    this.deps.log.error('codex turn silent past the limit', {
+      open_items: [...this.openItems.values()],
+      limit_ms: limit,
+    })
+    await this.onTurnStall(turn, silent)
+  }
+
+  /**
+   * Ход молчит дольше предела: предупредить чат хода, turn/interrupt. Ход закончился — он
+   * закрывается как обычно (его задачи подтверждаются: пользователь предупреждён, повтор
+   * зависшей задачи по кругу хуже). Не закончился — выход драйвера с ошибкой (server.ts делает
+   * штатную остановку с brain-flush, watchdog поднимает заново); задачи такого хода не
+   * подтверждены и придут повторно (папка-очередь ограничивает число попыток).
+   */
+  private async onTurnStall(turn: ActiveTurn, silentMs: number): Promise<void> {
+    this.stallHandling = true
+    const minutes = Math.max(1, Math.round(silentMs / 60_000))
+    this.deps.log.error('codex turn stalled — interrupting', { turn_id: turn.id, chat_id: turn.chatId, silent_ms: silentMs })
+    try {
+      await this.safeDeliver(
+        turn.chatId,
+        `⚠️ Агент ${minutes} мин не подаёт признаков жизни — прерываю зависший ход. Если ответ ещё нужен, повторите запрос.`,
+      )
+      if (turn.id !== '' && this.conn !== undefined) {
+        try {
+          await this.conn.request('turn/interrupt', { threadId: this.threadId, turnId: turn.id }, PII_INTERRUPT_TIMEOUT_MS)
+        } catch (err) {
+          this.deps.log.warn('codex stalled turn/interrupt failed', {
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+      const grace = this.deps.stallGraceMs ?? STALL_INTERRUPT_GRACE_MS
+      for (let waited = 0; this.active === turn && waited < grace; waited += INTERRUPT_POLL_MS) {
+        await new Promise(resolve => setTimeout(resolve, INTERRUPT_POLL_MS))
+      }
+      if (this.active !== turn) {
+        this.deps.log.info('codex stalled turn interrupted', { turn_id: turn.id })
+        return
+      }
+      this.deps.log.error('codex stalled turn did not stop — driver exits for a clean restart', { turn_id: turn.id })
+      await this.safeDeliver(turn.chatId, '⚠️ Прервать ход не удалось — перезапускаю агента.')
+      // Драйвер больше не работает: новых ходов и повторного срабатывания сторожа не будет,
+      // пока server.ts завершает процесс.
+      this.ready = false
+      if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer)
+      this.exit(null)
+    } finally {
+      this.stallHandling = false
+    }
+  }
+
+  /** Сообщить подписчикам, что драйвер должен завершиться (server.ts: shutdown(1)). */
+  private exit(code: number | null): void {
+    for (const cb of this.exitListeners) cb(code)
   }
 
   /** Запустить app-server в нужном сейчас режиме pii-proxy и пройти initialize. */
@@ -254,7 +518,7 @@ export class CodexDriver {
       if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer)
       if (this.modeTimer !== undefined) clearInterval(this.modeTimer)
       if (!this.stopping) this.deps.log.error('codex app-server exited', { code })
-      for (const cb of this.exitListeners) cb(code)
+      this.exit(code)
     })
     await conn.request('initialize', { clientInfo: CLIENT_INFO, capabilities: null })
     conn.notify('initialized')
@@ -314,7 +578,7 @@ export class CodexDriver {
         to: want,
         error: err instanceof Error ? err.message : String(err),
       })
-      for (const cb of this.exitListeners) cb(null)
+      this.exit(null)
       return true
     } finally {
       this.switching = false
@@ -359,8 +623,9 @@ export class CodexDriver {
 
   /** Вернуть вход хода в начало очереди: повтор напрямую, реакция «прочитано» уже стоит. */
   private requeueForReplay(turn: ActiveTurn): void {
-    const inputs = turn.userTexts.map(text => ({ text, chatId: turn.chatId, messageId: undefined }))
+    const inputs = turn.inputs.map(q => ({ ...q, messageId: undefined }))
     this.queue.unshift(...inputs)
+    this.persistQueue()
     if (turn.messageIds.length > 0) {
       const carried = this.replayMessageIds.get(turn.chatId) ?? []
       this.replayMessageIds.set(turn.chatId, [...carried, ...turn.messageIds])
@@ -375,9 +640,11 @@ export class CodexDriver {
    * Принять входящее сообщение (Telegram, задача, webhook).
    *
    * @param event Событие канала; meta.chat_id обязателен.
+   * @param handle Подтверждение для входа с постоянной копией (файл задачи): ack — после
+   *   конца хода, взявшего вход. Без него вход до начала хода живёт в файле очереди.
    * @returns true — принято (доставлено вдогонку или поставлено в очередь).
    */
-  async deliver(event: ChannelEvent): Promise<boolean> {
+  async deliver(event: ChannelEvent, handle?: DeliveryHandle): Promise<boolean> {
     const chatId = event.meta.chat_id ?? ''
     if (chatId === '') {
       this.deps.log.error('codex inbound without chat_id dropped')
@@ -387,6 +654,7 @@ export class CodexDriver {
     // /stop из Telegram: прервать текущий ход, а не дописывать «/stop» модели.
     if (event.meta.command === 'stop') {
       await this.interrupt()
+      handle?.ack()
       return true
     }
     const rawId = Number.parseInt(event.meta.message_id ?? '', 10)
@@ -394,11 +662,13 @@ export class CodexDriver {
       text: formatChannelInbound(event),
       chatId,
       messageId: Number.isFinite(rawId) ? rawId : undefined,
+      ...(handle !== undefined ? { handle } : {}),
     }
     if (this.ready && this.active !== undefined && this.active.id !== '' && this.active.chatId === chatId) {
       if (await this.steer(this.active, input)) return true
     }
     this.queue.push(input)
+    this.persistQueue()
     void this.pump()
     return true
   }
@@ -450,11 +720,13 @@ export class CodexDriver {
   }
 
   /**
-   * Остановить драйвер: хук конца сессии, затем app-server.
+   * Остановить драйвер: хук конца сессии, затем app-server. Очередь уже в файле (пишется
+   * сквозь), задачи без ack остаются в папке-очереди — следующий запуск подберёт и то, и другое.
    */
   async stop(): Promise<void> {
     if (this.stopping) return
     this.stopping = true
+    if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer)
     await this.safeMemory('session-end', { hook_event_name: 'SessionEnd', reason: 'driver-stop' })
     this.conn?.close()
   }
@@ -466,22 +738,72 @@ export class CodexDriver {
     this.transcriptPath = typeof thread.path === 'string' && thread.path !== '' ? thread.path : this.deps.stateFile
   }
 
-  private readSavedThread(): string {
+  private readState(): ThreadState {
     try {
       const data = record(JSON.parse(readFileSync(this.deps.stateFile, 'utf8')))
-      return typeof data.threadId === 'string' ? data.threadId : ''
+      return {
+        threadId: typeof data.threadId === 'string' ? data.threadId : '',
+        ...(typeof data.identityHash === 'string' ? { identityHash: data.identityHash } : {}),
+        ...(typeof data.resumeFailures === 'number' ? { resumeFailures: data.resumeFailures } : {}),
+      }
     } catch {
-      return ''
+      return { threadId: '' }
     }
   }
 
+  /** Сохранить текущую нить: счётчик неудачных resume обнуляется. */
   private saveThread(): void {
-    mkdirSync(dirname(this.deps.stateFile), { recursive: true })
-    const tmp = `${this.deps.stateFile}.tmp`
-    writeFileSync(tmp, `${JSON.stringify({ threadId: this.threadId, savedAt: new Date(this.now()).toISOString() })}\n`, {
-      mode: 0o600,
+    this.writeState({
+      threadId: this.threadId,
+      ...(this.identityHash !== undefined ? { identityHash: this.identityHash } : {}),
     })
-    renameSync(tmp, this.deps.stateFile)
+  }
+
+  private writeState(state: ThreadState): void {
+    writeJsonAtomic(this.deps.stateFile, { ...state, savedAt: new Date(this.now()).toISOString() })
+  }
+
+  /**
+   * Очередь входящих в файл — сквозь, на каждое изменение: переживает и SIGKILL/OOM, не только
+   * штатную остановку. Входы с DeliveryHandle не пишутся: их копия — файл задачи.
+   */
+  private persistQueue(): void {
+    const items: PersistedInput[] = this.queue
+      .filter(q => q.handle === undefined)
+      .map(q => ({ text: q.text, chatId: q.chatId, ...(q.messageId !== undefined ? { messageId: q.messageId } : {}) }))
+    try {
+      if (items.length === 0) rmSync(this.queueFile, { force: true })
+      else writeJsonAtomic(this.queueFile, { items })
+    } catch (err) {
+      this.deps.log.warn('codex queue persist failed', { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  private restoreQueue(): void {
+    let raw: string
+    try {
+      raw = readFileSync(this.queueFile, 'utf8')
+    } catch {
+      return
+    }
+    let items: unknown[] = []
+    try {
+      const data = record(JSON.parse(raw))
+      items = Array.isArray(data.items) ? (data.items as unknown[]) : []
+    } catch {
+      this.deps.log.warn('codex queue file unreadable — dropped')
+    }
+    for (const it of items) {
+      const r = record(it)
+      if (typeof r.text !== 'string' || typeof r.chatId !== 'string' || r.chatId === '') continue
+      this.queue.push({
+        text: r.text,
+        chatId: r.chatId,
+        messageId: typeof r.messageId === 'number' ? r.messageId : undefined,
+      })
+    }
+    if (this.queue.length > 0) this.deps.log.info('codex queue restored', { messages: this.queue.length })
+    this.persistQueue()
   }
 
   private hookContext(chatId: string): HookContext {
@@ -495,7 +817,7 @@ export class CodexDriver {
         expectedTurnId: turn.id,
         input: [textInput(input.text)],
       })
-      turn.userTexts.push(input.text)
+      turn.inputs.push(input)
       if (input.messageId !== undefined) turn.messageIds.push(input.messageId)
       this.markRead(input)
       return true
@@ -520,11 +842,12 @@ export class CodexDriver {
     // В один ход идут все ожидающие сообщения того же чата: человек дописал несколько подряд.
     const batch = this.queue.filter(q => q.chatId === first.chatId)
     for (const q of batch) this.queue.splice(this.queue.indexOf(q), 1)
+    this.persistQueue()
     const turn: ActiveTurn = {
       id: '',
       chatId: first.chatId,
       replies: new Set(),
-      userTexts: batch.map(q => q.text),
+      inputs: [...batch],
       lastAgentText: '',
       messageIds: [
         ...(this.replayMessageIds.get(first.chatId) ?? []),
@@ -533,6 +856,8 @@ export class CodexDriver {
     }
     this.replayMessageIds.delete(first.chatId)
     this.active = turn
+    this.openItems.clear()
+    this.lastTurnActivity = this.now()
     const input: Array<Record<string, unknown>> = []
     if (this.sessionContext !== '') {
       input.push(textInput(this.sessionContext))
@@ -551,6 +876,8 @@ export class CodexDriver {
         error: err instanceof Error ? err.message : String(err),
       })
       if (this.active === turn) this.active = undefined
+      // Задачи отдаются папке-очереди обратно: повторит она (с пределом попыток).
+      for (const q of turn.inputs) q.handle?.release()
       await this.safeDeliver(turn.chatId, '⚠️ Не удалось передать сообщение агенту, повторите позже.')
       void this.pump()
     }
@@ -564,13 +891,20 @@ export class CodexDriver {
       const next = this.queue[idx]!
       if (!(await this.steer(turn, next))) return
       this.queue.splice(this.queue.indexOf(next), 1)
+      this.persistQueue()
     }
   }
 
   private onNotification(method: string, params: unknown): void {
     const p = record(params)
     if (typeof p.threadId === 'string' && p.threadId !== this.threadId) return
-    void this.heartbeat(false)
+    // Признак жизни — только уведомление своей нити: глобальные (лимиты, статус MCP) могут
+    // идти и при зависшем ходе.
+    if (p.threadId === this.threadId) {
+      this.lastTurnActivity = this.now()
+      void this.heartbeat(false)
+      this.trackItem(method, record(p.item))
+    }
     const turn = this.active
     switch (method) {
       case 'turn/started': {
@@ -619,12 +953,20 @@ export class CodexDriver {
     }
   }
 
+  /** Учёт незавершённых элементов хода (любого типа: список типов у Codex растёт). */
+  private trackItem(method: string, item: Record<string, unknown>): void {
+    if (typeof item.id !== 'string' || item.id === '') return
+    if (method === 'item/started') this.openItems.set(item.id, typeof item.type === 'string' ? item.type : '?')
+    else if (method === 'item/completed') this.openItems.delete(item.id)
+  }
+
   private async finishTurn(turnData: Record<string, unknown>): Promise<void> {
     const turn = this.active
     if (turn === undefined) return
     const id = typeof turnData.id === 'string' ? turnData.id : ''
     if (turn.id !== '' && id !== '' && id !== turn.id) return
     this.active = undefined
+    this.openItems.clear()
     const status = String(turnData.status ?? '')
 
     // Ход прерван ради перехода напрямую или упал, пока прокси уже признан мёртвым: не ответ и
@@ -639,6 +981,8 @@ export class CodexDriver {
 
     const items = Array.isArray(turnData.items) ? (turnData.items as unknown[]) : []
     const finalText = lastAgentMessage(items) || turn.lastAgentText
+    // Ход закончился (любым статусом) — задачи, которые он взял, выполнены: удалить их файлы.
+    for (const q of turn.inputs) q.handle?.ack()
     if (status === 'failed') {
       const message = String(record(turnData.error).message ?? 'неизвестная ошибка')
       this.deps.log.error('codex turn failed', { turn_id: id, error: message })
@@ -656,7 +1000,7 @@ export class CodexDriver {
       transcript_path: this.transcriptPath,
       cwd: this.deps.workspace,
       last_assistant_message: finalText,
-      last_user_message: turn.userTexts.join('\n'),
+      last_user_message: turn.inputs.map(q => q.text).join('\n'),
     })
     void this.pump()
   }
@@ -677,11 +1021,15 @@ export class CodexDriver {
       case 'item/tool/requestUserInput': {
         const chatId = this.active?.chatId ?? ''
         const questions = Array.isArray(p.questions) ? (p.questions as UserInputQuestion[]) : []
-        const answers =
-          chatId === '' || questions.length === 0
-            ? null
-            : await this.deps.effects.askUser(chatId, questions, String(p.itemId ?? `${this.now()}`))
-        return answers ?? { answers: {} }
+        if (chatId === '' || questions.length === 0) return { answers: {} }
+        this.waitingOnUser += 1
+        try {
+          const answers = await this.deps.effects.askUser(chatId, questions, String(p.itemId ?? `${this.now()}`))
+          return answers ?? { answers: {} }
+        } finally {
+          this.waitingOnUser -= 1
+          this.lastTurnActivity = this.now()
+        }
       }
       default:
         throw new RpcError(method, RPC_METHOD_NOT_FOUND, `unsupported: ${method}`, null)
@@ -749,4 +1097,12 @@ export class CodexDriver {
     this.lastHeartbeat = t
     await this.safeMemory('heartbeat', { hook_event_name: 'Heartbeat' })
   }
+}
+
+/** Записать JSON атомарно (временный файл + rename), права 0600. */
+function writeJsonAtomic(path: string, data: unknown): void {
+  mkdirSync(dirname(path), { recursive: true })
+  const tmp = `${path}.tmp`
+  writeFileSync(tmp, `${JSON.stringify(data)}\n`, { mode: 0o600 })
+  renameSync(tmp, path)
 }

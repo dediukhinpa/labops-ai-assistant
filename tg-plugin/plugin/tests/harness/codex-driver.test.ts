@@ -2,7 +2,7 @@
 // доставка вдогонку, финальный ответ без дубля reply, события статуса, запросы сервера.
 
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Writable } from 'stream'
@@ -10,6 +10,7 @@ import { Writable } from 'stream'
 import { createLogger } from '../../src/log.js'
 import {
   CodexDriver,
+  type DeliveryHandle,
   type DriverEffects,
   type MemoryHook,
   type PiiMode,
@@ -32,7 +33,9 @@ class FakeServer implements LineTransport {
   private lineCb: (line: string) => void = () => undefined
   private closeCb: (code: number | null) => void = () => undefined
   turnSeq = 0
-  failResume = false
+  /** Как отказать в thread/resume: missing — «нити нет», other — прочая ошибка. */
+  failResume: false | 'missing' | 'other' = false
+  failTurnStart = false
   failSteer = false
   /** Чем закончить ход на turn/interrupt (как настоящий app-server); не задано — молчать. */
   interruptStatus: string | undefined
@@ -77,8 +80,11 @@ class FakeServer implements LineTransport {
       case 'thread/start':
         return reply({ thread: { id: 'thr-new', path: '/tmp/rollout-new.jsonl' } })
       case 'thread/resume':
-        return this.failResume ? fail('no such thread') : reply({ thread: { id: String(msg.params?.threadId) } })
+        if (this.failResume === 'missing') return fail(`no rollout found for thread id ${String(msg.params?.threadId)}`)
+        if (this.failResume === 'other') return fail('mcp startup timed out')
+        return reply({ thread: { id: String(msg.params?.threadId) } })
       case 'turn/start':
+        if (this.failTurnStart) return fail('turn rejected')
         this.turnSeq += 1
         return reply({ turn: { id: `turn-${this.turnSeq}`, items: [], status: 'inProgress' } })
       case 'turn/steer':
@@ -107,6 +113,7 @@ interface Recorded {
   dones: Array<{ chatId: string; messageId: number }>
   rebuilds: number
   asks: number
+  notices: string[]
 }
 
 function setup(
@@ -117,16 +124,37 @@ function setup(
     servers?: Array<{ mode: PiiMode; server: FakeServer }>
     /** Следующие запуски app-server не восстанавливают нить. */
     laterFailResume?: boolean
+    /** Сохранённое состояние целиком (вместо saved). */
+    savedState?: Record<string, unknown>
+    /** Рабочая папка прошлого запуска (перезапуск драйвера). */
+    dir?: string
+    identityHash?: () => string
+    now?: () => number
+    turnStallMs?: number
+    itemStallMs?: number
+    turnWatchMs?: number
+    stallGraceMs?: number
+    /** Задержка ответа человека на вопрос. */
+    askDelayMs?: number
   } = {},
 ) {
-  const dir = mkdtempSync(join(tmpdir(), 'codex-driver-'))
+  const dir = opts.dir ?? mkdtempSync(join(tmpdir(), 'codex-driver-'))
   const stateFile = join(dir, 'state', 'codex-thread.json')
-  if (opts.saved !== undefined) {
+  if (opts.saved !== undefined || opts.savedState !== undefined) {
     require('fs').mkdirSync(join(dir, 'state'), { recursive: true })
-    writeFileSync(stateFile, JSON.stringify({ threadId: opts.saved }))
+    writeFileSync(stateFile, JSON.stringify(opts.savedState ?? { threadId: opts.saved }))
   }
   const server = new FakeServer()
-  const rec: Recorded = { status: [], finals: [], memory: [], reads: [], dones: [], rebuilds: 0, asks: 0 }
+  const rec: Recorded = {
+    status: [],
+    finals: [],
+    memory: [],
+    reads: [],
+    dones: [],
+    rebuilds: 0,
+    asks: 0,
+    notices: [],
+  }
   const effects: DriverEffects = {
     status: async p => {
       rec.status.push(p)
@@ -136,6 +164,7 @@ function setup(
     },
     askUser: async (_chat, questions) => {
       rec.asks += 1
+      if (opts.askDelayMs !== undefined) await new Promise(r => setTimeout(r, opts.askDelayMs))
       return { answers: { [questions[0]!.id]: { answers: ['Да'] } } }
     },
     memory: async (hook, payload) => {
@@ -151,12 +180,15 @@ function setup(
     markDone: async (chatId, messageId) => {
       rec.dones.push({ chatId, messageId })
     },
+    notifyOperator: async text => {
+      rec.notices.push(text)
+    },
   }
   // С opts.servers каждый запуск app-server — новый поддельный сервер (смена режима pii-proxy).
   const connect = (mode: PiiMode): LineTransport => {
     if (opts.servers === undefined) return server
     const fresh = opts.servers.length === 0 ? server : new FakeServer()
-    if (fresh !== server && opts.laterFailResume === true) fresh.failResume = true
+    if (fresh !== server && opts.laterFailResume === true) fresh.failResume = 'other'
     opts.servers.push({ mode, server: fresh })
     return fresh
   }
@@ -167,6 +199,12 @@ function setup(
     effects,
     log: silent,
     ...(opts.piiMode !== undefined ? { piiMode: opts.piiMode, piiModePollMs: 5 } : {}),
+    ...(opts.identityHash !== undefined ? { identityHash: opts.identityHash } : {}),
+    ...(opts.now !== undefined ? { now: opts.now } : {}),
+    ...(opts.turnStallMs !== undefined ? { turnStallMs: opts.turnStallMs } : {}),
+    ...(opts.itemStallMs !== undefined ? { itemStallMs: opts.itemStallMs } : {}),
+    ...(opts.turnWatchMs !== undefined ? { turnWatchMs: opts.turnWatchMs } : {}),
+    ...(opts.stallGraceMs !== undefined ? { stallGraceMs: opts.stallGraceMs } : {}),
   })
   return { driver, server, rec, stateFile, dir }
 }
@@ -206,12 +244,14 @@ describe('старт нити', () => {
     expect(rec.memory.some(m => m.hook === 'session-start')).toBe(false)
   })
 
-  test('нить не восстановилась — новая', async () => {
-    const { driver, server } = setup({ saved: 'thr-gone' })
-    server.failResume = true
+  test('нити нет (no rollout found) — новая, старый id в бэкапе', async () => {
+    const { driver, server, dir } = setup({ saved: 'thr-gone' })
+    server.failResume = 'missing'
     await driver.start()
     expect(server.requests('thread/start')).toHaveLength(1)
     expect(driver.thread).toBe('thr-new')
+    const backup = readFileSync(join(dir, 'state', 'codex-thread.backup.jsonl'), 'utf8')
+    expect(JSON.parse(backup.trim())).toMatchObject({ threadId: 'thr-gone', reason: 'not-found' })
   })
 })
 
@@ -650,5 +690,331 @@ describe('режим pii-proxy', () => {
     mode = 'direct'
     for (let i = 0; i < 20 && code === undefined; i++) await tick()
     expect(code).toBeNull()
+  })
+})
+
+const waitFor = async (cond: () => boolean, tries = 100): Promise<void> => {
+  for (let i = 0; i < tries && !cond(); i++) await tick()
+}
+
+describe('живучесть хода', () => {
+  test('heartbeat: в простое по таймеру, во время хода — только по уведомлениям нити', async () => {
+    let clock = 1_000_000
+    const { driver, server, rec } = setup({ now: () => clock, turnWatchMs: 5 })
+    await driver.start()
+    const beats = (): number => rec.memory.filter(m => m.hook === 'heartbeat').length
+    const startBeats = beats()
+    clock += 61_000
+    await waitFor(() => beats() > startBeats)
+    expect(beats()).toBe(startBeats + 1)
+    await driver.deliver(msg('42', 'долго'))
+    await tick()
+    const inTurn = beats()
+    clock += 120_000
+    for (let i = 0; i < 5; i++) await tick()
+    // Ход молчит — таймер heartbeat не пишет, watchdog увидит зависание.
+    expect(beats()).toBe(inTurn)
+    // Глобальное уведомление (без threadId) — не признак жизни хода.
+    server.notify('account/rateLimits/updated', { rateLimits: {} })
+    await tick()
+    expect(beats()).toBe(inTurn)
+    server.notify('item/started', {
+      threadId: 'thr-new',
+      turnId: 'turn-1',
+      item: { type: 'commandExecution', id: 'c1', command: 'ls', status: 'inProgress' },
+    })
+    await tick()
+    expect(beats()).toBe(inTurn + 1)
+  })
+
+  test('нить молчит дольше предела — предупреждение в чат хода и turn/interrupt', async () => {
+    const { driver, server, rec } = setup({ turnStallMs: 40, turnWatchMs: 5, stallGraceMs: 200 })
+    let exited = false
+    driver.onExit(() => {
+      exited = true
+    })
+    await driver.start()
+    server.interruptStatus = 'interrupted'
+    await driver.deliver(msg('42', 'зависни'))
+    await waitFor(() => server.requests('turn/interrupt').length > 0)
+    await waitFor(() => !driver.busy)
+    expect(server.requests('turn/interrupt')[0]!.params).toMatchObject({ turnId: 'turn-1' })
+    expect(rec.finals[0]).toMatchObject({ chatId: '42' })
+    expect(rec.finals[0]!.text).toContain('прерываю')
+    expect(driver.busy).toBe(false)
+    expect(exited).toBe(false)
+  })
+
+  test('прерывание не помогло — выход драйвера для перезапуска', async () => {
+    const { driver, server, rec } = setup({ turnStallMs: 40, turnWatchMs: 5, stallGraceMs: 60 })
+    let code: number | null | undefined
+    driver.onExit(c => {
+      code = c
+    })
+    await driver.start()
+    await driver.deliver(msg('42', 'зависни намертво'))
+    await waitFor(() => code !== undefined, 200)
+    expect(server.requests('turn/interrupt')).toHaveLength(1)
+    expect(code).toBeNull()
+    expect(rec.finals.map(f => f.text).join('\n')).toContain('перезапускаю')
+  })
+
+  test('пока человек отвечает на вопрос, ход не считается зависшим', async () => {
+    const { driver, server, rec } = setup({ turnStallMs: 40, turnWatchMs: 5, askDelayMs: 150 })
+    await driver.start()
+    await driver.deliver(msg('42', 'спроси меня'))
+    await tick()
+    server.emit({
+      id: 'q1',
+      method: 'item/tool/requestUserInput',
+      params: {
+        threadId: 'thr-new',
+        turnId: 'turn-1',
+        itemId: 'i1',
+        questions: [{ id: 'q', header: 'H', question: '?', isOther: false, isSecret: false, options: null }],
+      },
+    })
+    await waitFor(() => server.responseTo('q1') !== undefined, 100)
+    expect(rec.asks).toBe(1)
+    expect(server.requests('turn/interrupt')).toHaveLength(0)
+  })
+})
+
+describe('доставка хотя бы раз', () => {
+  function handle(): DeliveryHandle & { acks: number; releases: number } {
+    const h = {
+      acks: 0,
+      releases: 0,
+      ack: () => void (h.acks += 1),
+      release: () => void (h.releases += 1),
+    }
+    return h
+  }
+
+  test('задача подтверждается только после конца хода, взявшего её', async () => {
+    const { driver, server } = setup()
+    await driver.start()
+    const h = handle()
+    await driver.deliver(msg('7', 'задача'), h)
+    await tick()
+    expect(h.acks).toBe(0)
+    server.notify('turn/completed', { threadId: 'thr-new', turn: { id: 'turn-1', status: 'completed', items: [] } })
+    await tick()
+    expect(h.acks).toBe(1)
+  })
+
+  test('задача вдогонку (steer) подтверждается концом того же хода', async () => {
+    const { driver, server } = setup()
+    await driver.start()
+    await driver.deliver(msg('7', 'первая'))
+    await tick()
+    const h = handle()
+    await driver.deliver(msg('7', 'вдогонку'), h)
+    await tick()
+    expect(server.requests('turn/steer')).toHaveLength(1)
+    expect(h.acks).toBe(0)
+    server.notify('turn/completed', { threadId: 'thr-new', turn: { id: 'turn-1', status: 'completed', items: [] } })
+    await tick()
+    expect(h.acks).toBe(1)
+  })
+
+  test('app-server упал посреди хода — задача не подтверждена', async () => {
+    const { driver, server } = setup()
+    driver.onExit(() => undefined)
+    await driver.start()
+    const h = handle()
+    await driver.deliver(msg('7', 'задача'), h)
+    await tick()
+    server.crash()
+    await tick()
+    expect(h.acks).toBe(0)
+  })
+
+  test('turn/start отклонён — задача отдаётся папке обратно (release)', async () => {
+    const { driver, server } = setup()
+    await driver.start()
+    server.failTurnStart = true
+    const h = handle()
+    await driver.deliver(msg('7', 'задача'), h)
+    await tick()
+    expect(h.acks).toBe(0)
+    expect(h.releases).toBe(1)
+  })
+
+  test('сообщения в очереди переживают перезапуск драйвера', async () => {
+    const first = setup()
+    await first.driver.start()
+    await first.driver.deliver(msg('42', 'идёт ход', 1))
+    await tick()
+    await first.driver.deliver(msg('99', 'ждёт в очереди', 2))
+    // Задача с подтверждением в файл очереди не пишется: её копия — файл задачи.
+    await first.driver.deliver(msg('7', 'задача'), handle())
+    await tick()
+    const queueFile = join(first.dir, 'state', 'codex-queue.json')
+    expect(readFileSync(queueFile, 'utf8')).toContain('ждёт в очереди')
+    expect(readFileSync(queueFile, 'utf8')).not.toContain('задача')
+    first.server.crash()
+
+    const second = setup({ dir: first.dir, saved: 'thr-new' })
+    await second.driver.start()
+    await tick()
+    const starts = second.server.requests('turn/start')
+    expect(starts).toHaveLength(1)
+    expect(JSON.stringify(starts[0]!.params)).toContain('ждёт в очереди')
+    expect(second.rec.reads).toEqual([{ chatId: '99', messageId: 2 }])
+    // Взят ходом — из файла очереди ушёл.
+    expect(existsSync(queueFile)).toBe(false)
+  })
+})
+
+describe('восстановление нити', () => {
+  test('прочая ошибка resume — выход с ошибкой, сохранённый id не тронут, счётчик +1', async () => {
+    const { driver, server, stateFile } = setup({ saved: 'thr-old' })
+    server.failResume = 'other'
+    await expect(driver.start()).rejects.toThrow('mcp startup timed out')
+    expect(server.requests('thread/start')).toHaveLength(0)
+    const state = JSON.parse(readFileSync(stateFile, 'utf8'))
+    expect(state).toMatchObject({ threadId: 'thr-old', resumeFailures: 1 })
+  })
+
+  test('resume не удаётся раз за разом — после предела новая нить, бэкап и предупреждение', async () => {
+    const { driver, server, stateFile, rec, dir } = setup({
+      savedState: { threadId: 'thr-old', resumeFailures: 2 },
+    })
+    server.failResume = 'other'
+    await driver.start()
+    expect(driver.thread).toBe('thr-new')
+    const state = JSON.parse(readFileSync(stateFile, 'utf8'))
+    expect(state.threadId).toBe('thr-new')
+    expect(state.resumeFailures).toBeUndefined()
+    expect(readFileSync(join(dir, 'state', 'codex-thread.backup.jsonl'), 'utf8')).toContain('thr-old')
+    expect(rec.notices).toHaveLength(1)
+  })
+
+  test('удачный resume обнуляет счётчик', async () => {
+    const { driver, stateFile } = setup({ savedState: { threadId: 'thr-old', resumeFailures: 2 } })
+    await driver.start()
+    expect(JSON.parse(readFileSync(stateFile, 'utf8')).resumeFailures).toBeUndefined()
+  })
+})
+
+describe('инструкции (AGENTS.md) и новая нить', () => {
+  test('отпечаток изменился — brain-flush, новая нить с session-start, новый отпечаток', async () => {
+    const { driver, server, rec, stateFile } = setup({
+      savedState: { threadId: 'thr-old', identityHash: 'aaa' },
+      identityHash: () => 'bbb',
+      sessionContext: 'recap',
+    })
+    await driver.start()
+    expect(server.requests('thread/resume')).toHaveLength(1)
+    expect(server.requests('thread/start')).toHaveLength(1)
+    expect(driver.thread).toBe('thr-new')
+    const hooks = rec.memory.map(m => m.hook)
+    expect(hooks.indexOf('session-end')).toBeGreaterThanOrEqual(0)
+    expect(hooks.indexOf('session-end')).toBeLessThan(hooks.indexOf('session-start'))
+    // Сброс — от имени старой нити.
+    expect(rec.memory.find(m => m.hook === 'session-end')!.payload.session_id).toBe('thr-old')
+    expect(JSON.parse(readFileSync(stateFile, 'utf8'))).toMatchObject({ threadId: 'thr-new', identityHash: 'bbb' })
+    await driver.deliver(msg('42', 'x'))
+    await tick()
+    const input = server.requests('turn/start')[0]!.params!.input as Array<{ text: string }>
+    expect(input[0]!.text).toBe('recap')
+  })
+
+  test('отпечаток тот же — нить продолжается', async () => {
+    const { driver, server } = setup({
+      savedState: { threadId: 'thr-old', identityHash: 'aaa' },
+      identityHash: () => 'aaa',
+    })
+    await driver.start()
+    expect(server.requests('thread/start')).toHaveLength(0)
+    expect(driver.thread).toBe('thr-old')
+  })
+
+  test('отпечатка в состоянии нет (старая версия) — нить продолжается, отпечаток запоминается', async () => {
+    const { driver, server, stateFile } = setup({ saved: 'thr-old', identityHash: () => 'ccc' })
+    await driver.start()
+    expect(server.requests('thread/start')).toHaveLength(0)
+    expect(JSON.parse(readFileSync(stateFile, 'utf8')).identityHash).toBe('ccc')
+  })
+
+  test('отпечаток изменился, но resume упал — ошибка не маскируется новой нитью', async () => {
+    const { driver, server, stateFile } = setup({
+      savedState: { threadId: 'thr-old', identityHash: 'aaa' },
+      identityHash: () => 'bbb',
+    })
+    server.failResume = 'other'
+    await expect(driver.start()).rejects.toThrow()
+    expect(server.requests('thread/start')).toHaveLength(0)
+    expect(JSON.parse(readFileSync(stateFile, 'utf8'))).toMatchObject({ threadId: 'thr-old', identityHash: 'aaa' })
+  })
+})
+
+describe('незавершённые элементы хода', () => {
+  const MIN = 60_000
+  function startCommand(server: FakeServer, id = 'c1'): void {
+    server.notify('item/started', {
+      threadId: 'thr-new',
+      turnId: 'turn-1',
+      item: { type: 'commandExecution', id, command: 'make build', status: 'inProgress' },
+    })
+  }
+
+  test('тихая команда 10 минут не прерывается, heartbeat тикает', async () => {
+    let clock = 1_000_000
+    const { driver, server, rec } = setup({ now: () => clock, turnWatchMs: 5 })
+    await driver.start()
+    await driver.deliver(msg('42', 'собери'))
+    await tick()
+    startCommand(server)
+    await tick()
+    const beats = (): number => rec.memory.filter(m => m.hook === 'heartbeat').length
+    const before = beats()
+    for (let minute = 0; minute < 10; minute++) {
+      clock += MIN
+      for (let i = 0; i < 3; i++) await tick()
+    }
+    expect(server.requests('turn/interrupt')).toHaveLength(0)
+    expect(driver.busy).toBe(true)
+    expect(beats()).toBeGreaterThanOrEqual(before + 10)
+  })
+
+  test('молчание без незавершённых элементов — прерывание по короткому пределу', async () => {
+    let clock = 1_000_000
+    const { driver, server } = setup({ now: () => clock, turnWatchMs: 5, stallGraceMs: 100 })
+    driver.onExit(() => undefined)
+    server.interruptStatus = 'interrupted'
+    await driver.start()
+    await driver.deliver(msg('42', 'x'))
+    await tick()
+    startCommand(server)
+    server.notify('item/completed', {
+      threadId: 'thr-new',
+      turnId: 'turn-1',
+      item: { type: 'commandExecution', id: 'c1', command: 'make build', status: 'completed' },
+    })
+    await tick()
+    clock += 4 * MIN
+    await waitFor(() => server.requests('turn/interrupt').length > 0)
+    expect(server.requests('turn/interrupt')).toHaveLength(1)
+  })
+
+  test('элемент висит дольше длинного предела — прерывание', async () => {
+    let clock = 1_000_000
+    const { driver, server, rec } = setup({ now: () => clock, turnWatchMs: 5, stallGraceMs: 100 })
+    driver.onExit(() => undefined)
+    server.interruptStatus = 'interrupted'
+    await driver.start()
+    await driver.deliver(msg('42', 'x'))
+    await tick()
+    startCommand(server)
+    await tick()
+    clock += 29 * MIN
+    for (let i = 0; i < 5; i++) await tick()
+    expect(server.requests('turn/interrupt')).toHaveLength(0)
+    clock += 2 * MIN
+    await waitFor(() => server.requests('turn/interrupt').length > 0)
+    expect(server.requests('turn/interrupt')).toHaveLength(1)
+    expect(rec.finals[0]!.text).toContain('прерываю')
   })
 })

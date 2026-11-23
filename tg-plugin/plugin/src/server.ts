@@ -95,6 +95,10 @@ import {
   createCodexDriver,
 } from './harness/codex/bootstrap.js'
 import { createMcpHttpHandler, newChannelToken } from './harness/codex/mcp-http.js'
+import {
+  createCodexMultichatGuard,
+  warnOperatorsCodexMultichat,
+} from './harness/codex/multichat-guard.js'
 import type { CodexDriver } from './harness/codex/driver.js'
 import {
   handleInboundAudio,
@@ -372,9 +376,20 @@ let multichatPolicy: MultichatPolicy | undefined
 let multichatStateDir: string | undefined
 let multichatWorkspaceDir: string | undefined
 let multichatPolicyPath: string | undefined
-if (config.multichat.enabled && codexMode) {
-  // Пул сессий по чатам построен на tmux + claude; для Codex его пока нет.
-  log.warn('multichat is not supported on the codex harness — running single-session mode')
+// Multichat на Codex закрыт (fail closed): пул сессий по чатам построен на tmux + claude, а у
+// Codex одна нить. Чужая личка и группы отбрасываются до обработчиков (multichat-guard.ts),
+// иначе они смешались бы в одной нити вместе с таблицей замен ПДн.
+const codexMultichatRefused = config.multichat.enabled && codexMode
+if (codexMultichatRefused) {
+  log.error('multichat is not supported on the codex harness — non-operator dms and groups are dropped')
+  if (config.operator_user_ids === undefined && new Set(config.allowed_user_ids.map(String)).size > 1) {
+    // Без operator_user_ids операторами Codex считаются все allowed_user_ids — их личка
+    // по-прежнему идёт в одну нить.
+    log.error('codex multichat: operator_user_ids is not set — every allowed user counts as an operator', {
+      allowed_users: new Set(config.allowed_user_ids.map(String)).size,
+      hint: 'задайте operator_user_ids',
+    })
+  }
 } else if (config.multichat.enabled) {
   multichatWorkspaceDir =
     config.multichat.workspace_dir
@@ -956,6 +971,9 @@ const handlerDeps: HandlerDeps = {
   ...(mediaConsent !== undefined ? { mediaConsent } : {}),
 }
 
+// Codex + multichat: фильтр до всех обработчиков (они ставят 👀 и статус ещё до доставки).
+if (codexMultichatRefused) bot.use(createCodexMultichatGuard(config, log))
+
 bot.on('message:text', ctx => handleInboundText(ctx, handlerDeps))
 bot.on('message:photo', ctx => handleInboundPhoto(ctx, handlerDeps))
 bot.on('message:document', ctx => handleInboundDocument(ctx, handlerDeps))
@@ -1166,7 +1184,9 @@ if (codexMode) {
     shutdown(1)
     throw new Error('codex harness cannot start')
   }
+  const operatorChat = resolveCodexOperatorUserIds(config)[0]
   codexDriver = createCodexDriver({
+    ...(operatorChat !== undefined ? { operatorChatId: String(operatorChat) } : {}),
     workspace,
     stateRoot: statePaths.root,
     webhookHost: config.webhook.host,
@@ -1210,11 +1230,26 @@ if (codexMode) {
   // Задачи agent router: поллер кладёт их файлами в папку-очередь (печатать некуда).
   // Ответ на задачу уходит в личку оператора — как у Claude, где задачу вбрасывали в
   // главную сессию. Оператор — operator_user_ids/allowed_user_ids, не список разрешений.
-  const operatorChat = resolveCodexOperatorUserIds(config)[0]
+  // Файл задачи удаляется только после конца хода, который её взял (handle.ack).
   if (operatorChat !== undefined) {
-    watchInbox({ workspace, chatId: String(operatorChat), deliver: event => driver.deliver(event), log })
+    watchInbox({
+      workspace,
+      chatId: String(operatorChat),
+      deliver: (event, handle) => driver.deliver(event, handle),
+      log,
+    })
   } else {
     log.warn('codex inbox disabled: no operator user id in the allowlist')
+  }
+  if (codexMultichatRefused) {
+    void warnOperatorsCodexMultichat({
+      config,
+      send: async (chatId, text) => {
+        await telegramApi.sendMessage(chatId, text, {})
+      },
+      log,
+      markerPath: join(statePaths.root, 'codex-multichat-notice'),
+    })
   }
   // /reset force: у Claude его выполняет watchdog, у Codex — плагин новой нитью.
   watchResetRequest({
