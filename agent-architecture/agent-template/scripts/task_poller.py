@@ -27,6 +27,7 @@ tmux. Ожидаемая стоимость -- десятые доли проц�
     TASK_POLL_INTERVAL       секунды между опросами (по умолчанию 5)
     SECOND_BRAIN_MEMORY_ROUTER_URL  адрес memory_router
     SECOND_BRAIN_TASKS_URL          адрес доски задач (task_mcp)
+                      (у агента на Codex оба адреса и токен -- ещё и из agent.env)
     AGENT_BEARER      токен; иначе берётся из .mcp.json воркспейса
     TASK_POLLER_GONE_LIMIT   сколько промахов подряд по сессии tmux до выхода
     PANE_INPUT_COL0   колонка курсора на пустом поле ввода
@@ -148,6 +149,55 @@ class BearerCache:
 
 AGENT_ENV_BEARER_RE = re.compile(r"""^(?:export\s+)?AGENT_BEARER=(["']?)(.*)\1\s*$""")
 CODEX_INBOX_DIR = Path("state") / "codex-inbox"
+ROUTER_URL_VAR = "SECOND_BRAIN_MEMORY_ROUTER_URL"
+TASKS_URL_VAR = "SECOND_BRAIN_TASKS_URL"
+
+
+def agent_env_value(env_path: Path, name: str) -> str:
+    """Значение `[export] NAME=...` из agent.env (последнее присваивание) или пусто.
+
+    Args:
+        env_path: Путь к agent.env рабочей папки.
+        name: Имя переменной.
+
+    Returns:
+        Значение без кавычек; пустая строка, если файла или строки нет.
+    """
+    pattern = re.compile(rf"""^(?:export\s+)?{re.escape(name)}=(["']?)(.*)\1\s*$""")
+    value = ""
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            match = pattern.match(line.strip())
+            if match:
+                value = match.group(2)
+    except OSError:
+        return ""
+    return value
+
+
+def resolve_brain_url(name: str, default: str, env_path: Path | None) -> str:
+    """Адрес сервиса мозга: окружение, затем agent.env (если задан), затем умолчание.
+
+    У агента на Codex watchdog не экспортирует адреса в окружение поллера, а они живут в
+    agent.env, как и bearer: без этого поллер стучался в 5002/5003 по умолчанию, мимо мозга
+    на нестандартных портах (прогон 23.11.2026).
+
+    Args:
+        name: Имя переменной (SECOND_BRAIN_*_URL).
+        default: Адрес по умолчанию.
+        env_path: agent.env агента или None (агент на Claude Code -- как раньше).
+
+    Returns:
+        Адрес MCP-сервиса.
+    """
+    from_env = os.environ.get(name, "")
+    if from_env:
+        return from_env
+    if env_path is not None:
+        from_file = agent_env_value(env_path, name)
+        if from_file:
+            return from_file
+    return default
 
 
 class AgentEnvBearer:
@@ -748,7 +798,6 @@ def build_poller() -> TaskPoller:
     interval = float(os.environ.get("TASK_POLL_INTERVAL") or DEFAULT_INTERVAL_SEC)
     gone_limit = int(os.environ.get("TASK_POLLER_GONE_LIMIT") or DEFAULT_GONE_LIMIT)
     input_col0 = int(os.environ.get("PANE_INPUT_COL0") or DEFAULT_INPUT_COL0)
-    url = os.environ.get("SECOND_BRAIN_MEMORY_ROUTER_URL") or DEFAULT_ROUTER_URL
 
     log_path = workspace / "logs" / "task-poller.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -768,6 +817,8 @@ def build_poller() -> TaskPoller:
     # Агент на Codex (рой с харнесом codex): токен в agent.env, задачи -- в папку-очередь
     # драйвера. Признак -- config.toml в CODEX_HOME агента, как у connect-agents.sh.
     codex = (workspace.parent / ".codex" / "config.toml").is_file()
+    agent_env = workspace / "agent.env" if codex else None
+    url = resolve_brain_url(ROUTER_URL_VAR, DEFAULT_ROUTER_URL, agent_env)
     env_token = os.environ.get("AGENT_BEARER", "")
     bearer: BearerCache | AgentEnvBearer = (
         AgentEnvBearer(workspace / "agent.env", env_token)
@@ -778,7 +829,7 @@ def build_poller() -> TaskPoller:
     # Доска -- отдельный сервер, поэтому отдельное соединение и отдельная
     # MCP-сессия. Обе живут столько же, сколько процесс.
     board = RouterClient(
-        os.environ.get("SECOND_BRAIN_TASKS_URL") or DEFAULT_TASKS_URL, bearer.get
+        resolve_brain_url(TASKS_URL_VAR, DEFAULT_TASKS_URL, agent_env), bearer.get
     )
     tmux_pane = TmuxPane(f"labops-{agent}", input_col0)
     pane: TmuxPane | CodexInbox = CodexInbox(workspace, tmux_pane) if codex else tmux_pane

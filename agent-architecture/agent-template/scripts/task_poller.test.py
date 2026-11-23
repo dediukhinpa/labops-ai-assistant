@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -28,6 +29,8 @@ from task_poller import (  # noqa: E402
     RouterClient,
     SessionLost,
     TaskPoller,
+    build_poller,
+    resolve_brain_url,
 )
 
 ITEMS: list[dict[str, Any]] = [
@@ -608,6 +611,62 @@ class CodexDeliveryTest(unittest.TestCase):
             self.assertEqual(AgentEnvBearer(env, "from-env").get(), "from-env")
             self.assertEqual(AgentEnvBearer(Path(tmp) / "none").get(), "")
 
+
+    def test_brain_urls_from_agent_env(self) -> None:
+        """Адреса мозга: окружение главнее agent.env, agent.env главнее умолчания."""
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / "agent.env"
+            env.write_text(
+                'export SECOND_BRAIN_TASKS_URL="http://127.0.0.1:25003/mcp"\n', encoding="utf-8"
+            )
+            saved = os.environ.pop("SECOND_BRAIN_TASKS_URL", None)
+            try:
+                self.assertEqual(
+                    resolve_brain_url("SECOND_BRAIN_TASKS_URL", "dflt", env),
+                    "http://127.0.0.1:25003/mcp",
+                )
+                self.assertEqual(resolve_brain_url("SECOND_BRAIN_TASKS_URL", "dflt", None), "dflt")
+                self.assertEqual(
+                    resolve_brain_url("SECOND_BRAIN_TASKS_URL", "dflt", Path(tmp) / "no"), "dflt"
+                )
+                os.environ["SECOND_BRAIN_TASKS_URL"] = "http://from-env/mcp"
+                self.assertEqual(
+                    resolve_brain_url("SECOND_BRAIN_TASKS_URL", "dflt", env), "http://from-env/mcp"
+                )
+            finally:
+                os.environ.pop("SECOND_BRAIN_TASKS_URL", None)
+                if saved is not None:
+                    os.environ["SECOND_BRAIN_TASKS_URL"] = saved
+
+    def test_build_poller_codex_reads_urls_from_agent_env(self) -> None:
+        """Агент на Codex без адресов в окружении ходит на порты из agent.env."""
+        names = ("AGENT_WORKSPACE", "AGENT_ID", "SECOND_BRAIN_MEMORY_ROUTER_URL",
+                 "SECOND_BRAIN_TASKS_URL", "AGENT_BEARER")
+        saved = {n: os.environ.get(n) for n in names}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "cx" / ".claude"
+            ws.mkdir(parents=True)
+            (Path(tmp) / "cx" / ".codex").mkdir()
+            (Path(tmp) / "cx" / ".codex" / "config.toml").write_text("", encoding="utf-8")
+            (ws / "agent.env").write_text(
+                'export SECOND_BRAIN_MEMORY_ROUTER_URL="http://127.0.0.1:25002/mcp"\n'
+                'export SECOND_BRAIN_TASKS_URL="http://127.0.0.1:25003/mcp"\n',
+                encoding="utf-8",
+            )
+            try:
+                for n in names:
+                    os.environ.pop(n, None)
+                os.environ["AGENT_WORKSPACE"] = str(ws)
+                os.environ["AGENT_ID"] = "cx"
+                poller = build_poller()
+                self.assertEqual(poller._client._port, 25002)  # noqa: SLF001
+                self.assertIsNotNone(poller._board)  # noqa: SLF001
+                self.assertEqual(poller._board._port, 25003)  # type: ignore[union-attr]  # noqa: SLF001
+            finally:
+                for n, v in saved.items():
+                    os.environ.pop(n, None)
+                    if v is not None:
+                        os.environ[n] = v
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
