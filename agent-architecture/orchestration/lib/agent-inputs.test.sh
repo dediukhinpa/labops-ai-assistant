@@ -76,4 +76,25 @@ env -u AGENT_NAME -u TELEGRAM_BOT_TOKEN -u TELEGRAM_ALLOWED_USER_IDS \
 grep -q 'AGENT_NAME' "$TMP/out" || fail "new-agent.sh не назвал AGENT_NAME: $(tail -5 "$TMP/out")"
 [ ! -e "$TMP/lab/developer" ] || fail "new-agent.sh успел создать воркспейс"
 
+# pick_webhook_port: пропускает порты из channel.env роя и порты, которые уже слушаются.
+mkdir -p "$TMP/plab/shared/state/a1/telegram"
+PORT_SRV_LOG="$TMP/port-srv.log"
+python3 -c '
+import socket, sys, time
+s = socket.socket(); s.bind(("127.0.0.1", 0)); s.listen(1)
+print(s.getsockname()[1], flush=True); time.sleep(30)
+' > "$PORT_SRV_LOG" &
+PORT_SRV=$!
+for _ in $(seq 1 50); do [ -s "$PORT_SRV_LOG" ] && break; sleep 0.1; done
+BUSY="$(head -n1 "$PORT_SRV_LOG")"
+[ -n "$BUSY" ] || fail "тестовый слушатель не поднялся"
+echo "TELEGRAM_WEBHOOK_PORT=$(( BUSY + 1 ))" > "$TMP/plab/shared/state/a1/telegram/channel.env"
+GOT="$(pick_webhook_port "$TMP/plab" "$BUSY")"
+kill "$PORT_SRV" 2>/dev/null || true
+if command -v ss >/dev/null 2>&1; then
+  [ "$GOT" = "$(( BUSY + 2 ))" ] || fail "pick_webhook_port: ждали $(( BUSY + 2 )), получили $GOT"
+fi
+[ "$(pick_webhook_port "$TMP/plab" "$(( BUSY + 1 ))")" != "$(( BUSY + 1 ))" ] \
+  || fail "pick_webhook_port взял порт из channel.env"
+
 echo "agent-inputs: ok"
