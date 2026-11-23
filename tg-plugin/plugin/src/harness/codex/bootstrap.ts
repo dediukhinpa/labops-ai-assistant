@@ -109,6 +109,8 @@ export const CODEX_CHANNEL_INSTRUCTIONS = [
   'do not repeat in the final message what reply already sent. Photos arrive as <media kind="photo" local_path="...">',
   '— read the file. Other attachments: call download_attachment with file_id and chat_id, then read the returned path.',
   'Telegram exposes no history — ask the user to paste earlier context if you need it.',
+  'request_user_input_async questions are shown in the chat as buttons; the answer arrives later as a new',
+  '<channel ... answer_to="<call id>"> message. Keep working meanwhile — do not sleep waiting for it.',
 ].join('\n')
 
 /** Окружение для codex app-server: без секретов плагина, с токеном MCP канала. */
