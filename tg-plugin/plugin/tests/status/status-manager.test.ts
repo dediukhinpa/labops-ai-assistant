@@ -29,6 +29,7 @@ function makeConfig(overrides: Partial<AppConfig['status']> = {}): AppConfig {
       // suite covers the non-suppressed path. Dedicated tests below opt in
       // by passing { suppress_typing_bubble: true } via overrides.
       suppress_typing_bubble: false,
+      show_activity: true,
       ...overrides,
     },
     album: { flush_ms: 2000 },

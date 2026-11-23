@@ -52,6 +52,7 @@ function makeConfig(overrides: Partial<AppConfig['progress']> = {}): AppConfig {
       delete_on_complete: true,
       delete_on_expire: true,
       suppress_typing_bubble: false,
+      show_activity: true,
     },
     album: { flush_ms: 2000 },
     voice: { provider: 'local', language: 'ru' },
