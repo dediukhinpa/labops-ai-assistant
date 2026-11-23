@@ -1212,8 +1212,6 @@ if (codexMode) {
       if (result.isError === true) throw new Error('reply tool refused the final message')
     },
     react: (chatId, messageId, emoji) => telegramApi.setMessageReaction(chatId, messageId, emoji),
-    askRelay: askUserQuestionRelay,
-    askUi: askUserQuestionUi,
   })
   const driver = codexDriver
   driver.onExit(() => {

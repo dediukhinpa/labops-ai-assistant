@@ -12,10 +12,11 @@
 // вызывает сам драйвер — у Claude их вызывает харнес.
 //
 // Подтверждения не ожидаются (approval_policy = never), но если придут — отклоняются и
-// пишутся в журнал. Вопрос пользователю (request_user_input) уходит кнопками в Telegram.
-// Асинхронный вопрос (request_user_input_async) ход не останавливает: app-server отдаёт его
-// элементом agentMessage с delivery = "async" и questions, драйвер сам шлёт его кнопками, а
-// ответ человека возвращает в нить новым вводом пользователя (так требует инструмент).
+// пишутся в журнал. Вопрос пользователю (request_user_input) уходит обычным текстом в чат
+// хода — без кнопок; ответ оператора (следующее сообщение в том же чате) драйвер возвращает
+// как результат синхронного вызова. Асинхронный вопрос (request_user_input_async) ход не
+// останавливает: драйвер шлёт его тем же обычным текстом, а ответ человека приходит обычным
+// сообщением и начинает (или продолжает) ход — отдельной корреляции ответа не требуется.
 //
 // Живучесть: heartbeat в простое — по таймеру, во время хода — только по уведомлениям нити,
 // поэтому зависший ход виден watchdog. Сверх того сторож хода внутри драйвера: нить молчит
@@ -90,8 +91,6 @@ export const PII_INTERRUPT_TIMEOUT_MS = 10_000
 const INTERRUPT_POLL_MS = 50
 /** Сколько id асинхронных сообщений агента помнить, чтобы не отправить одно дважды. */
 export const ASYNC_SEEN_LIMIT = 200
-/** Метка в meta входа с ответом на асинхронный вопрос: id вопроса (= call id инструмента). */
-export const ASYNC_ANSWER_META_KEY = 'answer_to'
 /** Версия клиента в initialize. */
 const CLIENT_INFO = { name: 'labops-codex-driver', version: '1.0.0' }
 
@@ -152,39 +151,27 @@ export function asyncQuestionsOf(item: Record<string, unknown>): AsyncUserInputQ
 }
 
 /**
- * Асинхронные вопросы → вопросы кнопок (тот же вид, что у синхронного request_user_input).
- * Свободный ответ текстом есть всегда («Другое»), как и обещает описание инструмента.
+ * Вопрос(ы) одним обычным сообщением — без кнопок: ведущий текст, затем для каждого вопроса
+ * заголовок и варианты списком. Оператор отвечает обычным сообщением. Используется и для
+ * синхронного request_user_input, и для асинхронного request_user_input_async.
  *
- * @param questions Вопросы из элемента agentMessage.
+ * @param lead Ведущий текст (у async — текст самого сообщения агента; у sync — пусто).
+ * @param questions Вопросы: заголовок и необязательные варианты.
+ * @returns Текст сообщения; пустые заголовки/дубли ведущего текста не повторяются.
  */
-export function toUserInputQuestions(questions: readonly AsyncUserInputQuestion[]): UserInputQuestion[] {
-  return questions.map((q, i) => ({
-    id: `q${i}`,
-    header: '',
-    question: q.title,
-    isOther: true,
-    isSecret: false,
-    options: q.options === null ? null : q.options.map(label => ({ label, description: '' })),
-  }))
-}
-
-/**
- * Текст ответа на асинхронный вопрос для модели: на какой вопрос и что выбрал человек.
- *
- * @param questions Вопросы из элемента agentMessage.
- * @param answers Ответы кнопок (ключ — id вопроса из toUserInputQuestions).
- * @returns Пусто — ответа нет ни на один вопрос.
- */
-export function formatAsyncAnswer(questions: readonly AsyncUserInputQuestion[], answers: UserInputAnswers): string {
-  const lines: string[] = []
-  let answered = 0
-  questions.forEach((q, i) => {
-    const got = (answers.answers[`q${i}`]?.answers ?? []).filter(a => a.trim() !== '')
-    if (got.length > 0) answered += 1
-    lines.push(`- «${q.title}»: ${got.length > 0 ? got.join(', ') : '(без ответа)'}`)
-  })
-  if (answered === 0) return ''
-  return ['Ответ пользователя на твой вопрос (request_user_input_async):', ...lines].join('\n')
+export function questionsToText(
+  lead: string,
+  questions: ReadonlyArray<{ title: string; options: readonly string[] | null }>,
+): string {
+  const parts: string[] = []
+  const head = lead.trim()
+  if (head !== '') parts.push(head)
+  for (const q of questions) {
+    const title = q.title.trim()
+    if (title !== '' && title !== head && !parts.includes(title)) parts.push(title)
+    if (q.options !== null && q.options.length > 0) parts.push(q.options.map(o => `• ${o}`).join('\n'))
+  }
+  return parts.join('\n')
 }
 
 /** Ответ на request_user_input: id вопроса → выбранные варианты/текст. */
@@ -198,8 +185,6 @@ export interface DriverEffects {
   status(payload: Record<string, unknown>): Promise<void>
   /** Отправить финальный ответ хода оператору. */
   deliverFinal(chatId: string, text: string): Promise<void>
-  /** Спросить оператора кнопками; null — ответа нет (таймаут, чат недоступен). */
-  askUser(chatId: string, questions: UserInputQuestion[], requestId: string): Promise<UserInputAnswers | null>
   /** Запустить хук памяти; вернуть его stdout (session-start даёт контекст для первого хода). */
   memory(hook: MemoryHook, payload: Record<string, unknown>): Promise<string>
   /** Пересобрать AGENTS.md из AGENTS.src.md и файлов памяти. */
@@ -328,6 +313,8 @@ export class CodexDriver {
   private readonly asyncSeen = new Set<string>()
   /** Сколько вопросов пользователю ждут ответа: ход законно молчит, пока человек думает. */
   private waitingOnUser = 0
+  /** Ждём ответ оператора на синхронный request_user_input: следующее сообщение этого чата — ответ. */
+  private pendingAsk: { chatId: string; resolve: (text: string | null) => void } | undefined
   /** Отпечаток инструкций текущей нити. */
   private identityHash: string | undefined
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined
@@ -666,6 +653,7 @@ export class CodexDriver {
    * обрабатывается как обычно и не повторяется — ответ уже был.
    */
   private async interruptForReplay(turn: ActiveTurn): Promise<void> {
+    this.cancelPendingAsk()
     this.interrupting = turn
     this.deps.log.info('codex turn interrupted for direct mode', { turn_id: turn.id })
     try {
@@ -737,6 +725,15 @@ export class CodexDriver {
       messageId: Number.isFinite(rawId) ? rawId : undefined,
       ...(handle !== undefined ? { handle } : {}),
     }
+    // Ждём ответ на синхронный вопрос этого чата: это сообщение — ответ, а не новый ход/вход.
+    if (this.pendingAsk !== undefined && this.pendingAsk.chatId === chatId) {
+      const resolve = this.pendingAsk.resolve
+      this.pendingAsk = undefined
+      this.markRead(input)
+      handle?.ack()
+      resolve(event.content)
+      return true
+    }
     if (this.ready && this.active !== undefined && this.active.id !== '' && this.active.chatId === chatId) {
       if (await this.steer(this.active, input)) return true
     }
@@ -779,8 +776,17 @@ export class CodexDriver {
     ).trim()
   }
 
+  /** Снять ожидание ответа на синхронный вопрос: вызов request_user_input получит пустой ответ. */
+  private cancelPendingAsk(): void {
+    const pending = this.pendingAsk
+    if (pending === undefined) return
+    this.pendingAsk = undefined
+    pending.resolve(null)
+  }
+
   /** Прервать текущий ход (команда /stop). */
   async interrupt(): Promise<void> {
+    this.cancelPendingAsk()
     const turn = this.active
     if (turn === undefined || turn.id === '' || this.conn === undefined) return
     try {
@@ -1031,10 +1037,10 @@ export class CodexDriver {
   }
 
   /**
-   * Асинхронное сообщение агента посреди хода. Вопрос (questions) — кнопками в чат хода, ответ
-   * вернётся в нить вводом пользователя; без вопросов — просто текст в чат. Текст и заголовки
-   * вопросов запоминаются как уже отправленные: финальное сообщение с тем же текстом не
-   * уйдёт второй раз.
+   * Асинхронное сообщение агента посреди хода. Вопрос (questions) уходит обычным текстом в чат
+   * хода (без кнопок); ответ оператора придёт обычным сообщением и начнёт/продолжит ход. Без
+   * вопросов — просто текст в чат. Текст и заголовки вопросов запоминаются как уже
+   * отправленные: финальное сообщение с тем же текстом не уйдёт второй раз.
    */
   private onAsyncAgentMessage(turn: ActiveTurn, item: CodexItem): void {
     if (this.asyncSeen.has(item.id)) return
@@ -1047,47 +1053,15 @@ export class CodexDriver {
     const questions = asyncQuestionsOf(item)
     if (text.trim() !== '') turn.replies.add(normalizeForDedup(text))
     for (const q of questions) turn.replies.add(normalizeForDedup(q.title))
-    if (questions.length > 0) {
-      void this.askAsync(turn.chatId, item.id, questions, text)
-    } else if (text.trim() !== '') {
-      void this.safeDeliver(turn.chatId, text)
+    // Вопрос — обычным текстом (заголовок + варианты списком), без кнопок: ответ оператора
+    // придёт обычным сообщением и начнёт/продолжит ход. Без вопросов — просто текст сообщения.
+    const out = questions.length > 0 ? questionsToText(text, questions) : text
+    if (out.trim() !== '') {
+      turn.replies.add(normalizeForDedup(out))
+      void this.safeDeliver(turn.chatId, out)
     }
   }
 
-  /**
-   * Задать асинхронный вопрос кнопками и вернуть ответ в нить. Ход этим не задерживается
-   * (waitingOnUser не растёт): модель продолжает работу, ответ придёт вдогонку или начнёт
-   * новый ход. Не удалось показать кнопки — вопрос уходит текстом, ответ придёт обычным
-   * сообщением.
-   */
-  private async askAsync(
-    chatId: string,
-    itemId: string,
-    questions: AsyncUserInputQuestion[],
-    text: string,
-  ): Promise<void> {
-    let answers: UserInputAnswers | null
-    try {
-      answers = await this.deps.effects.askUser(chatId, toUserInputQuestions(questions), itemId)
-    } catch (err) {
-      this.deps.log.warn('codex async question buttons failed — sent as text', {
-        item_id: itemId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      await this.safeDeliver(chatId, text.trim() !== '' ? text : questions.map(q => q.title).join('\n'))
-      return
-    }
-    const content = answers === null ? '' : formatAsyncAnswer(questions, answers)
-    if (content === '') {
-      this.deps.log.info('codex async question left unanswered', { item_id: itemId, chat_id: chatId })
-      return
-    }
-    const accepted = await this.deliver({
-      content,
-      meta: { source: 'telegram', chat_id: chatId, [ASYNC_ANSWER_META_KEY]: itemId },
-    })
-    if (!accepted) this.deps.log.warn('codex async answer not delivered', { item_id: itemId, chat_id: chatId })
-  }
 
   /** Учёт незавершённых элементов хода (любого типа: список типов у Codex растёт). */
   private trackItem(method: string, item: Record<string, unknown>): void {
@@ -1101,6 +1075,7 @@ export class CodexDriver {
     if (turn === undefined) return
     const id = typeof turnData.id === 'string' ? turnData.id : ''
     if (turn.id !== '' && id !== '' && id !== turn.id) return
+    this.cancelPendingAsk()
     this.active = undefined
     this.openItems.clear()
     const status = String(turnData.status ?? '')
@@ -1158,10 +1133,19 @@ export class CodexDriver {
         const chatId = this.active?.chatId ?? ''
         const questions = Array.isArray(p.questions) ? (p.questions as UserInputQuestion[]) : []
         if (chatId === '' || questions.length === 0) return { answers: {} }
+        // Вопрос — обычным текстом, без кнопок; ответ оператора вернётся следующим сообщением.
+        await this.safeDeliver(
+          chatId,
+          questionsToText('', questions.map(q => ({ title: q.question, options: q.options?.map(o => o.label) ?? null }))),
+        )
+        this.cancelPendingAsk()
         this.waitingOnUser += 1
         try {
-          const answers = await this.deps.effects.askUser(chatId, questions, String(p.itemId ?? `${this.now()}`))
-          return answers ?? { answers: {} }
+          const answer = await new Promise<string | null>(resolve => {
+            this.pendingAsk = { chatId, resolve }
+          })
+          if (answer === null || answer.trim() === '') return { answers: {} }
+          return { answers: { [questions[0]!.id]: { answers: [answer] } } }
         } finally {
           this.waitingOnUser -= 1
           this.lastTurnActivity = this.now()

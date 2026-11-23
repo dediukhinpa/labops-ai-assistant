@@ -11,13 +11,10 @@ import { createLogger } from '../../src/log.js'
 import {
   asyncQuestionsOf,
   CodexDriver,
-  formatAsyncAnswer,
   type DeliveryHandle,
   type DriverEffects,
   type MemoryHook,
   type PiiMode,
-  type UserInputAnswers,
-  type UserInputQuestion,
 } from '../../src/harness/codex/driver.js'
 import type { LineTransport } from '../../src/harness/codex/rpc.js'
 
@@ -116,10 +113,7 @@ interface Recorded {
   reads: Array<{ chatId: string; messageId: number }>
   dones: Array<{ chatId: string; messageId: number }>
   rebuilds: number
-  asks: number
   notices: string[]
-  /** Подмена ответа на вопрос (по умолчанию — сразу «Да» на первый вопрос). */
-  askOverride?: DriverEffects['askUser']
 }
 
 function setup(
@@ -140,8 +134,6 @@ function setup(
     itemStallMs?: number
     turnWatchMs?: number
     stallGraceMs?: number
-    /** Задержка ответа человека на вопрос. */
-    askDelayMs?: number
   } = {},
 ) {
   const dir = opts.dir ?? mkdtempSync(join(tmpdir(), 'codex-driver-'))
@@ -158,7 +150,6 @@ function setup(
     reads: [],
     dones: [],
     rebuilds: 0,
-    asks: 0,
     notices: [],
   }
   const effects: DriverEffects = {
@@ -167,12 +158,6 @@ function setup(
     },
     deliverFinal: async (chatId, text) => {
       rec.finals.push({ chatId, text })
-    },
-    askUser: async (chat, questions, requestId) => {
-      rec.asks += 1
-      if (rec.askOverride !== undefined) return rec.askOverride(chat, questions, requestId)
-      if (opts.askDelayMs !== undefined) await new Promise(r => setTimeout(r, opts.askDelayMs))
-      return { answers: { [questions[0]!.id]: { answers: ['Да'] } } }
     },
     memory: async (hook, payload) => {
       rec.memory.push({ hook, payload })
@@ -490,7 +475,7 @@ describe('запросы сервера', () => {
     expect(server.responseTo('r2')!.error!.code).toBe(-32601)
   })
 
-  test('вопрос пользователю уходит кнопками в чат хода', async () => {
+  test('вопрос пользователю уходит текстом; ответ — следующим сообщением чата', async () => {
     const { driver, server, rec } = setup()
     await driver.start()
     await driver.deliver(msg('42', 'x'))
@@ -502,12 +487,52 @@ describe('запросы сервера', () => {
         threadId: 'thr-new',
         turnId: 'turn-1',
         itemId: 'i1',
-        questions: [{ id: 'q', header: 'H', question: 'Удалить?', isOther: false, isSecret: false, options: null }],
+        questions: [
+          { id: 'q', header: 'H', question: 'Как назвать агента?', isOther: false, isSecret: false, options: null },
+        ],
       },
     })
     await tick()
-    expect(rec.asks).toBe(1)
-    expect(server.responseTo('q1')!.result).toEqual({ answers: { q: { answers: ['Да'] } } })
+    // Вопрос ушёл обычным текстом (без кнопок); вызов ещё ждёт ответа.
+    expect(rec.finals).toEqual([{ chatId: '42', text: 'Как назвать агента?' }])
+    expect(server.responseTo('q1')).toBeUndefined()
+    // Ответ оператора приходит обычным сообщением того же чата — он и есть ответ, не новый ход.
+    await driver.deliver(msg('42', 'Борис', 9))
+    await tick()
+    expect(server.responseTo('q1')!.result).toEqual({ answers: { q: { answers: ['Борис'] } } })
+    // Ответ не породил второй turn/start.
+    expect(server.requests('turn/start')).toHaveLength(1)
+  })
+
+  test('вопрос с вариантами: они перечислены текстом списком, не кнопками', async () => {
+    const { driver, server, rec } = setup()
+    await driver.start()
+    await driver.deliver(msg('42', 'x'))
+    await tick()
+    server.emit({
+      id: 'q2',
+      method: 'item/tool/requestUserInput',
+      params: {
+        threadId: 'thr-new',
+        turnId: 'turn-1',
+        itemId: 'i2',
+        questions: [
+          {
+            id: 'q',
+            header: 'H',
+            question: 'Модель?',
+            isOther: false,
+            isSecret: false,
+            options: [
+              { label: 'sonnet', description: '' },
+              { label: 'opus', description: '' },
+            ],
+          },
+        ],
+      },
+    })
+    await tick()
+    expect(rec.finals).toEqual([{ chatId: '42', text: 'Модель?\n• sonnet\n• opus' }])
   })
 })
 
@@ -530,104 +555,57 @@ describe('асинхронный вопрос (request_user_input_async)', () =>
     }
   }
 
-  test('вопрос уходит кнопками в чат хода, ответ возвращается в идущий ход вдогонку', async () => {
+  test('вопрос уходит обычным текстом, варианты перечислены списком, без кнопок', async () => {
     const { driver, server, rec } = setup()
-    const asked: Array<{ chatId: string; questions: UserInputQuestion[]; requestId: string }> = []
-    let answer: (a: UserInputAnswers | null) => void = () => undefined
-    rec.askOverride = (chatId, questions, requestId) => {
-      asked.push({ chatId, questions, requestId })
-      return new Promise(r => {
-        answer = r
-      })
-    }
     await driver.start()
     await driver.deliver(msg('42', 'создай агента'))
     await tick()
     server.notify('item/completed', asyncQuestion('call_961', 'Как назвать агента?', ['Дизайнер', 'Арт-директор']))
     await tick()
-    expect(asked).toHaveLength(1)
-    expect(asked[0]!.chatId).toBe('42')
-    expect(asked[0]!.requestId).toBe('call_961')
-    expect(asked[0]!.questions[0]).toMatchObject({
-      question: 'Как назвать агента?',
-      isOther: true,
-      options: [
-        { label: 'Дизайнер', description: '' },
-        { label: 'Арт-директор', description: '' },
-      ],
-    })
-    // Сам вопрос текстом не дублируется: только кнопки.
-    expect(rec.finals).toHaveLength(0)
-    // Ход не ждёт ответа: элемент закрыт, модель продолжает работу.
+    // Вопрос ушёл обычным сообщением; варианты — списком, не кнопками.
+    expect(rec.finals).toEqual([{ chatId: '42', text: 'Как назвать агента?\n• Дизайнер\n• Арт-директор' }])
+    // Ход не ждёт ответа: модель продолжает работу.
     expect(driver.busy).toBe(true)
-
-    answer({ answers: { q0: { answers: ['Арт-директор'] } } })
-    await tick()
-    const steer = server.requests('turn/steer')
-    expect(steer).toHaveLength(1)
-    expect(steer[0]!.params).toMatchObject({ expectedTurnId: 'turn-1' })
-    const text = (steer[0]!.params!.input as Array<{ text: string }>)[0]!.text
-    expect(text).toContain('answer_to="call_961"')
-    expect(text).toContain('chat_id="42"')
-    expect(text).toContain('«Как назвать агента?»: Арт-директор')
   })
 
-  test('ответ после конца хода начинает новый ход в том же чате', async () => {
+  test('ответ на async-вопрос — обычное сообщение, начинает новый ход (без answer_to)', async () => {
     const { driver, server, rec } = setup()
-    let answer: (a: UserInputAnswers | null) => void = () => undefined
-    rec.askOverride = () =>
-      new Promise(r => {
-        answer = r
-      })
     await driver.start()
     await driver.deliver(msg('42', 'x'))
     await tick()
     server.notify('item/completed', asyncQuestion('call_1', 'Имя?', null))
     server.notify('turn/completed', { threadId: 'thr-new', turn: { id: 'turn-1', status: 'completed', items: [] } })
     await tick()
-    answer({ answers: { q0: { answers: ['Борис'] } } })
+    expect(rec.finals).toEqual([{ chatId: '42', text: 'Имя?' }])
+    await driver.deliver(msg('42', 'Борис', 9))
     await tick()
     const starts = server.requests('turn/start')
     expect(starts).toHaveLength(2)
     const text = (starts[1]!.params!.input as Array<{ text: string }>).map(i => i.text).join('\n')
-    expect(text).toContain('«Имя?»: Борис')
-    expect(text).toContain('answer_to="call_1"')
+    expect(text).toContain('Борис')
+    expect(text).toContain('chat_id="42"')
+    expect(text).not.toContain('answer_to')
   })
 
-  test('тот же текст финальным сообщением хода и повтор элемента не уходят второй раз', async () => {
+  test('повтор того же элемента и тот же текст финальным сообщением не уходят второй раз', async () => {
     const { driver, server, rec } = setup()
     await driver.start()
     await driver.deliver(msg('42', 'x'))
     await tick()
-    const q = asyncQuestion('call_2', 'Как назвать нового агента?', ['А', 'Б'])
+    const q = asyncQuestion('call_2', 'Как назвать нового агента?', null)
     server.notify('item/completed', q)
     server.notify('item/completed', q)
     await tick()
-    expect(rec.asks).toBe(1)
-    const item = (q as { item: Record<string, unknown> }).item
-    server.notify('turn/completed', {
-      threadId: 'thr-new',
-      turn: { id: 'turn-1', status: 'completed', items: [item] },
-    })
-    await tick()
-    // Вопрос — не финальный ответ хода; повтор того же текста отдельным сообщением тоже не шлётся.
-    expect(rec.finals).toHaveLength(0)
-  })
-
-  test('финальное сообщение с тем же текстом после async-вопроса не дублируется', async () => {
-    const { driver, server, rec } = setup()
-    await driver.start()
-    await driver.deliver(msg('42', 'x'))
-    await tick()
-    server.notify('item/completed', asyncQuestion('call_3', 'Как назвать агента?', ['А']))
-    await tick()
+    // Вопрос ушёл текстом ровно один раз, несмотря на повтор элемента.
+    expect(rec.finals).toEqual([{ chatId: '42', text: 'Как назвать нового агента?' }])
+    // Тот же текст финальным сообщением хода второй раз не шлётся.
     server.notify('item/completed', {
       threadId: 'thr-new',
-      item: { type: 'agentMessage', id: 'm-final', text: 'Как  назвать агента?', delivery: null },
+      item: { type: 'agentMessage', id: 'm-final', text: 'Как  назвать нового агента?', delivery: null },
     })
     server.notify('turn/completed', { threadId: 'thr-new', turn: { id: 'turn-1', status: 'completed', items: [] } })
     await tick()
-    expect(rec.finals).toHaveLength(0)
+    expect(rec.finals).toHaveLength(1)
   })
 
   test('async-сообщение без вопросов (send_message_to_user_async) уходит текстом один раз', async () => {
@@ -640,7 +618,6 @@ describe('асинхронный вопрос (request_user_input_async)', () =>
       item: { type: 'agentMessage', id: 'call_m', text: 'Нашёл блокер', delivery: 'async', questions: null },
     })
     await tick()
-    expect(rec.asks).toBe(0)
     expect(rec.finals).toEqual([{ chatId: '42', text: 'Нашёл блокер' }])
     server.notify('turn/completed', {
       threadId: 'thr-new',
@@ -648,42 +625,6 @@ describe('асинхронный вопрос (request_user_input_async)', () =>
     })
     await tick()
     expect(rec.finals).toHaveLength(1)
-  })
-
-  test('нет ответа (таймаут кнопок) — в нить ничего не уходит', async () => {
-    const { driver, server, rec } = setup()
-    rec.askOverride = async () => null
-    await driver.start()
-    await driver.deliver(msg('42', 'x'))
-    await tick()
-    server.notify('item/completed', asyncQuestion('call_4', 'Имя?', null))
-    await tick()
-    expect(server.requests('turn/steer')).toHaveLength(0)
-    expect(server.requests('turn/start')).toHaveLength(1)
-  })
-
-  test('кнопки не отправились — вопрос уходит текстом', async () => {
-    const { driver, server, rec } = setup()
-    rec.askOverride = async () => {
-      throw new Error('telegram down')
-    }
-    await driver.start()
-    await driver.deliver(msg('42', 'x'))
-    await tick()
-    server.notify('item/completed', asyncQuestion('call_5', 'Имя?', ['А']))
-    await tick()
-    expect(rec.finals).toEqual([{ chatId: '42', text: 'Имя?' }])
-  })
-
-  test('formatAsyncAnswer: несколько вопросов, пропущенный помечен; без ответов — пусто', () => {
-    const qs = [
-      { title: 'Имя?', options: null },
-      { title: 'Роль?', options: ['A'] },
-    ]
-    expect(formatAsyncAnswer(qs, { answers: { q1: { answers: ['A'] } } })).toBe(
-      'Ответ пользователя на твой вопрос (request_user_input_async):\n- «Имя?»: (без ответа)\n- «Роль?»: A',
-    )
-    expect(formatAsyncAnswer(qs, { answers: {} })).toBe('')
   })
 
   test('asyncQuestionsOf отбрасывает пустые заголовки и варианты', () => {
@@ -953,7 +894,7 @@ describe('живучесть хода', () => {
   })
 
   test('пока человек отвечает на вопрос, ход не считается зависшим', async () => {
-    const { driver, server, rec } = setup({ turnStallMs: 40, turnWatchMs: 5, askDelayMs: 150 })
+    const { driver, server } = setup({ turnStallMs: 40, turnWatchMs: 5 })
     await driver.start()
     await driver.deliver(msg('42', 'спроси меня'))
     await tick()
@@ -967,9 +908,15 @@ describe('живучесть хода', () => {
         questions: [{ id: 'q', header: 'H', question: '?', isOther: false, isSecret: false, options: null }],
       },
     })
-    await waitFor(() => server.responseTo('q1') !== undefined, 100)
-    expect(rec.asks).toBe(1)
+    await tick()
+    // Ждём дольше предела молчания, ответа ещё нет — ход законно ждёт человека, не прерывается.
+    await new Promise(r => setTimeout(r, 60))
+    expect(server.responseTo('q1')).toBeUndefined()
     expect(server.requests('turn/interrupt')).toHaveLength(0)
+    // Ответ оператора снимает ожидание и возвращается в синхронный вызов.
+    await driver.deliver(msg('42', 'ответ', 9))
+    await waitFor(() => server.responseTo('q1') !== undefined, 100)
+    expect(server.responseTo('q1')!.result).toEqual({ answers: { q: { answers: ['ответ'] } } })
   })
 })
 
