@@ -42,8 +42,9 @@ if [ "$(harness_current)" = "codex" ]; then
   export CODEX_HOME
   CODEX_BIN="$(codex_bin || echo codex)"
   export CODEX_BIN
-  # Файл режима драйвер читает сам — на старте и затем в простое: при смене режима он
-  # перезапускает app-server между ходами и продолжает ту же нить (thread/resume).
+  # Файл режима драйвер читает сам — на старте и затем каждые несколько секунд: при смене режима
+  # он перезапускает app-server и продолжает ту же нить (thread/resume); напрямую — прервав
+  # идущий ход и повторив его вход, обратно через прокси — между ходами.
   LABOPS_PII_MODE_FILE="$(pii_mode_file "$AGENT")"
   export LABOPS_PII_MODE_FILE
   exec bun ./src/server.ts

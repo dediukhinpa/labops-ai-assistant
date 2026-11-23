@@ -42,8 +42,12 @@ export const IDLE_HEARTBEAT_INTERVAL_MS = 60_000
 export const READ_REACTION = '👀'
 /** Сколько ждать старта нити (resume/start грузят историю и MCP-серверы). */
 export const THREAD_START_TIMEOUT_MS = 120_000
-/** Как часто драйвер сверяет файл режима pii-proxy (смену применяет только между ходами). */
+/** Как часто драйвер сверяет файл режима pii-proxy. */
 export const PII_MODE_POLL_INTERVAL_MS = 5_000
+/** Сколько ждать конца хода после turn/interrupt при переходе напрямую. */
+export const PII_INTERRUPT_TIMEOUT_MS = 10_000
+/** Шаг ожидания конца прерванного хода, мс. */
+const INTERRUPT_POLL_MS = 50
 /** Версия клиента в initialize. */
 const CLIENT_INFO = { name: 'labops-codex-driver', version: '1.0.0' }
 
@@ -149,6 +153,8 @@ export class CodexDriver {
   private appliedMode: PiiMode = 'proxy'
   /** Идёт смена режима: старый app-server закрыт, новый поднимается. */
   private switching = false
+  /** Ход, прерванный ради перехода напрямую: его вход повторится в новом app-server. */
+  private interrupting: ActiveTurn | undefined
   private readonly exitListeners: Array<(code: number | null) => void> = []
   private readonly now: () => number
 
@@ -249,18 +255,32 @@ export class CodexDriver {
   }
 
   /**
-   * Сменить режим pii-proxy, если watchdog записал другой. Только между ходами: идущий ход не
-   * рвётся, новые сообщения на время смены ждут в очереди. Адрес модели codex читает на старте
+   * Сменить режим pii-proxy, если watchdog записал другой. Адрес модели codex читает на старте
    * app-server, поэтому app-server перезапускается, а нить продолжается (thread/resume) — с
-   * историей разговора. Не вышло — драйвер завершается, watchdog поднимет его заново (на
-   * старте нить тоже восстанавливается).
+   * историей разговора; новые сообщения на время смены ждут в очереди. Не вышло — драйвер
+   * завершается, watchdog поднимет его заново (на старте нить тоже восстанавливается).
+   *
+   * Возврат через прокси — только между ходами. Переход напрямую (решение владельца 23.11.2026)
+   * прокси мёртв, ход всё равно упадёт: turn/interrupt и повтор того же входа в той же нити уже
+   * напрямую (interruptForReplay), пользователь ничего не пересылает.
    *
    * @returns true — смена была (или завершилась ошибкой); false — менять нечего или не время.
    */
   private async maybeSwitchMode(): Promise<boolean> {
-    if (!this.ready || this.stopping || this.switching || this.active !== undefined) return false
+    if (!this.ready || this.stopping || this.switching) return false
     const want = this.desiredMode()
     if (want === this.appliedMode) return false
+    if (this.active !== undefined) {
+      if (want !== 'direct' || this.active.id === '') return false
+      this.switching = true
+      try {
+        await this.interruptForReplay(this.active)
+      } finally {
+        this.switching = false
+      }
+      // Ход успел закончиться сам — режим сменится между ходами обычным путём (pump).
+      if (this.active !== undefined) return false
+    }
     this.switching = true
     this.ready = false
     const from = this.appliedMode
@@ -290,6 +310,50 @@ export class CodexDriver {
     }
     void this.pump()
     return true
+  }
+
+  /**
+   * Прервать ход ради перехода напрямую. Его вход встаёт в начало очереди и уйдёт первым ходом
+   * после смены app-server. Ход, успевший закончиться сам (turn/completed не interrupted),
+   * обрабатывается как обычно и не повторяется — ответ уже был.
+   */
+  private async interruptForReplay(turn: ActiveTurn): Promise<void> {
+    this.interrupting = turn
+    this.deps.log.info('codex turn interrupted for direct mode', { turn_id: turn.id })
+    try {
+      await this.conn?.request(
+        'turn/interrupt',
+        { threadId: this.threadId, turnId: turn.id },
+        PII_INTERRUPT_TIMEOUT_MS,
+      )
+    } catch (err) {
+      this.deps.log.warn('codex turn/interrupt failed — replaying anyway', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    // Ждём turn/completed прерванного хода; не пришёл — старый app-server всё равно закрывается.
+    for (
+      let waited = 0;
+      this.active === turn && waited < PII_INTERRUPT_TIMEOUT_MS;
+      waited += INTERRUPT_POLL_MS
+    ) {
+      await new Promise(resolve => setTimeout(resolve, INTERRUPT_POLL_MS))
+    }
+    if (this.active === turn) {
+      this.active = undefined
+      this.requeueForReplay(turn)
+    }
+    this.interrupting = undefined
+  }
+
+  /** Вернуть вход хода в начало очереди: повтор напрямую, реакция «прочитано» уже стоит. */
+  private requeueForReplay(turn: ActiveTurn): void {
+    const inputs = turn.userTexts.map(text => ({ text, chatId: turn.chatId, messageId: undefined }))
+    this.queue.unshift(...inputs)
+    this.deps.log.info('codex turn input queued for replay', {
+      chat_id: turn.chatId,
+      messages: inputs.length,
+    })
   }
 
   /**
@@ -540,10 +604,20 @@ export class CodexDriver {
     const id = typeof turnData.id === 'string' ? turnData.id : ''
     if (turn.id !== '' && id !== '' && id !== turn.id) return
     this.active = undefined
+    const status = String(turnData.status ?? '')
+
+    // Ход прерван ради перехода напрямую или упал, пока прокси уже признан мёртвым: не ответ и
+    // не ошибка для пользователя — вход повторится напрямую после смены app-server.
+    const proxyDead = this.desiredMode() === 'direct' && this.appliedMode !== 'direct'
+    const interrupted = this.interrupting === turn && status === 'interrupted'
+    if (interrupted || (proxyDead && status === 'failed')) {
+      this.requeueForReplay(turn)
+      void this.pump()
+      return
+    }
 
     const items = Array.isArray(turnData.items) ? (turnData.items as unknown[]) : []
     const finalText = lastAgentMessage(items) || turn.lastAgentText
-    const status = String(turnData.status ?? '')
     if (status === 'failed') {
       const message = String(record(turnData.error).message ?? 'неизвестная ошибка')
       this.deps.log.error('codex turn failed', { turn_id: id, error: message })
