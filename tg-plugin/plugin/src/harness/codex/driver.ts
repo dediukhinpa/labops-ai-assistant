@@ -19,7 +19,7 @@ import { dirname } from 'path'
 
 import type { Logger } from '../../log.js'
 import type { ChannelEvent } from '../../channel/notify.js'
-import { formatInboundForTmux } from '../../channel/notify.js'
+import { formatChannelInbound } from '../../channel/notify.js'
 import { AppServerConnection, RPC_METHOD_NOT_FOUND, RpcError, type LineTransport } from './rpc.js'
 import {
   lastAgentMessage,
@@ -391,7 +391,7 @@ export class CodexDriver {
     }
     const rawId = Number.parseInt(event.meta.message_id ?? '', 10)
     const input: QueuedInput = {
-      text: formatInboundForTmux(event),
+      text: formatChannelInbound(event),
       chatId,
       messageId: Number.isFinite(rawId) ? rawId : undefined,
     }

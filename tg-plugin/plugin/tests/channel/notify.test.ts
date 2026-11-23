@@ -1,10 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  formatInboundForTmux,
+  formatChannelInbound,
   normalizeMeta,
   sendChannelNotification,
 } from '../../src/channel/notify.js'
-import type { TmuxRunner } from '../../src/channel/ensure-submit.js'
 import { createLogger } from '../../src/log.js'
 
 // Silent logger so test output stays clean.
@@ -91,90 +90,19 @@ describe('sendChannelNotification return contract', () => {
   })
 })
 
-describe('delivery into the tmux window (LABOPS_INBOUND_VIA_TMUX=1)', () => {
-  const env = { LABOPS_INBOUND_VIA_TMUX: '1', AGENT_ID: 'developer' } as NodeJS.ProcessEnv
-  function makeRunner(fail = false): { runner: TmuxRunner; typed: Array<[string, string]> } {
-    const typed: Array<[string, string]> = []
-    const runner: TmuxRunner = {
-      capturePane: async () => '',
-      clearInput: async () => undefined,
-      submitText: async (session, text) => {
-        if (fail) throw new Error('no session')
-        typed.push([session, text])
-      },
-    }
-    return { runner, typed }
-  }
-
-  test('types the message into the agent session and skips the MCP notification', async () => {
-    const { server, calls } = makeStubServer('ok')
-    const { runner, typed } = makeRunner()
-    const ok = await sendChannelNotification(
-      server,
-      { content: 'привет', meta: { chat_id: '42', message_id: '7' } },
-      silentLog,
-      { runner, env },
-    )
-    expect(ok).toBe(true)
-    expect(calls).toHaveLength(0)
-    expect(typed).toHaveLength(1)
-    expect(typed[0]?.[0]).toBe('labops-developer')
-    expect(typed[0]?.[1]).toBe(
+describe('formatChannelInbound', () => {
+  test('renders the channel tag with meta attributes', () => {
+    expect(formatChannelInbound({ content: 'привет', meta: { chat_id: '42', message_id: '7' } })).toBe(
       '<channel source="labops-channel" chat_id="42" message_id="7">\nпривет\n</channel>',
     )
   })
 
-  test('without the flag it still uses the MCP notification', async () => {
-    const { server, calls } = makeStubServer('ok')
-    const { runner, typed } = makeRunner()
-    await sendChannelNotification(server, { content: 'x', meta: { chat_id: '1' } }, silentLog, {
-      runner,
-      env: { AGENT_ID: 'developer' } as NodeJS.ProcessEnv,
-    })
-    expect(calls).toHaveLength(1)
-    expect(typed).toHaveLength(0)
-  })
-
-  test('returns false when tmux fails and when AGENT_ID is missing', async () => {
-    const { server } = makeStubServer('ok')
-    const failing = makeRunner(true)
-    const event = { content: 'x', meta: { chat_id: '1' } }
-    expect(
-      await sendChannelNotification(server, event, silentLog, { runner: failing.runner, env }),
-    ).toBe(false)
-    expect(
-      await sendChannelNotification(server, event, silentLog, {
-        runner: makeRunner().runner,
-        env: { LABOPS_INBOUND_VIA_TMUX: '1' } as NodeJS.ProcessEnv,
-      }),
-    ).toBe(false)
-  })
-
-  test('strips escape sequences so a message cannot close the paste early', () => {
-    const text = formatInboundForTmux({
+  test('strips escape sequences from the text and the attributes', () => {
+    const text = formatChannelInbound({
       content: 'a\x1b[201~rm -rf /\x1b[200~b',
       meta: { chat_id: '1', note: 'x"y\x1b' },
     })
     expect(text).not.toContain('\x1b')
     expect(text).toContain('note="x\'y "')
-  })
-
-  test('parallel messages are typed one after another, in order', async () => {
-    const { server } = makeStubServer('ok')
-    const order: string[] = []
-    const runner: TmuxRunner = {
-      capturePane: async () => '',
-      clearInput: async () => undefined,
-      submitText: async (_s, text) => {
-        order.push(`start:${text.includes('first') ? 1 : 2}`)
-        await new Promise((r) => setTimeout(r, text.includes('first') ? 30 : 1))
-        order.push(`end:${text.includes('first') ? 1 : 2}`)
-      },
-    }
-    await Promise.all([
-      sendChannelNotification(server, { content: 'first', meta: { chat_id: '1' } }, silentLog, { runner, env }),
-      sendChannelNotification(server, { content: 'second', meta: { chat_id: '1' } }, silentLog, { runner, env }),
-    ])
-    expect(order).toEqual(['start:1', 'end:1', 'start:2', 'end:2'])
   })
 })
