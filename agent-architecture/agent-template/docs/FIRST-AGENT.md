@@ -21,6 +21,11 @@ TELEGRAM_ALLOWED_USER_IDS="<your Telegram id>" \
 bash ~/labops-ai-assistant/agent-architecture/skills/create-agent/new-agent.sh
 ```
 
+On a swarm that runs on **Codex** (see [`../../docs/codex-harness.md`](../../docs/codex-harness.md))
+the script takes the harness from `~/.claude-lab/shared/swarm.env` and does not ask about it; the
+model default is `gpt-6.2-sol` instead of `sonnet`, the agent uses the swarm's shared ChatGPT
+sign-in, and its identity file is `AGENTS.md` instead of `CLAUDE.md`.
+
 The script creates `~/.claude-lab/reviewer/.claude/`, issues a second_brain token,
 connects the bot, and starts `claude-agent-reviewer.service`. Checklist of what it
 does: [CHECKLIST.md](CHECKLIST.md).

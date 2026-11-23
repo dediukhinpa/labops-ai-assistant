@@ -59,5 +59,16 @@ for s in "$(. "$HERE/codex-install.sh"; echo "$CODEX_SHA256_X86_64")" \
   [[ "$s" =~ ^[0-9a-f]{64}$ ]]; eq "$?" 0 "формат закреплённой суммы"
 done
 
+# 6. Сверка версии с закреплённой (new-agent.sh пишет расхождение в DEGRADED).
+mkdir -p "$TMP/vers"
+printf '#!/usr/bin/env bash\necho "codex-cli %s"\n' "$CODEX_PINNED_VERSION" > "$TMP/vers/pinned"
+printf '#!/usr/bin/env bash\necho "codex-cli 0.1.0"\n' > "$TMP/vers/old"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/vers/broken"
+chmod +x "$TMP/vers/"*
+codex_pinned_mismatch "$TMP/vers/pinned" >/dev/null; eq "$?" 1 "закреплённая версия — не расхождение"
+eq "$(codex_pinned_mismatch "$TMP/vers/old")" "0.1.0" "другая версия — печатается"
+codex_pinned_mismatch "$TMP/vers/old" >/dev/null; eq "$?" 0 "другая версия — расхождение"
+eq "$(codex_pinned_mismatch "$TMP/vers/broken")" "неизвестна" "версию не узнать — расхождение"
+
 echo "codex-install.test.sh: $pass ok, $fail fail"
 [ "$fail" -eq 0 ]

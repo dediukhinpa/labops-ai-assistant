@@ -52,6 +52,9 @@ render "$X" codex
 WS="$X/lab/dev/.claude"; CH="$X/lab/dev/.codex"
 check "codex: установка прошла" grep -q "Done." "$X/install.log"
 check "codex: AGENTS.src.md" test -f "$WS/AGENTS.src.md"
+check "codex: AGENTS.src.md — идентичность из шаблона" grep -q "Dev" "$WS/AGENTS.src.md"
+check "codex: временный рендер идентичности не попал в журнал" \
+  bash -c "! grep 'Created:' '$X/install.log' | grep -v '$X/' | grep -q ."
 check "codex: AGENTS.md собран" grep -q "begin core/USER.md" "$WS/AGENTS.md"
 check "codex: в AGENTS.md нет строк @-импорта" bash -c "! grep -qE '^@' '$WS/AGENTS.md'"
 check "codex: раздел канала — вариант Codex" grep -q "delivered to the operator automatically" "$WS/AGENTS.md"

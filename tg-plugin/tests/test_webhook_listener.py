@@ -37,6 +37,9 @@ def _load_listener(tmpdir: Path) -> object:
     os.environ["WEBHOOK_LOG_DIR"] = str(log_dir)
     os.environ["WEBHOOK_AGENT_WORKSPACE"] = str(tmpdir)
     os.environ["WEBHOOK_AGENT_NAME"] = "testagent"
+    # Пустая лаборатория без swarm.env: харнес claude, swarm.env хоста не читается.
+    os.environ["CLAUDE_LAB"] = str(tmpdir / "lab")
+    os.environ.pop("WEBHOOK_CODEX_HOME", None)
     # Default tests run without enrichment to avoid surprising network gates.
     os.environ.pop("WEBHOOK_SECOND_BRAIN_AGENT_ROUTER_URL", None)
     # Make sure no owner pings get sent during tests.
@@ -467,7 +470,7 @@ class EnrichmentWritebackTest(unittest.TestCase):
                     return b'{"task_id": "no-id", "from_agent": "unknown", "title": "degraded retry"}'
 
             module._fetch_pending_task = _fake_fetch
-            module._spawn_claude = _fake_spawn
+            module._spawn_headless = _fake_spawn
 
             async def run():
                 resp = await module.handle_webhook(_FakeRequest())

@@ -307,13 +307,16 @@ if [ "$HARNESS" = "codex" ]; then
         exit 1
     fi
     if [ ! -f "${WORKSPACE}/AGENTS.src.md" ]; then
-        CODEX_IDENTITY_TMP="$(mktemp)"
-        rm -f "$CODEX_IDENTITY_TMP"
-        fill_template "${TEMPLATES_DIR}/CLAUDE.md.template" "$CODEX_IDENTITY_TMP"
+        # Промежуточный рендер — в личном каталоге mktemp -d (права 700): fill_template не пишет
+        # в существующий файл, а удалить файл от mktemp и писать по тому же имени в общем /tmp
+        # значит дать подменить его ссылкой. Строку «Created» про временный файл не печатаем.
+        CODEX_IDENTITY_DIR="$(mktemp -d)"
+        CODEX_IDENTITY_TMP="${CODEX_IDENTITY_DIR}/identity.md"
+        fill_template "${TEMPLATES_DIR}/CLAUDE.md.template" "$CODEX_IDENTITY_TMP" >/dev/null
         python3 "$CODEX_WORKSPACE_PY" identity --agent-id "$AGENT_ID" \
             --channel-section "${CODEX_TEMPLATES_DIR}/channel-section.md" \
             "$CODEX_IDENTITY_TMP" "${WORKSPACE}/AGENTS.src.md"
-        rm -f "$CODEX_IDENTITY_TMP"
+        rm -rf "$CODEX_IDENTITY_DIR"
     else
         note "Skipping (exists): ${WORKSPACE}/AGENTS.src.md"
     fi
