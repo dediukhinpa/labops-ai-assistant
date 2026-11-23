@@ -40,6 +40,8 @@ export const HEARTBEAT_MIN_INTERVAL_MS = 15_000
 export const IDLE_HEARTBEAT_INTERVAL_MS = 60_000
 /** Реакция «агент прочитал сообщение» — как у Claude (ставится, когда ход взял сообщение). */
 export const READ_REACTION = '👀'
+/** Реакция «готово» на конец хода — как Stop-хук у Claude (заменяет 👀 на сообщениях хода). */
+export const DONE_REACTION = '👌'
 /** Сколько ждать старта нити (resume/start грузят историю и MCP-серверы). */
 export const THREAD_START_TIMEOUT_MS = 120_000
 /** Как часто драйвер сверяет файл режима pii-proxy. */
@@ -89,6 +91,8 @@ export interface DriverEffects {
   rebuildIdentity(): Promise<void>
   /** Отметить сообщение Telegram прочитанным (реакция). */
   markRead(chatId: string, messageId: number): Promise<void>
+  /** Отметить сообщение Telegram обработанным: ход, взявший его, закончился (реакция). */
+  markDone(chatId: string, messageId: number): Promise<void>
 }
 
 export interface CodexDriverDeps {
@@ -121,6 +125,8 @@ interface ActiveTurn {
   replies: Set<string>
   userTexts: string[]
   lastAgentText: string
+  /** message_id сообщений Telegram, взятых ходом: на конце хода им ставится 👌. */
+  messageIds: number[]
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -144,6 +150,11 @@ export class CodexDriver {
   private stopping = false
   private active: ActiveTurn | undefined
   private readonly queue: QueuedInput[] = []
+  /**
+   * message_id сообщений прерванного хода, чей вход повторяется (по чатам): 👀 на них уже
+   * стоит, а 👌 поставит ход-повтор, когда закончится.
+   */
+  private readonly replayMessageIds = new Map<string, number[]>()
   /** Контекст session-start для первого хода новой нити. */
   private sessionContext = ''
   private lastHeartbeat = 0
@@ -350,6 +361,10 @@ export class CodexDriver {
   private requeueForReplay(turn: ActiveTurn): void {
     const inputs = turn.userTexts.map(text => ({ text, chatId: turn.chatId, messageId: undefined }))
     this.queue.unshift(...inputs)
+    if (turn.messageIds.length > 0) {
+      const carried = this.replayMessageIds.get(turn.chatId) ?? []
+      this.replayMessageIds.set(turn.chatId, [...carried, ...turn.messageIds])
+    }
     this.deps.log.info('codex turn input queued for replay', {
       chat_id: turn.chatId,
       messages: inputs.length,
@@ -481,6 +496,7 @@ export class CodexDriver {
         input: [textInput(input.text)],
       })
       turn.userTexts.push(input.text)
+      if (input.messageId !== undefined) turn.messageIds.push(input.messageId)
       this.markRead(input)
       return true
     } catch (err) {
@@ -510,7 +526,12 @@ export class CodexDriver {
       replies: new Set(),
       userTexts: batch.map(q => q.text),
       lastAgentText: '',
+      messageIds: [
+        ...(this.replayMessageIds.get(first.chatId) ?? []),
+        ...batch.flatMap(q => (q.messageId !== undefined ? [q.messageId] : [])),
+      ],
     }
+    this.replayMessageIds.delete(first.chatId)
     this.active = turn
     const input: Array<Record<string, unknown>> = []
     if (this.sessionContext !== '') {
@@ -625,6 +646,7 @@ export class CodexDriver {
     } else if (finalText.trim() !== '' && !turn.replies.has(normalizeForDedup(finalText))) {
       await this.safeDeliver(turn.chatId, finalText)
     }
+    for (const messageId of turn.messageIds) this.markDone(turn.chatId, messageId)
 
     const ctx = this.hookContext(turn.chatId)
     await this.emitStatus(stopHook(ctx))
@@ -670,6 +692,14 @@ export class CodexDriver {
     if (input.messageId === undefined) return
     void this.deps.effects.markRead(input.chatId, input.messageId).catch((err: unknown) => {
       this.deps.log.debug('codex read reaction failed (ignored)', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    })
+  }
+
+  private markDone(chatId: string, messageId: number): void {
+    void this.deps.effects.markDone(chatId, messageId).catch((err: unknown) => {
+      this.deps.log.debug('codex done reaction failed (ignored)', {
         error: err instanceof Error ? err.message : String(err),
       })
     })

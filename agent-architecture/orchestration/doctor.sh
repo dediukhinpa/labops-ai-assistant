@@ -263,12 +263,75 @@ check_plumbing() {
 # ── 6. Общая память (second-brain) ───────────────────────────────────────────
 # Не влияет на «агент на связи», поэтому не вердикт, а примечание: без неё агент
 # отвечает, но теряет долгую память.
+#
+# Адреса — те, которыми пользуется сам агент: .mcp.json (Claude Code), config.toml (Codex),
+# затем agent.env; иначе прежние 5001/5002. Раньше порты были зашиты, и мозг на других портах
+# (песочница, второй рой на хосте) считался мёртвым, а живой по умолчанию — проверялся чужой.
+DOCTOR_BRAIN_DEFAULT_URLS=("http://127.0.0.1:5001/mcp" "http://127.0.0.1:5002/mcp")
+
+# brain_urls — две строки: адрес memory и memory_router агента (пустая — не нашлось).
+brain_urls() {
+  python3 - "$AGENT_WS" "$CLAUDE_LAB/$AGENT/.codex/config.toml" <<'PY' 2>/dev/null || true
+import json
+import re
+import sys
+from pathlib import Path
+
+ws, toml_path = Path(sys.argv[1]), Path(sys.argv[2])
+servers = (("second_brain-memory", "SECOND_BRAIN_MEMORY_URL"),
+           ("second_brain-memory_router", "SECOND_BRAIN_MEMORY_ROUTER_URL"))
+
+
+def usable(url: object) -> str:
+    """Адрес, если это настоящий http(s)-адрес, а не плейсхолдер шаблона."""
+    return url if isinstance(url, str) and url.startswith("http") and "${" not in url else ""
+
+
+def from_mcp_json(name: str) -> str:
+    try:
+        data = json.loads((ws / ".mcp.json").read_text(encoding="utf-8"))
+        return usable(data["mcpServers"][name]["url"])
+    except Exception:
+        return ""
+
+
+def from_toml(name: str) -> str:
+    try:
+        import tomllib
+        data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+        return usable(data["mcp_servers"][name]["url"])
+    except Exception:
+        return ""
+
+
+def from_agent_env(var: str) -> str:
+    value = ""
+    try:
+        for line in (ws / "agent.env").read_text(encoding="utf-8").splitlines():
+            m = re.match(rf"""^(?:export\s+)?{var}=(["']?)(.*)\1\s*$""", line.strip())
+            if m:
+                value = m.group(2)
+    except OSError:
+        return ""
+    return usable(value)
+
+
+for name, var in servers:
+    print(from_mcp_json(name) or from_toml(name) or from_agent_env(var))
+PY
+}
+
 check_second_brain() {
-  local url port dead=""
-  for port in 5001 5002; do
-    url="http://127.0.0.1:$port/mcp"
+  local url label dead="" i=0 found=()
+  mapfile -t found < <(brain_urls)
+  for i in 0 1; do
+    url="${found[$i]:-}"
+    url="${url:-${DOCTOR_BRAIN_DEFAULT_URLS[$i]}}"
+    # В примечании — порт, как и раньше; адрес без порта показываем целиком.
+    label="$(printf '%s' "$url" | sed -nE 's|^[a-z]+://[^/]*:([0-9]+).*|\1|p')"
+    label="${label:-$url}"
     if ! curl -s -o /dev/null -m 3 "$url" 2>/dev/null; then
-      dead="${dead}${dead:+,}$port"
+      dead="${dead}${dead:+,}$label"
     fi
   done
   if [ -n "$dead" ]; then

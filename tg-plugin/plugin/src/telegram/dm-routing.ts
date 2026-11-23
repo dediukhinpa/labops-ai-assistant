@@ -28,6 +28,40 @@ export function resolveOperatorUserIds(config: AppConfig): readonly number[] {
 }
 
 /**
+ * Люди, которым агент на Codex адресует то, что у Claude Code уходило бы в главную сессию:
+ * ответы на межагентные задачи и кнопки вопросов (ask). Явный `operator_user_ids`, иначе
+ * разрешённые `allowed_user_ids` (их задаёт TELEGRAM_ALLOWED_USER_IDS при установке).
+ *
+ * НЕ `permission_relay.allowed_user_ids`: у него умолчание -- канарейка 100000001, а
+ * установка его не задаёт, так что финальные ответы на задачи уходили в никуда (прогон
+ * 23.11.2026). У Claude Code этот список по-прежнему решает resolveOperatorUserIds.
+ *
+ * @param config Конфиг плагина.
+ * @returns Числовые id; первый -- адресат ответов на задачи.
+ */
+export function resolveCodexOperatorUserIds(config: AppConfig): readonly number[] {
+  return config.operator_user_ids ?? config.allowed_user_ids
+}
+
+/**
+ * Конфиг для кнопок вопросов Codex: если `ask_user_question.allowed_user_ids` не задан явно,
+ * отвечать на вопрос могут операторы Codex (а не канарейка из permission_relay).
+ *
+ * @param config Конфиг плагина.
+ * @returns Тот же конфиг или его копия с явным списком отвечающих.
+ */
+export function withCodexAskRecipients(config: AppConfig): AppConfig {
+  if (config.ask_user_question.allowed_user_ids !== undefined) return config
+  return {
+    ...config,
+    ask_user_question: {
+      ...config.ask_user_question,
+      allowed_user_ids: [...resolveCodexOperatorUserIds(config)],
+    },
+  }
+}
+
+/**
  * Является ли отправитель оператором.
  *
  * @param senderId Telegram user id (строкой или числом).

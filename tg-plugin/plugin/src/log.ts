@@ -3,6 +3,7 @@
 // Output goes to stderr by default so it doesn't poison the MCP stdio transport.
 
 import { redactToken } from './config.js'
+import type { LineSink } from './safety/crash-guard.js'
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -14,7 +15,8 @@ export interface Logger {
 }
 
 export interface CreateLoggerOptions {
-  stream?: NodeJS.WritableStream
+  // Любой приёмник строк: process.stderr или его охраняемая обёртка (safety/crash-guard.ts).
+  stream?: LineSink
   // Exact-substring secrets to redact alongside the pattern-based ones
   // (Telegram bot token, Bearer/query tokens). Useful for the
   // configured TELEGRAM_WEBHOOK_TOKEN which has no public pattern.
@@ -56,7 +58,7 @@ function formatLine(
 }
 
 export function createLogger(name: string, opts: CreateLoggerOptions = {}): Logger {
-  const stream: NodeJS.WritableStream = opts.stream ?? process.stderr
+  const stream: LineSink = opts.stream ?? process.stderr
   const threshold = LEVEL_ORDER[envLevel()]
   const secrets: ReadonlyArray<string> = opts.secrets ?? []
   const emit = (level: LogLevel, msg: string, ctx?: Record<string, unknown>): void => {

@@ -68,5 +68,51 @@ eq "$(printf '%s' "$TMP/lab/devops/.claude/labops-tg-plugin/plugin/src/server.ts
 eq "$(printf '%s' '/x/codex app-server -c mcp_servers.labops-channel.url="http://127.0.0.1:6003/mcp"' | grep -cE "$(codex_appserver_pattern 6003)")" 1 "app-server по порту"
 eq "$(printf '%s' '/x/codex app-server -c mcp_servers.labops-channel.url="http://127.0.0.1:60031/mcp"' | grep -cE "$(codex_appserver_pattern 6003)")" 0 "чужой порт не задет"
 
+# Драйвер, запущенный ровно той строкой, что в session-exec.sh, виден codex_driver_pid: живой
+# процесс с поддельным bun в cwd каталога плагина (как у панели tmux).
+PLUGIN_DIR="$TMP/lab/dev/.claude/labops-tg-plugin/plugin"
+mkdir -p "$PLUGIN_DIR/src" "$TMP/fakebin"
+# Поддельный bun — bash-скрипт: его cmdline = «bash <bun> <аргументы>», аргументы остаются.
+# По SIGTERM гасит и свой sleep, чтобы после теста не оставалось сирот.
+printf '#!/usr/bin/env bash\nsleep 30 & S=$!\ntrap "kill $S; exit 0" TERM\nwait\n' \
+  > "$TMP/fakebin/bun"
+chmod +x "$TMP/fakebin/bun"
+EXEC_LINE="$(grep -m1 -E '^[[:space:]]*exec bun ' "$HERE/../session-exec.sh" | sed -E 's/^[[:space:]]+//')"
+eq "$([ -n "$EXEC_LINE" ] && echo found)" found "строка запуска драйвера в session-exec.sh"
+( cd "$PLUGIN_DIR" && PATH="$TMP/fakebin:$PATH" eval "$EXEC_LINE" ) &
+DRIVER_SHELL=$!
+DRIVER_FOUND=""
+for _ in $(seq 1 50); do
+  DRIVER_FOUND="$(codex_driver_pid dev)"
+  [ -n "$DRIVER_FOUND" ] && break
+  sleep 0.1
+done
+eq "$([ -n "$DRIVER_FOUND" ] && echo seen)" seen "живой драйвер из session-exec.sh виден watchdog"
+eq "$(codex_driver_pid devops)" "" "драйвер не приписан соседу"
+pkill -f "$(codex_driver_pattern dev)" 2>/dev/null || true
+wait "$DRIVER_SHELL" 2>/dev/null || true
+
+# codex_stop_driver: SIGTERM и ожидание brain-flush; упрямый драйвер — SIGKILL после ожидания.
+eq "$(codex_stop_driver dev)" none "драйвера нет — нечего останавливать"
+start_fake_driver() {   # <тело скрипта bun>
+  printf '#!/usr/bin/env bash\n%s\n' "$1" > "$TMP/fakebin/bun"
+  chmod +x "$TMP/fakebin/bun"
+  ( cd "$PLUGIN_DIR" && PATH="$TMP/fakebin:$PATH" eval "$EXEC_LINE" ) &
+  for _ in $(seq 1 50); do [ -n "$(codex_driver_pid dev)" ] && break; sleep 0.1; done
+}
+# Штатный: на SIGTERM «сбрасывает память» и выходит.
+export FLUSH_MARK="$TMP/flushed"
+rm -f "$FLUSH_MARK"
+start_fake_driver 'sleep 30 & S=$!
+trap "kill $S; sleep 1; echo flushed > \"$FLUSH_MARK\"; exit 0" TERM
+wait'
+eq "$(CODEX_STOP_WAIT=10 codex_stop_driver dev)" graceful "SIGTERM: драйвер вышел сам"
+eq "$(cat "$FLUSH_MARK" 2>/dev/null)" flushed "успел сбросить память до выхода"
+# Упрямый: SIGTERM игнорирует — после ожидания SIGKILL.
+start_fake_driver 'trap "" TERM; while :; do sleep 1; done'
+eq "$(CODEX_STOP_WAIT=1 codex_stop_driver dev)" killed "SIGTERM проигнорирован — SIGKILL"
+eq "$(codex_driver_pid dev)" "" "после остановки драйвера нет"
+wait 2>/dev/null || true
+
 echo "codex-watch.test.sh: $pass ok, $fail fail"
 [ "$fail" -eq 0 ]

@@ -20,6 +20,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/agents.sh
 . "$SCRIPT_DIR/lib/agents.sh"
+# shellcheck source=lib/harness.sh
+. "$SCRIPT_DIR/lib/harness.sh"
+# shellcheck source=lib/codex-watch.sh
+. "$SCRIPT_DIR/lib/codex-watch.sh"
 
 AGENT="${1:?agent required}"
 SESSION="labops-$AGENT"
@@ -51,6 +55,17 @@ for candidate in "$WORKSPACE/scripts/task-poller.sh" "$WORKSPACE/scripts/task_po
   done
 done
 echo "[stop-agent] поллеров остановлено: $stopped_pollers"
+
+# 3a. Codex: драйвер — главный процесс панели, и перед выходом он сбрасывает память в общий
+#     мозг. Сразу SIGKILL терял этот сброс, поэтому сначала SIGTERM и ожидание (не дольше
+#     CODEX_STOP_WAIT_DEFAULT_SEC), и только потом -9. App-server агента — по его порту.
+if [ "$(harness_current)" = "codex" ]; then
+  CODEX_PORT="$(agent_channel_var "$AGENT" TELEGRAM_WEBHOOK_PORT 2>/dev/null || true)"
+  case "$(codex_stop_driver "$AGENT" "$CODEX_PORT")" in
+    graceful) echo "[stop-agent] драйвер codex завершился сам (память сброшена)" ;;
+    killed) echo "[stop-agent] драйвер codex не вышел за отведённое время — снят принудительно" ;;
+  esac
+fi
 
 # 3. Осиротевший bun-канал этого агента. kill-session убивает claude, но его
 #    ребёнок bun переусыновляется к PID 1 и продолжает держать webhook-порт

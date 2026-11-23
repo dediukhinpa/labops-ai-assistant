@@ -18,6 +18,8 @@ webhook below, which:
 1. verifies the Bearer token
 2. enriches the payload from `list_my_pending` if the swarm worker sent
    a degraded (empty) retry (the v6.3 active-patch)
+   — task text comes from `body`, else `text`, else `context`
+   (payload format: `agent-architecture/AGENT_ROUTER.md`)
 3. sends a Telegram pre-ack to the owner (optional, opt-in)
 4. spawns `claude -p` (or `codex exec`) in the agent workspace with a
    structured prompt that tells the agent how to pick up and complete the task

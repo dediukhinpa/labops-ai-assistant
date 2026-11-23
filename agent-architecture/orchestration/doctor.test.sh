@@ -54,6 +54,8 @@ EOF
 # Общая память «жива» — иначе каждый прогон тащил бы примечание про порты.
 cat > "$MOCKS/curl" <<'EOF'
 #!/usr/bin/env bash
+# Последний аргумент — адрес; MOCK_CURL_LOG фиксирует, куда стучался doctor.
+[ -n "${MOCK_CURL_LOG:-}" ] && printf '%s\n' "${!#}" >> "$MOCK_CURL_LOG"
 exit "${MOCK_CURL_RC:-0}"
 EOF
 
@@ -309,6 +311,45 @@ else
   bad "подробный вывод не показывает режим ПДн"; echo "    $out"
 fi
 rm -f "$PII_WS/settings.json"
+
+# ── Адреса общей памяти — из настроек агента, а не зашитые 5001/5002 ───────────
+BRAIN_WS="$TMP/lab/developer/.claude"
+mkdir -p "$BRAIN_WS"
+CURL_LOG="$TMP/curl.log"
+: > "$CURL_LOG"
+out="$(run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE" MOCK_CURL_RC=7 \
+  MOCK_CURL_LOG="$CURL_LOG")"
+if grep -qx "http://127.0.0.1:5001/mcp" "$CURL_LOG" && grep -qx "http://127.0.0.1:5002/mcp" "$CURL_LOG" \
+  && printf '%s' "$out" | grep -qF "порты 5001,5002"; then
+  ok "без настроек агента — прежние порты 5001/5002"
+else
+  bad "без настроек агента порты не прежние"; echo "    $out"; cat "$CURL_LOG"
+fi
+cat > "$BRAIN_WS/.mcp.json" <<'JSON'
+{"mcpServers": {
+  "second_brain-memory": {"type": "http", "url": "http://127.0.0.1:25001/mcp"},
+  "second_brain-memory_router": {"type": "http", "url": "http://127.0.0.1:25002/mcp"}
+}}
+JSON
+: > "$CURL_LOG"
+out="$(run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE" MOCK_CURL_RC=7 \
+  MOCK_CURL_LOG="$CURL_LOG")"
+if grep -qx "http://127.0.0.1:25001/mcp" "$CURL_LOG" && ! grep -q ":500[12]/" "$CURL_LOG" \
+  && printf '%s' "$out" | grep -qF "порты 25001,25002"; then
+  ok "порты мозга берутся из .mcp.json агента"
+else
+  bad "порты мозга не из .mcp.json"; echo "    $out"; cat "$CURL_LOG"
+fi
+rm -f "$BRAIN_WS/.mcp.json"
+printf 'export SECOND_BRAIN_MEMORY_URL="http://127.0.0.1:26001/mcp"\n' > "$BRAIN_WS/agent.env"
+: > "$CURL_LOG"
+run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE" MOCK_CURL_LOG="$CURL_LOG" >/dev/null
+if grep -qx "http://127.0.0.1:26001/mcp" "$CURL_LOG" && grep -qx "http://127.0.0.1:5002/mcp" "$CURL_LOG"; then
+  ok "agent.env — запасной источник; чего нет, то по умолчанию"
+else
+  bad "agent.env не учтён"; cat "$CURL_LOG"
+fi
+rm -f "$BRAIN_WS/agent.env"
 
 # ── Форма вывода ─────────────────────────────────────────────────────────────
 # Вердикт читает человек в Telegram: короткий, без внутренней кухни.

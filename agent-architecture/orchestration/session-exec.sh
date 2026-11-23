@@ -33,7 +33,9 @@ PII_MODE="$(pii_mode_get "$AGENT")"
 
 # Рой на Codex: панель становится драйвером (плагин в режиме LABOPS_HARNESS=codex), а он уже
 # сам держит codex app-server. TUI нет, поэтому флаги claude ниже не нужны. cwd панели —
-# каталог плагина (его задаёт start-agent.sh), отсюда и ./src/server.ts.
+# каталог плагина (его задаёт start-agent.sh). Путь к server.ts — ПОЛНЫЙ: watchdog, start/stop
+# и doctor ищут драйвер агента по cmdline с путём воркспейса (codex_driver_pattern), а с
+# ./src/server.ts его не видно — watchdog перезапускал живого агента каждые 30 с.
 . "$HERE/lib/harness.sh"
 . "$HERE/lib/codex-watch.sh"
 if [ "$(harness_current)" = "codex" ]; then
@@ -47,7 +49,7 @@ if [ "$(harness_current)" = "codex" ]; then
   # идущий ход и повторив его вход, обратно через прокси — между ходами.
   LABOPS_PII_MODE_FILE="$(pii_mode_file "$AGENT")"
   export LABOPS_PII_MODE_FILE
-  exec bun ./src/server.ts
+  exec bun "$PWD/src/server.ts"
 fi
 
 CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"

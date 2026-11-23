@@ -27,6 +27,34 @@ valid_allowlist() {
   printf '%s' "$1" | grep -qE '^-?[0-9]+(,-?[0-9]+)*$'
 }
 
+# Webhook-порты плагина: первый свободный начиная с 6000, не дальше диапазона.
+WEBHOOK_PORT_BASE=6000
+WEBHOOK_PORT_SPAN=100
+
+# webhook_port_listening <port> — порт уже кто-то слушает на хосте (любой адрес). Без ss — нет.
+webhook_port_listening() {
+  command -v ss >/dev/null 2>&1 || return 1
+  ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${1}\$"
+}
+
+# pick_webhook_port <lab-dir> [base] — первый порт, не записанный ни в один channel.env роя и
+# не занятый на хосте. Раньше смотрели только channel.env: порт, занятый чужим процессом
+# (песочница, другой сервис), доставался новому агенту, и его канал не поднимался.
+pick_webhook_port() {
+  local lab="$1" base="${2:-$WEBHOOK_PORT_BASE}" port i
+  for i in $(seq 0 "$WEBHOOK_PORT_SPAN"); do
+    port=$(( base + i ))
+    if grep -rqsE "^TELEGRAM_WEBHOOK_PORT=${port}\$" "$lab"/shared/state/*/telegram/channel.env \
+      2>/dev/null; then
+      continue
+    fi
+    webhook_port_listening "$port" && continue
+    printf '%s\n' "$port"
+    return 0
+  done
+  return 1
+}
+
 # unattended_input_errors — по строке на каждый недостающий ответ; пусто — всё есть.
 unattended_input_errors() {
   [ -n "${AGENT_NAME:-}" ] \

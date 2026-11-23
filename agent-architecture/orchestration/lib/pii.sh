@@ -20,8 +20,12 @@ command -v list_agents >/dev/null 2>&1 || . "$_PII_LIB_DIR/agents.sh"
 PII_PROXY_BASE_PORT="${PII_PROXY_BASE_PORT:-6300}"
 # Сколько подряд портов перебираем в поисках свободного (граница диапазона).
 PII_PROXY_PORT_SPAN=100
-# Порт и адрес общего на хост сервиса псевдонимизации.
-PII_PSEUDONYMIZER_URL_DEFAULT="http://127.0.0.1:8300"
+# Порт и адрес общего на хост сервиса псевдонимизации. Переопределяются окружением
+# (PII_PSEUDONYMIZER_PORT / PII_PSEUDONYMIZER_URL) — например, для песочницы рядом с боевым
+# сервисом на том же хосте; по умолчанию прежние 127.0.0.1:8300.
+PII_PSEUDONYMIZER_PORT_DEFAULT=8300
+PII_PSEUDONYMIZER_PORT="${PII_PSEUDONYMIZER_PORT:-$PII_PSEUDONYMIZER_PORT_DEFAULT}"
+PII_PSEUDONYMIZER_URL_DEFAULT="${PII_PSEUDONYMIZER_URL:-http://127.0.0.1:$PII_PSEUDONYMIZER_PORT}"
 # Таймаут проверки /health, секунд: проверка локальная, дольше ждать незачем.
 PII_HEALTH_TIMEOUT_SEC=3
 
