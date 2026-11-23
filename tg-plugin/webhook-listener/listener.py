@@ -86,6 +86,26 @@ SWARM_ENV_PATH = CLAUDE_LAB / "shared" / "swarm.env"
 AGENT_BEARER_PLACEHOLDER = "CHANGE_ME"
 # Сколько ждём ответа pii-proxy на /health (как PII_HEALTH_TIMEOUT_SEC в lib/pii.sh).
 PII_HEALTH_TIMEOUT_SEC = 3
+# Решение владельца 23.11.2026: pii-proxy молчит — задача всё равно выполняется, но напрямую,
+# а владелец получает предупреждение (ПДн в это время уходят в модель без маскирования).
+# Режим напрямую для codex: у провайдера агента (labops-pii) подменяется только base_url — на
+# бэкенд, куда ходит и сам прокси (тот же вход ChatGPT). Провайдер не меняем: Codex не продолжает
+# нить с другим провайдером (проверено на 0.171.0), так что режимы у драйвера и здесь одинаковы.
+PII_MODEL_PROVIDER = "labops-pii"
+DIRECT_BACKEND_URL = "https://chatgpt.com/backend-api/codex"
+# Файл режима агента, который ведут start-agent.sh и watchdog (lib/pii.sh: pii_mode_file).
+# В нём direct — владелец уже предупреждён watchdog, второй раз не пишем.
+PII_MODE_FILE = AGENT_WORKSPACE / "state" / "pii-mode"
+PII_MODE_DIRECT = "direct"
+# Метка «когда listener последний раз предупреждал о задаче напрямую» и троттлинг, секунд.
+PII_DIRECT_WARN_STAMP = AGENT_WORKSPACE / "state" / "pii-listener-direct.warned"
+PII_DIRECT_WARN_COOLDOWN_SEC = int(
+    os.environ.get("WEBHOOK_PII_DIRECT_WARN_COOLDOWN_SEC", "3600"))
+PII_DIRECT_WARN_TEXT = (
+    "⚠️ pii-proxy агента {agent} не отвечает — задачу от другого агента выполняю напрямую: "
+    "персональные данные уходят в модель без маскирования. Проверьте: "
+    "systemctl --user status labops-pii-proxy@{agent}"
+)
 # Корень локального pii-proxy в base_url провайдера: только 127.0.0.1/localhost, как в
 # pii_agent_base_url (lib/pii.sh). Путь (/backend-api/codex) для /health отбрасывается.
 _PII_LOCAL_URL = re.compile(r"^(http://(?:127\.0\.0\.1|localhost):[0-9]+)(?:/|$)")
@@ -330,14 +350,29 @@ def _build_codex_env() -> dict[str, str]:
     return env
 
 
-def _headless_command(prompt: str) -> tuple[list[str], dict[str, str]]:
-    """argv и окружение headless-запуска агента под харнес роя."""
+def _headless_command(prompt: str, direct: bool = False) -> tuple[list[str], dict[str, str]]:
+    """argv и окружение headless-запуска агента под харнес роя.
+
+    Args:
+        prompt: Текст задачи.
+        direct: pii-proxy не отвечает — запуск напрямую, мимо прокси. При False (норма) argv и
+            окружение прежние.
+
+    Returns:
+        argv и окружение дочернего процесса.
+    """
     if HARNESS == HARNESS_CODEX:
         # Без подтверждений и без песочницы codex работает по config.toml агента
         # (approval_policy=never, sandbox_mode=danger-full-access), флагами это не дублируем.
         # Рабочая папка агента — не git-репозиторий, отсюда --skip-git-repo-check.
-        return [CODEX_BIN, "exec", "--skip-git-repo-check", prompt], _build_codex_env()
-    return [CLAUDE_BIN, "-p", prompt, "--dangerously-skip-permissions"], _build_subprocess_env()
+        argv = [CODEX_BIN, "exec", "--skip-git-repo-check"]
+        if direct:
+            argv += ["-c", f'model_providers.{PII_MODEL_PROVIDER}.base_url="{DIRECT_BACKEND_URL}"']
+        return [*argv, prompt], _build_codex_env()
+    env = _build_subprocess_env()
+    if direct:
+        env.pop("ANTHROPIC_BASE_URL", None)
+    return [CLAUDE_BIN, "-p", prompt, "--dangerously-skip-permissions"], env
 
 
 def _codex_pii_proxy_url(config_path: Path) -> str:
@@ -371,20 +406,86 @@ async def _pii_proxy_healthy(base_url: str) -> bool:
         return False
 
 
-async def _harness_ready() -> bool:
-    """Можно ли запускать headless-агента прямо сейчас.
+def _pii_proxy_url() -> str:
+    """Корень pii-proxy агента под харнес роя (пусто — прокси у агента нет).
 
-    codex exec при молчащем pii-proxy не падает, а бесконечно переподключается
-    («Reconnecting… waiting for network») до таймаута задачи. Поэтому для codex прокси
-    проверяется заранее, как pii_gate в lib/pii.sh: прокси не настроен — можно, настроен
-    и жив — можно, настроен и молчит — нельзя. Для claude проверки нет (как и раньше).
+    codex — base_url провайдера из config.toml; claude — ANTHROPIC_BASE_URL, который получит
+    `claude -p` (из окружения listener или из settings.json агента). Считается прокси только
+    локальный адрес, как в pii_agent_base_url (lib/pii.sh).
     """
-    if HARNESS != HARNESS_CODEX:
-        return True
-    url = _codex_pii_proxy_url(CODEX_HOME / "config.toml")
+    if HARNESS == HARNESS_CODEX:
+        return _codex_pii_proxy_url(CODEX_HOME / "config.toml")
+    url = _build_subprocess_env().get("ANTHROPIC_BASE_URL", "")
+    match = _PII_LOCAL_URL.match(url)
+    return match.group(1) if match else ""
+
+
+async def _pii_direct_needed() -> bool:
+    """Нужно ли запускать задачу напрямую: прокси у агента настроен, но не отвечает на /health.
+
+    Раньше codex при этом не запускался (503, задача оставалась pending), а claude уходил в
+    мёртвый прокси. Теперь задача выполняется напрямую (решение владельца 23.11.2026).
+    """
+    url = _pii_proxy_url()
     if not url:
-        return True
-    return await _pii_proxy_healthy(url)
+        return False
+    return not await _pii_proxy_healthy(url)
+
+
+def _direct_warn_due(now: float) -> bool:
+    """Пора ли предупреждать владельца о задаче напрямую (и запомнить, что предупредили).
+
+    Молчим, если watchdog уже перевёл агента в режим напрямую (он сам предупредил), и если с
+    прошлого предупреждения listener не прошло PII_DIRECT_WARN_COOLDOWN_SEC. Метку пишем до
+    отправки: сбой Telegram не должен превращаться в сообщение на каждую задачу.
+    """
+    try:
+        if PII_MODE_FILE.read_text(encoding="utf-8").strip() == PII_MODE_DIRECT:
+            return False
+    except OSError:
+        pass
+    try:
+        last = float(PII_DIRECT_WARN_STAMP.read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        last = 0.0
+    if now - last < PII_DIRECT_WARN_COOLDOWN_SEC:
+        return False
+    try:
+        PII_DIRECT_WARN_STAMP.parent.mkdir(parents=True, exist_ok=True)
+        PII_DIRECT_WARN_STAMP.write_text(f"{now:.0f}\n", encoding="utf-8")
+    except OSError as exc:
+        log.warning("pii direct warn stamp not written: %s", exc)
+    return True
+
+
+async def _send_owner_text(text: str) -> None:
+    """Отправить владельцу агента простой текст в Telegram (без разметки). Сбой — в журнал."""
+    if not OWNER_CHAT_ID:
+        log.debug("owner message skip — WEBHOOK_OWNER_CHAT_ID not set")
+        return
+    try:
+        import aiohttp
+        token = TG_BOT_TOKEN_FILE.read_text().strip()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": OWNER_CHAT_ID, "text": text},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    log.warning("owner message HTTP %d: %s", resp.status, (await resp.text())[:200])
+    except Exception as exc:  # noqa: BLE001 — предупреждение не должно ронять приём задачи
+        log.warning("owner message failed: %s", exc)
+
+
+async def _warn_direct(task_id: str) -> None:
+    """Задача пойдёт напрямую: запись в журнал всегда, владельцу — с троттлингом."""
+    log.warning(
+        "pii-proxy of agent %s is not answering /health — task_id=%s runs DIRECT "
+        "(personal data is not masked)", AGENT_NAME, task_id,
+    )
+    if _direct_warn_due(time.time()):
+        await _send_owner_text(PII_DIRECT_WARN_TEXT.format(agent=AGENT_NAME))
 
 
 def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
@@ -397,14 +498,15 @@ def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
         proc.kill()
 
 
-async def _spawn_headless(prompt: str, task_id: str) -> None:
+async def _spawn_headless(prompt: str, task_id: str, direct: bool = False) -> None:
     ts = int(time.time())
     safe_id = _sanitize_task_id(task_id)
     log_path = LOG_DIR / f"{ts}_{safe_id}.log"
 
-    argv, env = _headless_command(prompt)
+    argv, env = _headless_command(prompt, direct=direct)
 
-    log.info("spawning %s for task_id=%s, log=%s", HARNESS, task_id, log_path.name)
+    log.info("spawning %s for task_id=%s%s, log=%s",
+             HARNESS, task_id, " (direct, no pii-proxy)" if direct else "", log_path.name)
     log_fh = log_path.open("w")
     # stdin закрыт обязательно: codex exec при открытом stdin ждёт из него ввод.
     proc = await asyncio.create_subprocess_exec(
@@ -668,20 +770,19 @@ async def handle_webhook(request: web.Request) -> web.Response:
         task_id = _sanitize_task_id(str(task_id))
         payload["task_id"] = task_id
 
-    if not await _harness_ready():
-        # Не 2xx: воркер доставки не помечает задачу acked и повторит её позже, задача
-        # остаётся pending в second_brain. Владельцу «Task accepted» тоже не шлём.
-        log.warning(
-            "pii-proxy of agent %s is not answering /health — task_id=%s not started, "
-            "left pending for redelivery", AGENT_NAME, task_id,
-        )
-        return web.json_response({"status": "harness_unavailable"}, status=503)
+    direct = await _pii_direct_needed()
+    if direct:
+        await _warn_direct(task_id)
 
     title = payload.get("title") or "(no title)"
     await _notify_owner(from_agent, task_id, title)
 
     prompt = _build_prompt(payload)
-    await _spawn_headless(prompt, task_id)
+    # В норме вызов прежний, побайтно: флаг передаётся только в режиме напрямую.
+    if direct:
+        await _spawn_headless(prompt, task_id, direct=True)
+    else:
+        await _spawn_headless(prompt, task_id)
 
     log.info("webhook accepted: from=%s task_id=%s", from_agent, task_id)
     return web.json_response({"status": "accepted", "task_id": task_id})
