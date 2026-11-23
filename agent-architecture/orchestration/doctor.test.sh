@@ -65,6 +65,8 @@ EOF
 # Ни осиротевших процессов, ни поллеров.
 cat > "$MOCKS/pgrep" <<'EOF'
 #!/usr/bin/env bash
+# MOCK_PGREP_PID — «найден драйвер Codex» с этим pid (несуществующий в /proc).
+[ -n "${MOCK_PGREP_PID:-}" ] && { echo "$MOCK_PGREP_PID"; exit 0; }
 exit 1
 EOF
 
@@ -363,6 +365,80 @@ else
   bad "agent.env не учтён"; cat "$CURL_LOG"
 fi
 rm -f "$BRAIN_WS/agent.env"
+
+# ── Codex: размер AGENTS.md против project_doc_max_bytes ──────────────────────
+# Codex молча обрезает AGENTS.md сверх предела; сборка пишет state/agents-md-size.json,
+# doctor превращает его в вердикт: выше порога — предупреждение, выше предела — поломка.
+CODEX_LAB="$TMP/codexlab"
+CODEX_WS="$CODEX_LAB/developer/.claude"
+mkdir -p "$CODEX_LAB/shared" "$CODEX_WS/state"
+printf 'HARNESS=codex\n' > "$CODEX_LAB/shared/swarm.env"
+cat > "$TMP/codex" <<'EOF'
+#!/usr/bin/env bash
+echo "Logged in using ChatGPT"
+EOF
+chmod +x "$TMP/codex"
+codex_run() {   # <env...> — вывод doctor для здорового по остальным признакам агента Codex
+  date +%s > "$CODEX_WS/state/heartbeat"
+  PATH="$MOCKS:$PATH" CLAUDE_LAB="$CODEX_LAB" CODEX_BIN="$TMP/codex" \
+    DOCTOR_START_SCRIPT="$TMP/start-agent.sh" MOCK_PGREP_PID=999999 \
+    "$@" bash "$DOCTOR" developer --quiet 2>&1
+}
+write_size_status() {   # <байт> <предел>
+  printf '{"bytes": %s, "limit": %s, "warn_fraction": 0.75, "level": "x", "sources": [%s]}\n' \
+    "$1" "$2" '{"path": "core/decisions.md", "bytes": 900}, {"path": "core/preferences.md", "bytes": 50}' \
+    > "$CODEX_WS/state/agents-md-size.json"
+}
+
+unlink "$CODEX_WS/state/agents-md-size.json" 2>/dev/null || true
+out="$(codex_run env)" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "всё в порядке"; then
+  ok "codex: статуса размера нет — здоров (базовый сценарий работает)"
+else
+  bad "codex: базовый сценарий не здоров (код $rc)"; echo "    $out"
+fi
+
+write_size_status 500 1000
+out="$(codex_run env)" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -qF "AGENTS.md"; then
+  ok "codex: размер ниже порога — молчим"
+else
+  bad "codex: размер ниже порога, а доктор ворчит (код $rc)"; echo "    $out"
+fi
+
+write_size_status 800 1000
+out="$(codex_run env)" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "близок к пределу" \
+   && printf '%s' "$out" | grep -qF "decisions.md" && printf '%s' "$out" | grep -qF "800 из 1000"; then
+  ok "codex: выше порога — предупреждение с источниками, вердикт «на связи»"
+else
+  bad "codex: выше порога нет предупреждения или вердикт «сломано» (код $rc)"; echo "    $out"
+fi
+
+write_size_status 1001 1000
+out="$(codex_run env)" && rc=0 || rc=$?
+if [ "$rc" -eq 1 ] && printf '%s' "$out" | grep -qF "больше предела" \
+   && printf '%s' "$out" | grep -qF "сократить или консолидировать decisions.md / preferences.md"; then
+  ok "codex: выше предела — поломка с подсказкой сократить decisions.md / preferences.md"
+else
+  bad "codex: выше предела нет поломки или подсказки (код $rc)"; echo "    $out"
+fi
+
+printf 'мусор\n' > "$CODEX_WS/state/agents-md-size.json"
+out="$(codex_run env)" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -qF "AGENTS.md"; then
+  ok "codex: нечитаемый статус размера — не выдумываем поломку"
+else
+  bad "codex: нечитаемый статус размера вызвал вердикт (код $rc)"; echo "    $out"
+fi
+
+# На claude проверка размера не участвует (рой на claude, статуса Codex там нет и быть не должно).
+out="$(run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE")" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -qF "AGENTS.md"; then
+  ok "claude: проверка размера AGENTS.md не включается"
+else
+  bad "claude: появилась проверка AGENTS.md (код $rc)"; echo "    $out"
+fi
 
 # ── Форма вывода ─────────────────────────────────────────────────────────────
 # Вердикт читает человек в Telegram: короткий, без внутренней кухни.
