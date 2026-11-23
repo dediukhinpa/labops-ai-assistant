@@ -251,7 +251,7 @@ _codex_prep_line="$(grep -n '^if \[ "\$MODE" = "prep" \]; then' install.sh | hea
 if grep -q '^if \[ "\$MODE" = "prep" \] && \[ "\$HARNESS" != "codex" \]; then' install.sh \
    && [ -n "$_pii_host_line" ] && [ -n "$_codex_prep_line" ] \
    && [ "$_pii_host_line" -lt "$_codex_prep_line" ] \
-   && sed -n "${_codex_prep_line},\$p" install.sh | head -8 | grep -q 'chmod 700 "\$CODEX_SHARED"'; then
+   && [[ "$(sed -n "${_codex_prep_line},$((_codex_prep_line + 8))p" install.sh)" == *'chmod 700 "$CODEX_SHARED"'* ]]; then
   ok "install.sh --no-agent на codex: сервис маскирования и каталог входа готовы до выхода"
 else
   bad "install.sh --no-agent на codex выходит раньше pii-setup host или без каталога входа"
