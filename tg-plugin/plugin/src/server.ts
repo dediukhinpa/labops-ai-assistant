@@ -27,7 +27,6 @@ import {
   loadConfig,
   resolveBotApiConfig,
   redactToken,
-  resolveAskUserQuestionAllowedUserIds,
   type AppConfig,
   type StatePaths,
 } from './config.js'
@@ -57,7 +56,11 @@ import { ProgressReporter } from './status/progress-reporter.js'
 import { TaskMirror } from './status/task-mirror.js'
 import { loadPolicyFromPath, type MultichatPolicy } from './chats/policy-loader.js'
 import { MultichatRouter } from './router/multichat-router.js'
-import { warnIfSharedDmContext } from './telegram/dm-routing.js'
+import {
+  resolveCodexOperatorUserIds,
+  warnIfSharedDmContext,
+  withCodexAskRecipients,
+} from './telegram/dm-routing.js'
 import { TmuxSessionPool } from './router/tmux-session-pool.js'
 import { InboundWatcher } from './telegram/watcher.js'
 import { MemoryWriter, type MemoryConfig } from './memory/writer.js'
@@ -723,7 +726,8 @@ const askUserQuestionRelay = createAskUserQuestionRelay({
   defaultTimeoutMs: config.ask_user_question.timeout_ms,
 })
 const askUserQuestionUi: AskUserQuestionUi = createAskUserQuestionUi({
-  config,
+  // Codex: вопросы приходят в чат хода, а нажимать кнопки может оператор (не канарейка).
+  config: codexMode ? withCodexAskRecipients(config) : config,
   log,
   telegramApi,
   relay: askUserQuestionRelay,
@@ -1205,8 +1209,8 @@ if (codexMode) {
   }
   // Задачи agent router: поллер кладёт их файлами в папку-очередь (печатать некуда).
   // Ответ на задачу уходит в личку оператора — как у Claude, где задачу вбрасывали в
-  // главную сессию.
-  const operatorChat = resolveAskUserQuestionAllowedUserIds(config)[0]
+  // главную сессию. Оператор — operator_user_ids/allowed_user_ids, не список разрешений.
+  const operatorChat = resolveCodexOperatorUserIds(config)[0]
   if (operatorChat !== undefined) {
     watchInbox({ workspace, chatId: String(operatorChat), deliver: event => driver.deliver(event), log })
   } else {
