@@ -115,13 +115,16 @@ run_bwrap() {
   # ulimit применяется к bwrap и всему дереву: адресное пространство (память),
   # размер файла, CPU-время (страховка к wall-clock timeout). Жёсткий лимит
   # числа процессов — через pids-cgroup, это следующий шаг после прототипа.
+  #
+  # Рабочую папку монтируем ПОД tmpfs /tmp: корень --ro-bind'ом read-only, и
+  # точку монтирования на верхнем уровне (/work) bwrap там создать не может
+  # («Read-only file system»); /tmp — tmpfs, туда mkdir проходит. Комментарии
+  # НЕ ставить между строками, склеенными «\» — иначе хвост команды уходит в
+  # комментарий (так ломался запуск: timeout без команды).
   ( ulimit -v $(( MEM_MB * 1024 )) 2>/dev/null || true
     ulimit -f 262144 2>/dev/null || true
     ulimit -t $(( TIMEOUT + 5 )) 2>/dev/null || true
     exec timeout --kill-after=5 "$TIMEOUT" \
-      # Рабочую папку монтируем ПОД tmpfs /tmp: корень --ro-bind'ом read-only,
-      # и точку монтирования на верхнем уровне (/work) bwrap там создать не может
-      # («Read-only file system»). /tmp — tmpfs, туда mkdir проходит.
       bwrap \
         --ro-bind / / \
         --dev /dev --proc /proc --tmpfs /tmp \
