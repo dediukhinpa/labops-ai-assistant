@@ -187,6 +187,31 @@ describe('redactSecrets — no false positives', () => {
   })
 })
 
+describe('redactSecrets — имена инструментов MCP не маскируются', () => {
+  test('mcp__сервер__инструмент и имена серверов second_brain остаются как есть', () => {
+    for (const name of [
+      'mcp__second_brain-agent_router__list_my_pending',
+      'mcp__second_brain-memory_router__recall',
+      'second_brain-memory_router',
+      'mcp__labops-channel__reply_with_buttons',
+    ]) {
+      expect(redactSecrets(`tool ${name} done`)).toBe(`tool ${name} done`)
+    }
+  })
+
+  test('токены той же длины по-прежнему маскируются', () => {
+    for (const tok of [
+      'abcd1234567890efghij5678WXYZ',
+      'a'.repeat(40),
+      'x9f3k2m8q7w1e5r4t6y0u2i8o9p3',
+      'Kx_9fQ2-mZ8wLp4rT7vY3nB6',
+      'deadbeef0123456789abcdef0123456789abcdef',
+    ]) {
+      expect(redactSecrets(`v=${tok}`)).not.toContain(tok)
+    }
+  })
+})
+
 describe('redactSecrets — idempotency', () => {
   test('applying twice yields the same result for a mix of secrets', () => {
     const input = [

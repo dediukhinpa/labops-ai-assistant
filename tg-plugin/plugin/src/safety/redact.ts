@@ -113,6 +113,22 @@ const TELEGRAM_TOKEN_PARTIAL_RE = /\b(\d{3})\d{7,}:(AA\w{2})\w+/g
 // and tail visible so a partial mask is still useful for debugging.
 const GENERIC_LONG_TOKEN_RE = /\b([A-Za-z0-9_-]{4})[A-Za-z0-9_-]{16,}([A-Za-z0-9_-]{4})\b/g
 
+// Исключение из общего правила: составные имена из строчных слов через `_`/`-` — имена
+// инструментов и серверов MCP (`mcp__second_brain-agent_router__list_my_pending`,
+// `second_brain-memory_router`). Их маскировка делала ленту хода нечитаемой (прогон
+// 23.11.2026). Слово — только строчные буквы и не больше одной цифры в конце, слов хотя бы
+// два: в токенах есть заглавные, цифры в середине или нет разделителей, они по-прежнему
+// маскируются.
+const IDENTIFIER_WORD_RE = /^[a-z]+[0-9]?$/
+const MIN_IDENTIFIER_WORDS = 2
+function isCompoundIdentifier(candidate: string): boolean {
+  const words = candidate.split(/[_-]+/).filter(w => w !== '')
+  return words.length >= MIN_IDENTIFIER_WORDS && words.every(w => IDENTIFIER_WORD_RE.test(w))
+}
+function genericLongTokenReplacer(match: string, head: string, tail: string): string {
+  return isCompoundIdentifier(match) ? match : `${head}***${tail}`
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────────────
@@ -141,7 +157,7 @@ const RULES: ReadonlyArray<RedactionRule> = [
   // 7. Telegram partial-mask shape (renderer-style).
   { pattern: TELEGRAM_TOKEN_PARTIAL_RE, replacement: '$1***:$2***' },
   // 8. Generic long-token rule — LAST.
-  { pattern: GENERIC_LONG_TOKEN_RE, replacement: '$1***$2' },
+  { pattern: GENERIC_LONG_TOKEN_RE, replacement: genericLongTokenReplacer },
 ]
 
 /**
