@@ -48,6 +48,11 @@ On a swarm that runs on Codex CLI the plugin is the agent's main process and sta
   [`../agent-architecture/SECURITY.md`](../agent-architecture/SECURITY.md).
 - `codex exec` in the webhook-listener (Codex swarm) is allowed; it runs with the agent's
   `CODEX_HOME`, so it uses the same config and pii-proxy as the agent.
+- **pii-proxy down → direct.** If the agent's pii-proxy does not answer `/health`, the Codex
+  driver and the webhook-listener (`claude -p` and `codex exec`) keep working directly, without
+  masking (owner decision, 23.11.2026). The owner is warned in Telegram (the listener at most
+  once an hour, the watchdog once per outage and once on recovery). Personal data is not masked
+  while this lasts — see [`../agent-architecture/SECURITY.md`](../agent-architecture/SECURITY.md).
 
 ## Supported versions
 

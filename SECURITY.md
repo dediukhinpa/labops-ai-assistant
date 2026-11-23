@@ -30,6 +30,16 @@ never committed. A leaked
 through this repository. This repo also runs `gitleaks` in CI and ships its own
 secret-scan guards to catch accidental commits.
 
+## PII masking: when the proxy is down
+
+Agents talk to the model through a local `pii-proxy` that masks personal data. Owner decision of
+23.11.2026: if an agent's proxy stops answering, the agent **keeps working directly** (both
+harnesses, the agent itself and agent-to-agent jobs) instead of going silent. While the proxy is
+down, **personal data goes to the model without masking** — the owner accepts this risk. The
+operator gets one Telegram message when an agent switches to direct mode and one when it is back;
+`/doctor` shows a warning meanwhile. Details:
+[`agent-architecture/SECURITY.md`](agent-architecture/SECURITY.md#pii-masking-and-data-localisation).
+
 ## Codex harness (ChatGPT subscription)
 
 When the swarm runs on Codex CLI instead of Claude Code (see
@@ -53,7 +63,8 @@ more things deserve care:
   dedicated **non-root** user **without sudo rights**. Codex has no equivalent of Claude Code's
   `Bash(sudo *)` deny rule in this setup.
 - **Headless runs.** `codex exec` (used by the webhook-listener for agent-to-agent jobs on a
-  Codex swarm) is allowed: it uses the same ChatGPT sign-in, config and pii-proxy as the agent.
+  Codex swarm) is allowed: it uses the same ChatGPT sign-in, config and pii-proxy as the agent
+  (directly, without the proxy, while the proxy is down — see above).
   The ban on headless `claude -p` / `claude setup-token` in the installer and orchestration stays
   for Claude.
 

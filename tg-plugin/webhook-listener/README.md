@@ -26,7 +26,7 @@ webhook below, which:
 
 | Method | Path             | Notes                                          |
 | ------ | ---------------- | ---------------------------------------------- |
-| POST   | `/hooks/agent`   | Bearer-auth, JSON body. Returns `accepted` or `empty_inbox`; `503 harness_unavailable` when a Codex agent's pii-proxy is down. |
+| POST   | `/hooks/agent`   | Bearer-auth, JSON body. Returns `accepted` or `empty_inbox`. A down pii-proxy no longer gives `503`: the task runs directly (see «pii-proxy check»). |
 | GET    | `/healthz`       | Static health probe.                           |
 
 ## Configuration
@@ -76,14 +76,26 @@ harness changes.
   `$WEBHOOK_AGENT_WORKSPACE/agent.env` (the second-brain MCP servers in `config.toml`
   use it via `bearer_token_env_var`; the `CHANGE_ME` placeholder is not passed). No
   other secret, no `CLAUDE_*` / `ANTHROPIC_*` variables.
-- **pii-proxy check (codex)**: `codex exec` does not fail when its model provider is
-  unreachable — it keeps reconnecting until the timeout. So before every run the
-  listener takes `base_url` of the agent's `model_provider` from `config.toml`
-  (local `http://127.0.0.1|localhost:<port>` only) and calls `GET /health` (3 s).
-  If the proxy does not answer, the task is not started, a warning is logged and
-  the webhook answers `503`: the delivery worker does not mark the task acked and
-  retries it later, so it stays pending in second-brain. No proxy in `config.toml`
+- **pii-proxy check (both harnesses)**: before every run the listener finds the
+  agent's local proxy (codex: `base_url` of the agent's `model_provider` in
+  `config.toml`; claude: `ANTHROPIC_BASE_URL` the child would get; only
+  `http://127.0.0.1|localhost:<port>` counts) and calls `GET /health` (3 s). No proxy
   means no check.
+  - Proxy answers — the run is exactly as before.
+  - Proxy does not answer — **the task still runs, directly, without masking** (owner
+    decision, 23.11.2026; it used to be `503` with the task left pending for codex,
+    and a dead proxy for claude). claude: `ANTHROPIC_BASE_URL` is dropped from the
+    child environment (plain `api.anthropic.com`, subscription sign-in). codex: the
+    provider stays, only its address points straight at the backend
+    (`-c model_providers.labops-pii.base_url="https://chatgpt.com/backend-api/codex"`,
+    where the proxy itself forwards to). A warning is logged, and the owner
+    (`WEBHOOK_OWNER_CHAT_ID`) gets a Telegram message at most once per
+    `WEBHOOK_PII_DIRECT_WARN_COOLDOWN_SEC` (default 3600; stamp file
+    `<workspace>/state/pii-listener-direct.warned`). If the watchdog has already put
+    the agent into direct mode (`<workspace>/state/pii-mode` = `direct`), the owner was
+    told by the watchdog and the listener does not repeat it.
+  - **Risk:** while the proxy is down, personal data in the task goes to the model
+    unmasked.
 - **timeout (codex)**: `codex exec` runs in its own process group; on
   `INVOCATION_TIMEOUT_SEC` the whole group (commands, MCP servers) is killed.
 
@@ -139,8 +151,9 @@ records so the token does not surface in journal output.
 
 ## PII proxy
 
-On a Codex swarm the proxy is configured in the agent's `config.toml` and checked
-before each run (see «Harness»). The rest of this section is about Claude Code.
+On a Codex swarm the proxy is configured in the agent's `config.toml`. On both harnesses it
+is checked before each run, and a down proxy means the task runs directly (see «Harness»).
+The rest of this section is about Claude Code.
 
 `claude -p` runs with `cwd` set to the agent workspace, so it does not read the agent's own
 `settings.json`. The listener therefore copies `ANTHROPIC_BASE_URL` (the agent's local

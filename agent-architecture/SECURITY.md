@@ -44,6 +44,16 @@ Agents are installed behind a local `pii-proxy` by default (`SKIP_PII_PROXY=1` d
 explicitly). Masking does not replace 152-FZ localisation: `install.sh` warns when the host IP is
 outside Russia, and the operator decides where personal data of Russian citizens may be stored.
 
+**When the proxy is down, agents work directly — personal data is then not masked.** Owner
+decision of 23.11.2026: an agent whose `pii-proxy` stops answering `/health` keeps working
+without it (the agent itself, both harnesses, and agent-to-agent jobs of the webhook-listener)
+instead of going silent. For as long as the proxy is down, personal data goes to the model
+provider **unmasked**; the owner accepts this risk. The operator is told in Telegram once when
+an agent switches to direct mode and once when it is back through the proxy; `/doctor` shows a
+warning while it lasts; the current mode is in `~/.claude-lab/<agent>/.claude/state/pii-mode`.
+If unmasked data must never leave the host, keep the proxy healthy (watch its unit) — there is
+no switch that brings back the old "do not start without the proxy" rule.
+
 ## Codex harness (ChatGPT subscription)
 
 When the swarm runs on Codex CLI instead of Claude Code (see
@@ -67,7 +77,8 @@ more things deserve care:
   dedicated **non-root** user **without sudo rights**. Codex has no equivalent of Claude Code's
   `Bash(sudo *)` deny rule in this setup.
 - **Headless runs.** `codex exec` (used by the webhook-listener for agent-to-agent jobs on a
-  Codex swarm) is allowed: it uses the same ChatGPT sign-in, config and pii-proxy as the agent.
+  Codex swarm) is allowed: it uses the same ChatGPT sign-in, config and pii-proxy as the agent
+  (directly, without the proxy, while the proxy is down — see above).
   The ban on headless `claude -p` / `claude setup-token` in the installer and orchestration stays
   for Claude.
 

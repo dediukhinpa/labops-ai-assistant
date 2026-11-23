@@ -108,16 +108,36 @@ CODEX_HOME=~/.claude-lab/shared/codex ~/.local/bin/codex login status   # "Logge
 - the second-brain MCP servers. Their Bearer is read from the `AGENT_BEARER` environment
   variable (from the agent's `agent.env`); the token itself is not written into this file.
 
-## 5. PII masking is mandatory
+## 5. PII masking is mandatory at install time
 
 On Claude the pii-proxy is on by default but can be turned off. On Codex it cannot:
 
 - the installer and `new-agent.sh` refuse `SKIP_PII_PROXY=1`;
 - the agent's proxy is set up **before** its workspace is rendered, because the proxy address
   goes into `config.toml`; if the proxy cannot be set up, the agent is not created;
-- the watchdog does not start the agent while its proxy does not answer `/health`, and alerts
-  the operator instead;
 - `config.toml` has no route to the model other than the proxy.
+
+### When the proxy is down: the agent works directly (owner decision, 23.11.2026)
+
+If the agent's pii-proxy stops answering, the agent **keeps working without it** instead of
+going silent. While that lasts, **personal data goes to the model unmasked** — the owner accepts
+this risk. How it works:
+
+- the watchdog checks the proxy's `/health` every ~30 s. Three failures in a row switch the
+  agent to *direct* mode, two successes in a row switch it back (one slow answer changes
+  nothing). It also tries to start the proxy unit itself;
+- the switch never breaks a running turn: the driver waits until the turn ends, restarts
+  `codex app-server` and continues the **same thread** (`thread/resume`), so the conversation
+  is kept. In direct mode only the provider's address changes
+  (`-c model_providers.labops-pii.base_url="https://chatgpt.com/backend-api/codex"`, the same
+  backend the proxy forwards to, the same ChatGPT sign-in). The provider itself is not
+  switched: Codex refuses to resume a thread with a different provider;
+- an agent that starts while the proxy is down starts in direct mode right away;
+- the current mode is in `~/.claude-lab/<agent>/.claude/state/pii-mode` (`proxy` or `direct`).
+
+How to notice: Telegram gets **one** message when the agent switches to direct mode ("pii-proxy
+is down — working directly, personal data is not masked") and one when it is back through the
+proxy. `/doctor` shows the same warning while the proxy is down.
 
 On Codex the proxy forwards to `https://chatgpt.com`, masks the OpenAI Responses requests
 Codex sends and restores the values in the streamed answer. Details:
@@ -180,7 +200,8 @@ The watchdog does not look at a screen. It checks:
 - the heartbeat is fresh (older than 5 minutes → the driver hung → restart);
 - the swarm is signed in to ChatGPT. If not, the operator gets **one** alert with the sign-in
   command and the watchdog waits instead of restarting in a loop; when the sign-in is back,
-  the agent is restarted automatically.
+  the agent is restarted automatically;
+- the pii-proxy answers `/health`. If not, the agent is switched to direct mode (section 5).
 
 ## 7. `/reset` and `/doctor` on Codex
 
@@ -199,7 +220,8 @@ The watchdog does not look at a screen. It checks:
 The `webhook-listener` runs one-off agent-to-agent jobs. In a Codex swarm it runs
 **`codex exec` instead of `claude -p`** — in the agent's workspace, with the agent's
 `CODEX_HOME`, so the job uses the same model, the same pii-proxy and the same second-brain
-access as the agent. `codex exec` with a ChatGPT sign-in is an officially supported way to use
+access as the agent. If the proxy does not answer, the job still runs, directly (same
+`base_url` override as the driver), and the owner gets a warning at most once an hour. `codex exec` with a ChatGPT sign-in is an officially supported way to use
 the subscription, so it is allowed; the ban on headless `claude -p` stays for Claude.
 
 ## 9. Troubleshooting
@@ -207,7 +229,7 @@ the subscription, so it is allowed; the ban on headless `claude -p` stays for Cl
 | Symptom | What to do |
 |---|---|
 | Telegram alert "Codex is not signed in to ChatGPT" | `CODEX_HOME=~/.claude-lab/shared/codex codex login --device-auth` — once for the whole swarm; agents come up by themselves |
-| Alert "pii-proxy does not answer" | `systemctl --user status labops-pii-proxy@<agent>`; the agent will not start without it |
+| Message "pii-proxy is down — working directly" | the agent works, but personal data is not masked. Check `systemctl --user status labops-pii-proxy@<agent>`; when the proxy is back the agent returns to it by itself and says so |
 | The agent is silent, no alert | send `/doctor`; or `tmux attach -t '=labops-<agent>'` to read the driver log |
 | Wrong Codex version | `~/.local/bin/codex --version` must print `0.171.0`; re-run `install.sh` to put it back |
 | Want to switch the swarm between Claude and Codex | not done by the installer; it is a separate procedure agreed with the owner |
