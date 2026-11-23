@@ -76,3 +76,11 @@ of each; `orchestration/lib/skills-external.sh` downloads them at install time.
 Licenses stay with their authors: Apache-2.0 (public-gbrain-agentos), MIT
 (agentos-skills-public, superpowers), Anthropic's own terms (docx, pptx, pdf,
 xlsx, mcp-builder, skill-creator, frontend-design).
+
+After install, `skills-external.sh` applies one local compatibility shim to
+`skill-creator` (`orchestration/lib/skill-creator-guard.py`): its description
+eval/optimize loop shells out to the `claude` CLI (Claude Code), so on a harness
+without it (a Codex swarm) that step is made to skip cleanly with a clear message
+instead of crashing. The shim only prepends a guarded early-exit; it does not
+alter the author's logic and is applied to the local copy only, never committed
+upstream.
