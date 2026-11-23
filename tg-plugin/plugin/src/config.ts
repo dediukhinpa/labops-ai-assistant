@@ -123,6 +123,12 @@ export const AppConfigSchema = z.object({
     // created lazily on the first thinking/tool/activity transition. Native
     // sendChatAction (header animation) is unaffected.
     suppress_typing_bubble: z.boolean().default(true),
+    // Показывать ли в плашке ход работы («Думает…», «🔧 инструмент», блок
+    // активности). false — плашка всегда «Печатает…»: события хуков (Claude
+    // и Codex) её не правят и не шлют ни одного вызова Bot API, анимация
+    // точек тоже выключена; пульс sendChatAction остаётся. Нужен там, где
+    // поток правок упирался в 429 от Telegram. true — прежнее поведение.
+    show_activity: z.boolean().default(true),
   }).default({}),
   album: z.object({
     flush_ms: z.number().int().positive().default(2000),
@@ -409,6 +415,10 @@ export const RuntimeEnvSchema = z.object({
     })
     .optional(),
   TELEGRAM_STATUS_INTERVAL_MS: z.coerce.number().int().positive().optional(),
+  // status.show_activity: 0/false/no/off -- плашка только «Печатает…».
+  TELEGRAM_STATUS_SHOW_ACTIVITY: emptyAsUndefined(
+    z.string().transform((v) => !/^(0|false|no|off)$/i.test(v.trim())).optional(),
+  ),
   TELEGRAM_ALBUM_FLUSH_MS: z.coerce.number().int().positive().optional(),
   // Темп фоновых вызовов Bot API. Пустая строка = не задано; границы проверяет
   // AppConfigSchema.bot_api (значение вне границ -- ошибка загрузки конфига, а не
@@ -607,10 +617,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     merged.local_api = localApi
   }
 
-  // Nested overrides: status.interval_ms, album.flush_ms, webhook.{host,port}
+  // Nested overrides: status.{interval_ms,show_activity}, album.flush_ms, webhook.{host,port}
   const status = (merged.status && typeof merged.status === 'object' ? merged.status : {}) as Record<string, unknown>
   if (parsedEnv.TELEGRAM_STATUS_INTERVAL_MS !== undefined) {
     status.interval_ms = parsedEnv.TELEGRAM_STATUS_INTERVAL_MS
+  }
+  if (parsedEnv.TELEGRAM_STATUS_SHOW_ACTIVITY !== undefined) {
+    status.show_activity = parsedEnv.TELEGRAM_STATUS_SHOW_ACTIVITY
   }
   if (Object.keys(status).length > 0) merged.status = status
 

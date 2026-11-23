@@ -94,6 +94,26 @@ describe('loadConfig', () => {
     expect(cfg.album.flush_ms).toBe(1500)
   })
 
+  test('status.show_activity: по умолчанию true, false из config.json, env сильнее', () => {
+    expect(loadConfig(env()).status.show_activity).toBe(true)
+
+    writeFileSync(join(stateDir, 'config.json'), JSON.stringify({
+      status: { show_activity: false },
+    }))
+    expect(loadConfig(env()).status.show_activity).toBe(false)
+    expect(loadConfig(env({ TELEGRAM_STATUS_SHOW_ACTIVITY: 'true' })).status.show_activity)
+      .toBe(true)
+
+    writeFileSync(join(stateDir, 'config.json'), JSON.stringify({
+      status: { show_activity: true },
+    }))
+    expect(loadConfig(env({ TELEGRAM_STATUS_SHOW_ACTIVITY: 'off' })).status.show_activity)
+      .toBe(false)
+    // Пустая строка = переменная не задана.
+    expect(loadConfig(env({ TELEGRAM_STATUS_SHOW_ACTIVITY: '' })).status.show_activity)
+      .toBe(true)
+  })
+
   test('rejects config with empty allowed_user_ids array', () => {
     writeFileSync(join(stateDir, 'config.json'), JSON.stringify({
       allowed_user_ids: [],

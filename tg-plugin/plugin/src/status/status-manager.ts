@@ -261,6 +261,23 @@ interface InternalEntry {
 // оператором («user stop») по-прежнему подписываем: он ждёт подтверждения.
 const SILENT_CANCEL_REASONS = new Set(['ttl', 'superseded', 'shutdown'])
 
+// Текст плашки в режиме status.show_activity=false. Статичный, без анимации
+// точек: каждый кадр анимации — это editMessageText, а режим нужен как раз
+// для того, чтобы плашка не порождала правок.
+const TYPING_ONLY_TEXT = '<i>Печатает…</i>'
+
+/**
+ * Состояния, которые в режиме «только Печатает…» не показываются: ход
+ * работы агента (мысли, инструменты, блок активности). «Остановлено» и
+ * «Ошибка» остаются — это итог, а не ход работы.
+ *
+ * @param state Состояние плашки.
+ * @returns true, если состояние описывает ход работы.
+ */
+function isProgressState(state: StatusState): boolean {
+  return state.kind === 'thinking' || state.kind === 'tool' || state.kind === 'activity'
+}
+
 function renderState(state: StatusState, tick: number, nowMs: number): string {
   // Ellipsis animation for typing/thinking: 1→2→3 dots.
   const dotCount = (tick % 3) + 1
@@ -421,6 +438,18 @@ export class StatusManager {
     return shouldStreamForChat(this.policy, chatId)
   }
 
+  /**
+   * Режим «только Печатает…» (status.show_activity=false): плашка не
+   * переписывается ходом работы агента.
+   *
+   * @returns true, если ход работы в плашке не показывается.
+   */
+  private isTypingOnly(): boolean {
+    // Строго === false: конфиг, собранный в обход схемы (без поля), должен
+    // вести себя по-старому, а не молча включать режим.
+    return this.config.status.show_activity === false
+  }
+
   isActive(chatId: string): boolean {
     return this.entries.has(chatId)
   }
@@ -537,10 +566,19 @@ export class StatusManager {
       }
     }
 
-    const suppressBubble =
-      this.config.status.suppress_typing_bubble && initialState.kind === 'typing'
+    // В режиме «только Печатает…» плашка открывается как «Печатает…», даже
+    // если её открыло событие хука с состоянием activity (ленивое открытие).
+    const typingOnly = this.isTypingOnly()
+    const effectiveState: StatusState =
+      typingOnly && isProgressState(initialState) ? { kind: 'typing' } : initialState
 
-    const text = renderState(initialState, 0, this.now())
+    const suppressBubble =
+      this.config.status.suppress_typing_bubble && effectiveState.kind === 'typing'
+
+    const text =
+      typingOnly && effectiveState.kind === 'typing'
+        ? TYPING_ONLY_TEXT
+        : renderState(effectiveState, 0, this.now())
     let messageId = 0
     if (!suppressBubble) {
       const sendOpts: { parse_mode: 'HTML'; reply_to_message_id?: number } = {
@@ -588,7 +626,7 @@ export class StatusManager {
     }
     const entry: InternalEntry = {
       handle,
-      state: initialState,
+      state: effectiveState,
       tick: 0,
       lastText: suppressBubble ? '' : text,
       intervalHandle: null,
@@ -652,7 +690,8 @@ export class StatusManager {
         return
       }
       live.tick += 1
-      if (!live.bubbleSuppressed) {
+      // Режим «только Печатает…»: плашка статична, анимация не правит её.
+      if (!live.bubbleSuppressed && !this.isTypingOnly()) {
         const next = renderState(live.state, live.tick, this.now())
         void this.editSafely(live, next)
       }
@@ -829,6 +868,9 @@ export class StatusManager {
       // Stale handle — caller is editing something already completed.
       return
     }
+    // Режим «только Печатает…»: ход работы (thinking/tool/activity) не
+    // меняет ни состояние, ни плашку — ни одного вызова Bot API.
+    if (this.isTypingOnly() && isProgressState(state)) return
     entry.state = state
     // Reset tick on state change so the ellipsis animation restarts at 1.
     entry.tick = 0
@@ -874,6 +916,20 @@ export class StatusManager {
     // semantics + timer cleanup stay in one place.
     if (event.kind === 'session_stop') {
       await this.complete(chatId)
+      return
+    }
+
+    // Режим «только Печатает…»: событие хука лишь открывает плашку, если её
+    // ещё нет (как «Печатает…» — см. startInternal), и больше ничего не
+    // делает. Буфер активности не ведём: показывать его некому.
+    if (this.isTypingOnly()) {
+      if (this.entries.has(chatId)) return
+      try {
+        await this.start(chatId, undefined, { kind: 'typing' })
+      } catch {
+        // Ошибка отправки уже записана в журнал внутри start(); видимость
+        // статуса не должна тормозить хуки.
+      }
       return
     }
 
