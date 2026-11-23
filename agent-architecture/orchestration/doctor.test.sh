@@ -270,6 +270,46 @@ else
   bad "--fix зря перезапустил здорового агента"; echo "    $out"
 fi
 
+# ── Маскирование ПДн: прокси молчит — предупреждение, а не поломка ─────────
+# Решение владельца 23.11.2026: без pii-proxy агент работает напрямую. Доктор не ставит
+# вердикт «сломано», но говорит об этом всегда — и в Telegram (--quiet) тоже.
+PII_WS="$TMP/lab/developer/.claude"
+mkdir -p "$PII_WS/state"
+printf '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:6399"}}' > "$PII_WS/settings.json"
+quiet_run() {
+  PATH="$MOCKS:$PATH" CLAUDE_LAB="$TMP/lab" DOCTOR_START_SCRIPT="$TMP/start-agent.sh" \
+    "$@" bash "$DOCTOR" developer --quiet 2>&1
+}
+out="$(quiet_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE" MOCK_CURL_RC=7)" \
+  && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "работает напрямую" \
+   && printf '%s' "$out" | grep -qF "без маскирования"; then
+  ok "прокси молчит: предупреждение о режиме напрямую, вердикт «на связи»"
+else
+  bad "прокси молчит: нет предупреждения или вердикт «сломано» (код $rc)"; echo "    $out"
+fi
+printf 'direct\n' > "$PII_WS/state/pii-mode"
+out="$(quiet_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE")" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "вернётся через прокси сам"; then
+  ok "прокси ожил, агент ещё напрямую: сказано, что вернётся сам"
+else
+  bad "прокси ожил при режиме напрямую: нет пояснения (код $rc)"; echo "    $out"
+fi
+rm -f "$PII_WS/state/pii-mode"
+out="$(quiet_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE")" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && ! printf '%s' "$out" | grep -qF "pii-proxy"; then
+  ok "прокси жив: в Telegram-вердикте ничего нового"
+else
+  bad "прокси жив, а вердикт изменился (код $rc)"; echo "    $out"
+fi
+out="$(run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE")"
+if printf '%s' "$out" | grep -qF "режим ПДн: через pii-proxy"; then
+  ok "подробный вывод показывает текущий режим"
+else
+  bad "подробный вывод не показывает режим ПДн"; echo "    $out"
+fi
+rm -f "$PII_WS/settings.json"
+
 # ── Форма вывода ─────────────────────────────────────────────────────────────
 # Вердикт читает человек в Telegram: короткий, без внутренней кухни.
 out="$(run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE")"

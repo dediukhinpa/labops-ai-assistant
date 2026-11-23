@@ -118,17 +118,40 @@ for key in DISABLE_TELEMETRY CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC; do
     ok "settings.json.template не задаёт $key (ломает каналы)"
   fi
 done
-unit "pii.sh: порты / gate / session_stuck / геопроверка — юнит-тест зелёный" \
+unit "pii.sh: порты / режим и гистерезис / session_stuck / геопроверка — юнит-тест зелёный" \
      "pii.sh: юнит-тест провален (orchestration/lib/pii.test.sh)" bash orchestration/lib/pii.test.sh
 unit "pii-setup.sh: установка прокси агента и правка settings.json — юнит-тест зелёный" \
      "pii-setup.sh: юнит-тест провален (orchestration/pii-setup.test.sh)" \
      bash orchestration/pii-setup.test.sh
+# Решение владельца 23.11.2026: прокси молчит — агент работает напрямую с предупреждением в
+# Telegram, а не стоит. Значит: start-agent выбирает режим по /health и не отказывает в старте,
+# панель claude в режиме напрямую убирает ANTHROPIC_BASE_URL, драйвер codex получает файл режима,
+# watchdog проверяет прокси каждый проход и переключает агента.
 if grep -q 'pii-setup.sh" agent' skills/create-agent/new-agent.sh \
-   && grep -q 'pii_gate' orchestration/start-agent.sh && grep -q 'pii_start_allowed' orchestration/watchdog.sh; then
-  ok "new-agent.sh ставит pii-proxy, start-agent.sh и watchdog не стартуют агента без него"
+   && grep -q 'pii_mode_resolve_start' orchestration/start-agent.sh \
+   && ! grep -q '\$HARNESS не запускаю' orchestration/start-agent.sh \
+   && grep -q 'ANTHROPIC_BASE_URL' orchestration/session-exec.sh \
+   && grep -q 'LABOPS_PII_MODE_FILE' orchestration/session-exec.sh \
+   && grep -q 'pii_watch_cycle' orchestration/watchdog.sh \
+   && ! grep -q 'pii_start_allowed' orchestration/watchdog.sh; then
+  ok "pii-proxy: new-agent ставит его, без него агент стартует напрямую, watchdog переключает режим"
 else
-  bad "pii-proxy не подключён к new-agent.sh / start-agent.sh / watchdog.sh"
+  bad "pii-proxy: start-agent / session-exec / watchdog нарушают «прокси молчит — напрямую»"
 fi
+# Работающий claude переключается только из чистого простоя (идущий ход не рвём), с меткой
+# --continue (разговор не теряется) и без счёта во флап рестартов; codex — записью режима,
+# драйвер сам переключается между ходами.
+if grep -q 'PII_SWITCH_IDLE_CYCLES" \] && pii_switch_due' orchestration/watchdog.sh \
+   && grep -q ': > "$(pii_switch_continue_file "$AGENT")"' orchestration/watchdog.sh \
+   && grep -q 'PII_WANT" noflap' orchestration/watchdog.sh \
+   && grep -q 'pii_mode_set "$AGENT" "$PII_WANT"' orchestration/watchdog.sh; then
+  ok "watchdog: смена режима pii-proxy в простое, с --continue, без флап-тревоги"
+else
+  bad "watchdog: смена режима pii-proxy может порвать ход или стереть разговор"
+fi
+unit "start-agent.sh: прокси молчит — старт напрямую и одно предупреждение — юнит-тест зелёный" \
+     "start-agent.sh: юнит-тест провален (orchestration/start-agent.test.sh)" \
+     bash orchestration/start-agent.test.sh
 # 4b. create-agent flow спрашивает и пробрасывает PRIMARY_MODEL
 if grep -qE '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh \
    && grep -qE 'PRIMARY_MODEL="\$PRIMARY_MODEL"' skills/create-agent/new-agent.sh; then

@@ -94,6 +94,7 @@ echo "ENV_TOKEN:${TELEGRAM_BOT_TOKEN:-}"
 echo "ENV_BEARER:${AGENT_BEARER:-}"
 echo "ENV_VOICE:${VOICE_TRANSCRIBER_TOKEN:-}"
 echo "ENV_WHTOK:${TELEGRAM_WEBHOOK_TOKEN:-}"
+echo "ENV_BASE_URL:${ANTHROPIC_BASE_URL:-}"
 EOF
 chmod +x "$HOME/.local/bin/claude"
 
@@ -145,4 +146,44 @@ case "$CMDLINE" in
   *) fail "канал пропал из командной строки панели: $CMDLINE" ;;
 esac
 
-echo "OK: agent-env.sh + session-exec.sh — 9 проверок пройдено"
+# 10. Через pii-proxy (норма): настройки воркспейса как есть, без --continue.
+SETTINGS_ENV='"ANTHROPIC_BASE_URL":"http://127.0.0.1:6311","DISABLE_ERROR_REPORTING":"1"'
+printf '{"model":"m","env":{%s}}' "$SETTINGS_ENV" > "$WS/settings.json"
+OUT="$(ANTHROPIC_BASE_URL=http://127.0.0.1:6311 bash "$ORCH/session-exec.sh" "$AGENT" 2>/dev/null)"
+CMDLINE="$(printf '%s' "$OUT" | grep '^CMDLINE:')"
+case "$CMDLINE" in
+  *"--settings $WS/settings.json "*) ;;
+  *) fail "через прокси настройки должны быть прежними: $CMDLINE" ;;
+esac
+case "$CMDLINE" in *--continue*) fail "--continue без метки: $CMDLINE" ;; esac
+
+# 11. Напрямую (прокси не ответил на старте): копия настроек без ANTHROPIC_BASE_URL, адрес
+#     убран и из окружения, остальное (модель, env) на месте.
+mkdir -p "$WS/state"; printf 'direct\n' > "$WS/state/pii-mode"
+OUT="$(ANTHROPIC_BASE_URL=http://127.0.0.1:6311 bash "$ORCH/session-exec.sh" "$AGENT" 2>/dev/null)"
+CMDLINE="$(printf '%s' "$OUT" | grep '^CMDLINE:')"
+DIRECT="$WS/state/settings.pii-direct.json"
+case "$CMDLINE" in
+  *"--settings $DIRECT "*) ;;
+  *) fail "напрямую claude должен получить копию настроек без прокси: $CMDLINE" ;;
+esac
+python3 - "$DIRECT" <<'PY' || fail "копия настроек для режима напрямую неверна"
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert "ANTHROPIC_BASE_URL" not in d["env"], d
+assert d["env"]["DISABLE_ERROR_REPORTING"] == "1" and d["model"] == "m", d
+PY
+printf '%s' "$OUT" | grep -q '^ENV_BASE_URL:$' \
+  || fail "напрямую ANTHROPIC_BASE_URL остался в окружении"
+
+# 12. Перезапуск ради смены режима продолжает разговор: метка даёт --continue и забирается.
+: > "$WS/state/pii-switch-continue"
+OUT="$(bash "$ORCH/session-exec.sh" "$AGENT" 2>/dev/null)"
+printf '%s' "$OUT" | grep '^CMDLINE:' | grep -q -- '--continue' \
+  || fail "метка смены режима не дала --continue"
+[ -e "$WS/state/pii-switch-continue" ] && fail "метка смены режима не забрана"
+OUT="$(bash "$ORCH/session-exec.sh" "$AGENT" 2>/dev/null)"
+printf '%s' "$OUT" | grep '^CMDLINE:' | grep -q -- '--continue' && fail "--continue без метки"
+rm -f "$WS/state/pii-mode"
+
+echo "OK: agent-env.sh + session-exec.sh — 12 проверок пройдено"

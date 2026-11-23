@@ -54,15 +54,19 @@ if ! ( resolve_agent_env "$AGENT" >/dev/null ); then
   exit 1
 fi
 
-# Fail closed: у агента настроен pii-proxy (ANTHROPIC_BASE_URL в settings.json у claude,
-# model_provider в config.toml у codex), но он не отвечает. Стартовать нельзя: агент без
-# прокси ушёл бы в модель с немаскированными данными
-# либо молча завис на ошибке соединения. Сессию не трогаем (kill ниже не выполнится).
+# Режим относительно pii-proxy (ANTHROPIC_BASE_URL в settings.json у claude, model_provider в
+# config.toml у codex). Решение владельца 23.11.2026: прокси молчит — агент всё равно стартует,
+# но напрямую, а оператор получает предупреждение в Telegram (ПДн в это время не маскируются).
+# Раньше здесь был отказ старта, и упавший прокси означал молчащего агента. Режим пишется
+# файлом (pii_mode_file), его читают session-exec.sh и драйвер codex.
 # shellcheck source=lib/pii.sh
 source "$(dirname "$0")/lib/pii.sh"
-if ! pii_gate "$AGENT"; then
-  echo "[start-agent] ERROR: $AGENT — pii-proxy не отвечает на /health, $HARNESS не запускаю" >&2
-  exit 1
+# shellcheck source=lib/notify.sh
+source "$(dirname "$0")/lib/notify.sh"
+PII_MODE="$(NOTIFY_TAG="$AGENT" pii_mode_resolve_start "$AGENT")"
+if [ "$PII_MODE" = "$PII_MODE_DIRECT" ]; then
+  echo "[start-agent] WARNING: $AGENT — pii-proxy не отвечает на /health," \
+    "$HARNESS стартует напрямую (ПДн без маскирования)" >&2
 fi
 
 # Codex: без входа в ChatGPT драйвер поднимется, но каждый ход упадёт. Стартовать бессмысленно —

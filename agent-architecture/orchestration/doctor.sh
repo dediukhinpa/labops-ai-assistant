@@ -60,6 +60,8 @@ source "$SCRIPT_DIR/lib/harness.sh"
 source "$SCRIPT_DIR/lib/codex-watch.sh"
 # shellcheck source=lib/agent-env.sh
 source "$SCRIPT_DIR/lib/agent-env.sh"
+# shellcheck source=lib/pii.sh
+source "$SCRIPT_DIR/lib/pii.sh"
 DOCTOR_HARNESS="$(harness_current 2>/dev/null || echo claude)"
 # Сколько секунд heartbeat драйвера Codex считается свежим (драйвер пишет его раз в минуту).
 DOCTOR_CODEX_HEARTBEAT_STALE="${DOCTOR_CODEX_HEARTBEAT_STALE:-300}"
@@ -70,12 +72,15 @@ DOCTOR_CODEX_HEARTBEAT_STALE="${DOCTOR_CODEX_HEARTBEAT_STALE:-300}"
 FIXED=""
 BROKEN=""
 NOTE=""     # диагностика без вердикта (для --quiet=0, в Telegram не уходит)
+WARN=""     # предупреждение без вердикта: агент на связи, но оператор должен знать (всегда)
 
 add_fixed()  { FIXED="${FIXED}${FIXED:+; }$1"; }
 add_broken() { BROKEN="${BROKEN}${BROKEN:+
 }⛔ $1"; }
 add_note()   { NOTE="${NOTE}${NOTE:+
 }$1"; }
+add_warn()   { WARN="${WARN}${WARN:+
+}⚠️ $1"; }
 
 # ── 1. Вход в Claude Code ────────────────────────────────────────────────────
 # Первое, что должен знать оператор: жива ли подписка. Проверяем refresh-токен,
@@ -272,6 +277,33 @@ check_second_brain() {
   return 0
 }
 
+# ── 7. Маскирование ПДн (pii-proxy) ──────────────────────────────────────────
+# Не вердикт: без прокси агент работает напрямую (решение владельца 23.11.2026), но оператор
+# должен знать, что персональные данные сейчас уходят в модель без маскирования. Поэтому это
+# предупреждение, которое видно и в Telegram, а при норме — только примечание с режимом.
+check_pii() {
+  local state mode
+  state="$(pii_proxy_state "$AGENT")"
+  [ "$state" != none ] || return 0
+  mode="$(pii_mode_get "$AGENT")"
+  if [ "$state" = down ] && [ "$FIX" -eq 1 ]; then
+    pii_proxy_revive "$AGENT"
+    sleep "$PII_REVIVE_WAIT_SEC"
+    state="$(pii_proxy_state "$AGENT")"
+    if [ "$state" = up ]; then add_fixed "поднял pii-proxy"; fi
+  fi
+  if [ "$state" = down ]; then
+    add_warn "pii-proxy не отвечает — агент работает напрямую, персональные данные уходят\
+ в модель без маскирования. Проверьте: systemctl --user status labops-pii-proxy@$AGENT"
+  elif [ "$mode" = "$PII_MODE_DIRECT" ]; then
+    add_warn "pii-proxy снова отвечает, но агент пока работает напрямую —\
+ вернётся через прокси сам, в простое"
+  else
+    add_note "режим ПДн: через pii-proxy (маскирование работает)"
+  fi
+  return 0
+}
+
 # ── Codex: вход в ChatGPT и живость драйвера ─────────────────────────────────
 check_codex_login() {
   case "$(codex_auth_state "$AGENT")" in
@@ -310,6 +342,7 @@ if [ "$DOCTOR_HARNESS" = "codex" ]; then
   check_codex_driver
   check_plumbing
   check_second_brain
+  check_pii
 else
 check_credentials
 check_unit
@@ -317,6 +350,7 @@ check_session
 check_pane
 check_plumbing
 check_second_brain
+check_pii
 fi
 
 # ── Вердикт ──────────────────────────────────────────────────────────────────
@@ -338,6 +372,11 @@ elif [ -n "$FIXED" ]; then
 else
   OUT="$OUT
 ✅ всё в порядке, агент на связи"
+fi
+
+if [ -n "$WARN" ]; then
+  OUT="$OUT
+$WARN"
 fi
 
 if [ "$QUIET" -eq 0 ] && [ -n "$NOTE" ]; then
