@@ -948,6 +948,17 @@ if [ -n "$_ocr_line" ] && [ -n "$_exec_line" ] && [ "$_ocr_line" -lt "$_exec_lin
 else
   bad "run_ocr_step не вызывается на этапе root до exec sudo -u — apt там уже недоступен"
 fi
+# Программы скиллов ставятся, пока есть root (lib/skill-tools-install.sh): агент сам их не
+# доставит — sudo у него нет, pip в системный Python запрещён (PEP 668).
+unit "install.sh ставит программы и библиотеки скиллов, agent-browser по sha256 — юнит-тест зелёный" \
+     "skill-tools-install: юнит-тест провален (orchestration/lib/skill-tools-install.test.sh)" \
+     bash orchestration/lib/skill-tools-install.test.sh
+_st_line="$(grep -n '^    run_skill_tools_step "\$AGENT_OS_USER"' install.sh | head -n1 | cut -d: -f1)"
+if [ -n "$_st_line" ] && [ -n "$_exec_line" ] && [ "$_st_line" -lt "$_exec_line" ]; then
+  ok "программы скиллов ставятся до перехода на пользователя агентов (строка $_st_line < $_exec_line)"
+else
+  bad "run_skill_tools_step не вызывается на этапе root до exec sudo -u — apt там уже недоступен"
+fi
 # Неизвестный аргумент (опечатка, флаг удалённого режима --openai-adapter) обязан остановить
 # install.sh до любых действий, а не уйти в полную установку.
 _unk_rc=0

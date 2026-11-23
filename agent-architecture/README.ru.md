@@ -470,7 +470,7 @@ sudo /usr/local/sbin/labops-runtime-deploy   # заодно обновляет �
 | `memory-consolidate` | сворачивает сырую эпизодическую память в устойчивые выводы по сигналу рефлексии | — |
 | `local-voice` | транскрипция голосовых/аудио `.ogg` локальным сервисом voice-transcriber (когда канал не дал расшифровку) | `VOICE_TRANSCRIBER_TOKEN` |
 | `second_brain-doctor` | агент-сайд-диагностика second_brain: коннект, identity, memory_router, agent_router, hooks-parity, webhooks, repo, безопасность MCP-URL; вывод редактируется (секреты маскируются) | — |
-| `agent-browser` | браузерная автоматизация через CDP (навигация, формы, скриншоты) | бинарь `agent-browser` + Chrome — `install.sh` их не ставит |
+| `agent-browser` | браузерная автоматизация через CDP (навигация, формы, скриншоты) | бинарь `agent-browser` + Chrome — ставит `install.sh` (шаг 2e) |
 
 ---
 
