@@ -42,8 +42,16 @@ export const IDLE_HEARTBEAT_INTERVAL_MS = 60_000
 export const READ_REACTION = '👀'
 /** Сколько ждать старта нити (resume/start грузят историю и MCP-серверы). */
 export const THREAD_START_TIMEOUT_MS = 120_000
+/** Как часто драйвер сверяет файл режима pii-proxy (смену применяет только между ходами). */
+export const PII_MODE_POLL_INTERVAL_MS = 5_000
 /** Версия клиента в initialize. */
 const CLIENT_INFO = { name: 'labops-codex-driver', version: '1.0.0' }
+
+/**
+ * Режим относительно pii-proxy: через прокси (норма) или напрямую (прокси не отвечает, решение
+ * владельца 23.11.2026). Выбирает watchdog, драйвер только применяет.
+ */
+export type PiiMode = 'proxy' | 'direct'
 
 /** Хук памяти рабочей папки агента. */
 export type MemoryHook = 'session-start' | 'stop' | 'precompact' | 'heartbeat' | 'session-end'
@@ -80,8 +88,8 @@ export interface DriverEffects {
 }
 
 export interface CodexDriverDeps {
-  /** Запуск процесса app-server. */
-  connect: () => LineTransport
+  /** Запуск процесса app-server в заданном режиме pii-proxy. */
+  connect: (mode: PiiMode) => LineTransport
   /** Рабочая папка агента (cwd нити). */
   workspace: string
   /** Где хранить id нити между перезапусками. */
@@ -89,6 +97,10 @@ export interface CodexDriverDeps {
   effects: DriverEffects
   log: Logger
   now?: () => number
+  /** Нужный сейчас режим pii-proxy (файл режима агента); не задан — всегда через прокси. */
+  piiMode?: () => PiiMode
+  /** Интервал сверки режима, мс (тесты ставят меньше). */
+  piiModePollMs?: number
 }
 
 interface QueuedInput {
@@ -132,6 +144,11 @@ export class CodexDriver {
   private sessionContext = ''
   private lastHeartbeat = 0
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined
+  private modeTimer: ReturnType<typeof setInterval> | undefined
+  /** Режим, в котором запущен текущий app-server. */
+  private appliedMode: PiiMode = 'proxy'
+  /** Идёт смена режима: старый app-server закрыт, новый поднимается. */
+  private switching = false
   private readonly exitListeners: Array<(code: number | null) => void> = []
   private readonly now: () => number
 
@@ -154,25 +171,16 @@ export class CodexDriver {
     this.exitListeners.push(cb)
   }
 
+  /** Режим pii-proxy, в котором работает app-server сейчас. */
+  get piiMode(): PiiMode {
+    return this.appliedMode
+  }
+
   /**
    * Запустить app-server, восстановить нить агента или начать новую.
    */
   async start(): Promise<void> {
-    const conn = new AppServerConnection(this.deps.connect(), message =>
-      this.deps.log.warn('codex app-server protocol', { message }),
-    )
-    this.conn = conn
-    conn.onNotification((method, params) => this.onNotification(method, params))
-    conn.setServerRequestHandler((method, params) => this.onServerRequest(method, params))
-    conn.onClose(code => {
-      this.ready = false
-      if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer)
-      if (!this.stopping) this.deps.log.error('codex app-server exited', { code })
-      for (const cb of this.exitListeners) cb(code)
-    })
-
-    await conn.request('initialize', { clientInfo: CLIENT_INFO, capabilities: null })
-    conn.notify('initialized')
+    const conn = await this.openConnection()
 
     // Идентичность собирается до старта нити: Codex читает AGENTS.md при её создании.
     await this.deps.effects.rebuildIdentity()
@@ -200,7 +208,88 @@ export class CodexDriver {
     void this.heartbeat(true)
     this.heartbeatTimer = setInterval(() => void this.heartbeat(false), IDLE_HEARTBEAT_INTERVAL_MS)
     this.heartbeatTimer.unref?.()
+    if (this.deps.piiMode !== undefined) {
+      this.modeTimer = setInterval(
+        () => void this.maybeSwitchMode(),
+        this.deps.piiModePollMs ?? PII_MODE_POLL_INTERVAL_MS,
+      )
+      this.modeTimer.unref?.()
+    }
     void this.pump()
+  }
+
+  /** Запустить app-server в нужном сейчас режиме pii-proxy и пройти initialize. */
+  private async openConnection(): Promise<AppServerConnection> {
+    const mode = this.desiredMode()
+    const conn = new AppServerConnection(this.deps.connect(mode), message =>
+      this.deps.log.warn('codex app-server protocol', { message }),
+    )
+    this.conn = conn
+    this.appliedMode = mode
+    conn.onNotification((method, params) => {
+      if (this.conn === conn) this.onNotification(method, params)
+    })
+    conn.setServerRequestHandler((method, params) => this.onServerRequest(method, params))
+    conn.onClose(code => {
+      // Старый app-server, закрытый при смене режима, — штатно, драйвер живёт дальше.
+      if (this.conn !== conn) return
+      this.ready = false
+      if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer)
+      if (this.modeTimer !== undefined) clearInterval(this.modeTimer)
+      if (!this.stopping) this.deps.log.error('codex app-server exited', { code })
+      for (const cb of this.exitListeners) cb(code)
+    })
+    await conn.request('initialize', { clientInfo: CLIENT_INFO, capabilities: null })
+    conn.notify('initialized')
+    return conn
+  }
+
+  private desiredMode(): PiiMode {
+    return this.deps.piiMode?.() ?? 'proxy'
+  }
+
+  /**
+   * Сменить режим pii-proxy, если watchdog записал другой. Только между ходами: идущий ход не
+   * рвётся, новые сообщения на время смены ждут в очереди. Адрес модели codex читает на старте
+   * app-server, поэтому app-server перезапускается, а нить продолжается (thread/resume) — с
+   * историей разговора. Не вышло — драйвер завершается, watchdog поднимет его заново (на
+   * старте нить тоже восстанавливается).
+   *
+   * @returns true — смена была (или завершилась ошибкой); false — менять нечего или не время.
+   */
+  private async maybeSwitchMode(): Promise<boolean> {
+    if (!this.ready || this.stopping || this.switching || this.active !== undefined) return false
+    const want = this.desiredMode()
+    if (want === this.appliedMode) return false
+    this.switching = true
+    this.ready = false
+    const from = this.appliedMode
+    this.deps.log.info('codex pii mode switch', { from, to: want, thread_id: this.threadId })
+    const old = this.conn
+    this.conn = undefined
+    old?.close()
+    try {
+      const conn = await this.openConnection()
+      const params = { threadId: this.threadId, excludeTurns: true }
+      const res = record(await conn.request('thread/resume', params, THREAD_START_TIMEOUT_MS))
+      this.adoptThread(record(res.thread))
+      this.ready = true
+      this.deps.log.info('codex pii mode switched', {
+        mode: this.appliedMode,
+        thread_id: this.threadId,
+      })
+    } catch (err) {
+      this.deps.log.error('codex pii mode switch failed — driver exits for a clean restart', {
+        to: want,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      for (const cb of this.exitListeners) cb(null)
+      return true
+    } finally {
+      this.switching = false
+    }
+    void this.pump()
+    return true
   }
 
   /**
@@ -342,6 +431,11 @@ export class CodexDriver {
   /** Начать ход из очереди, если нить свободна. */
   private async pump(): Promise<void> {
     if (!this.ready || this.stopping || this.active !== undefined || this.queue.length === 0) return
+    // Режим сменился — сначала переключиться: сообщение уйдёт уже в нужном режиме.
+    if (this.desiredMode() !== this.appliedMode) {
+      void this.maybeSwitchMode()
+      return
+    }
     const first = this.queue[0]!
     // В один ход идут все ожидающие сообщения того же чата: человек дописал несколько подряд.
     const batch = this.queue.filter(q => q.chatId === first.chatId)

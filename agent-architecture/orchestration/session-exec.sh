@@ -26,6 +26,11 @@ HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
 
 resolve_agent_env "$AGENT"
 
+# Режим относительно pii-proxy выбрал start-agent.sh (lib/pii.sh: pii_mode_resolve_start).
+# shellcheck source=lib/pii.sh
+. "$HERE/lib/pii.sh"
+PII_MODE="$(pii_mode_get "$AGENT")"
+
 # Рой на Codex: панель становится драйвером (плагин в режиме LABOPS_HARNESS=codex), а он уже
 # сам держит codex app-server. TUI нет, поэтому флаги claude ниже не нужны. cwd панели —
 # каталог плагина (его задаёт start-agent.sh), отсюда и ./src/server.ts.
@@ -37,6 +42,10 @@ if [ "$(harness_current)" = "codex" ]; then
   export CODEX_HOME
   CODEX_BIN="$(codex_bin || echo codex)"
   export CODEX_BIN
+  # Файл режима драйвер читает сам — на старте и затем в простое: при смене режима он
+  # перезапускает app-server между ходами и продолжает ту же нить (thread/resume).
+  LABOPS_PII_MODE_FILE="$(pii_mode_file "$AGENT")"
+  export LABOPS_PII_MODE_FILE
   exec bun ./src/server.ts
 fi
 
@@ -47,8 +56,41 @@ CLAUDE_BIN="$(command -v claude 2>/dev/null || echo claude)"
 # lib/deep-sleep-continue.sh. RESUME_FLAG пуст на обычном старте — тогда
 # массив ниже просто не добавляет claude лишний аргумент.
 RESUME_FLAG="$(deep_sleep_continue_flag || true)"
+# Перезапуск ради смены режима pii-proxy (watchdog, в простое) — тоже продолжение разговора, а
+# не новая сессия. Метку забираем всегда, даже если --continue уже дал глубокий сон: иначе она
+# пролежала бы до следующего обычного краш-рестарта и продолжила бы не ту сессию.
+PII_CONTINUE_FLAG="$(deep_sleep_continue_flag "$(pii_switch_continue_file "$AGENT")" || true)"
+RESUME_FLAG="${RESUME_FLAG:-$PII_CONTINUE_FLAG}"
 RESUME_ARGS=()
 [ -n "$RESUME_FLAG" ] && RESUME_ARGS=("$RESUME_FLAG")
+
+# Напрямую (pii-proxy не ответил на старте): та же настройка без ANTHROPIC_BASE_URL, иначе
+# claude ходил бы в мёртвый прокси. Копию пересобираем на каждом старте из settings.json, чтобы
+# хуки и модель не расходились с оригиналом; адрес из окружения тоже убираем. Через прокси
+# (норма) запуск прежний, побайтно.
+SETTINGS_FILE="$AGENT_WORKSPACE/settings.json"
+if [ "$PII_MODE" = "$PII_MODE_DIRECT" ]; then
+  DIRECT_SETTINGS="$AGENT_WORKSPACE/state/settings.pii-direct.json"
+  mkdir -p "$(dirname "$DIRECT_SETTINGS")"
+  if python3 - "$SETTINGS_FILE" "$DIRECT_SETTINGS" <<'PY'
+import json, os, sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src, encoding="utf-8") as fh:
+    data = json.load(fh)
+env = data.get("env")
+if isinstance(env, dict):
+    env.pop("ANTHROPIC_BASE_URL", None)
+tmp = f"{dst}.tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2, ensure_ascii=False)
+os.chmod(tmp, 0o600)
+os.replace(tmp, dst)
+PY
+  then
+    SETTINGS_FILE="$DIRECT_SETTINGS"
+  fi
+  unset ANTHROPIC_BASE_URL
+fi
 
 # --settings обязателен, а не декоративен: CWD — каталог плагина, поэтому
 # .mcp.json находится, но claude канонизирует симлинк плагина в его настоящее
@@ -85,7 +127,7 @@ fi
 # детектор дрейфа версии (lib/cli-version.sh) и снятие агента (stop-agent.sh) —
 # видело бы bash вместо claude.
 exec "$CLAUDE_BIN" \
-  --settings "$AGENT_WORKSPACE/settings.json" \
+  --settings "$SETTINGS_FILE" \
   ${MCP_ARGS[@]+"${MCP_ARGS[@]}"} \
   --dangerously-skip-permissions \
   --dangerously-load-development-channels server:labops-channel \

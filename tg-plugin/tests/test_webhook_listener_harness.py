@@ -5,7 +5,8 @@
 - для claude argv и окружение прежние (`claude -p ... --dangerously-skip-permissions`);
 - для codex: `codex exec --skip-git-repo-check <prompt>`, CODEX_HOME агента, AGENT_BEARER
   из agent.env и никаких других секретов, stdin закрыт, cwd — рабочая папка агента;
-- без config.toml агента listener на codex не стартует (иначе мимо pii-proxy).
+- без config.toml агента listener на codex не стартует (иначе мимо pii-proxy);
+- pii-proxy молчит — задача выполняется напрямую, владелец предупреждён с троттлингом.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ _TOUCHED_ENV = (
     "CLAUDE_LAB", "WEBHOOK_CODEX_HOME", "CODEX_BIN", "CLAUDE_BIN",
     "WEBHOOK_SECOND_BRAIN_AGENT_ROUTER_URL", "WEBHOOK_OWNER_CHAT_ID",
     "ANTHROPIC_API_KEY", "CLAUDE_HARNESS_MARKER", "SECRET_FOO", "OPENAI_API_KEY",
-    "INVOCATION_TIMEOUT_SEC",
+    "INVOCATION_TIMEOUT_SEC", "ANTHROPIC_BASE_URL",
 )
 PROXY_TOML = (
     'model_provider = "labops-pii"\n'
@@ -96,7 +97,8 @@ class _EnvGuard(unittest.TestCase):
 
     def setUp(self) -> None:
         self._saved = {k: os.environ.get(k) for k in _TOUCHED_ENV}
-        for key in ("WEBHOOK_CODEX_HOME", "CODEX_BIN", "CLAUDE_BIN", "INVOCATION_TIMEOUT_SEC"):
+        for key in ("WEBHOOK_CODEX_HOME", "CODEX_BIN", "CLAUDE_BIN", "INVOCATION_TIMEOUT_SEC",
+                    "ANTHROPIC_BASE_URL"):
             os.environ.pop(key, None)
         self._tmp = tempfile.TemporaryDirectory()
         self.lab = _Lab(Path(self._tmp.name))
@@ -233,13 +235,53 @@ class CodexCommandTest(_EnvGuard):
         self.assertEqual(seen["env"]["CODEX_HOME"], str(self.lab.codex_home))
 
 
-class PiiProxyGateTest(_EnvGuard):
-    """codex не запускается, пока pii-proxy агента не отвечает на /health."""
+class _FakeRequest:
+    remote = "127.0.0.1"
+    headers = {"Authorization": "Bearer listener-bearer"}
+
+    async def read(self) -> bytes:
+        return b'{"task_id": "t-1", "from_agent": "boss", "title": "x"}'
+
+
+class PiiProxyDirectTest(_EnvGuard):
+    """pii-proxy молчит — задача выполняется напрямую, владелец предупреждён с троттлингом.
+
+    Решение владельца 23.11.2026: раньше codex получал 503 (задача pending), claude уходил в
+    мёртвый прокси.
+    """
 
     def _load_codex(self, toml: str = PROXY_TOML) -> ModuleType:
         self.lab.add_codex_config(toml)
         self.lab.set_swarm("HARNESS=codex\n")
         return self.lab.load()
+
+    def _load_claude(self, url: str = "http://127.0.0.1:6311") -> ModuleType:
+        (self.lab.workspace / "settings.json").write_text(
+            '{"env": {"ANTHROPIC_BASE_URL": "%s"}}' % url, encoding="utf-8")
+        return self.lab.load()
+
+    def _wire(self, module: ModuleType, healthy: bool) -> dict[str, list[Any]]:
+        """Подменить /health, запуск и Telegram; вернуть журнал вызовов."""
+        calls: dict[str, list[Any]] = {"spawn": [], "owner": [], "health": []}
+
+        async def _health(url: str) -> bool:
+            calls["health"].append(url)
+            return healthy
+
+        async def _spawn(prompt: str, task_id: str, direct: bool = False) -> None:
+            calls["spawn"].append((task_id, direct))
+
+        async def _owner(text: str) -> None:
+            calls["owner"].append(text)
+
+        async def _notify(*_args: Any) -> None:
+            return None
+
+        module._pii_proxy_healthy = _health
+        module._spawn_headless = _spawn
+        module._send_owner_text = _owner
+        module._notify_owner = _notify
+        return calls
 
     def test_proxy_url_parsed_from_config(self) -> None:
         module = self._load_codex()
@@ -256,55 +298,75 @@ class PiiProxyGateTest(_EnvGuard):
             cfg.write_text(text, encoding="utf-8")
             self.assertEqual(module._codex_pii_proxy_url(cfg), "")
 
-    def test_ready_depends_on_health(self) -> None:
-        module = self._load_codex()
-        for healthy in (True, False):
-            async def _fake_health(url: str, _ok: bool = healthy) -> bool:
-                self.assertEqual(url, "http://127.0.0.1:6399")
-                return _ok
-            module._pii_proxy_healthy = _fake_health
-            self.assertIs(asyncio.run(module._harness_ready()), healthy)
-
-    def test_ready_without_proxy_or_for_claude(self) -> None:
-        module = self._load_codex('model = "m"\n')
-        self.assertTrue(asyncio.run(module._harness_ready()))
-        self.lab.set_swarm("HARNESS=claude\n")
-        module = self.lab.load()
-        self.assertTrue(asyncio.run(module._harness_ready()))
+    def test_claude_proxy_url_from_settings(self) -> None:
+        self.assertEqual(self._load_claude()._pii_proxy_url(), "http://127.0.0.1:6311")
+        self.assertEqual(self._load_claude("https://api.example.com")._pii_proxy_url(), "")
 
     def test_unreachable_proxy_reports_unhealthy(self) -> None:
         # Порт 1 на loopback никто не слушает: соединение отклоняется сразу.
         module = self._load_codex()
         self.assertFalse(asyncio.run(module._pii_proxy_healthy("http://127.0.0.1:1")))
 
-    def test_webhook_with_dead_proxy_is_not_acked_or_spawned(self) -> None:
+    def test_live_proxy_task_runs_as_before(self) -> None:
+        for module in (self._load_codex(), self._load_claude()):
+            calls = self._wire(module, healthy=True)
+            resp = asyncio.run(module.handle_webhook(_FakeRequest()))
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(calls["spawn"], [("t-1", False)])
+            self.assertEqual(calls["owner"], [])
+
+    def test_no_proxy_configured_runs_without_health_check(self) -> None:
+        module = self._load_codex('model = "m"\n')
+        calls = self._wire(module, healthy=False)
+        asyncio.run(module.handle_webhook(_FakeRequest()))
+        self.assertEqual(calls["health"], [])
+        self.assertEqual(calls["spawn"], [("t-1", False)])
+
+    def test_dead_proxy_codex_runs_direct_and_warns_once(self) -> None:
         module = self._load_codex()
-        calls: list[str] = []
+        calls = self._wire(module, healthy=False)
+        for _ in range(2):
+            resp = asyncio.run(module.handle_webhook(_FakeRequest()))
+            # 2xx: задача принята и выполняется, а не остаётся pending.
+            self.assertEqual(resp.status, 200)
+        self.assertEqual(calls["spawn"], [("t-1", True), ("t-1", True)])
+        self.assertEqual(len(calls["owner"]), 1, "предупреждение — одно на окно троттлинга")
+        self.assertIn("без маскирования", calls["owner"][0])
 
-        async def _dead(_url: str) -> bool:
-            return False
-
-        async def _fake_spawn(_prompt: str, _task_id: str) -> None:
-            calls.append("spawn")
-
-        async def _fake_notify(*_args: Any) -> None:
-            calls.append("notify")
-
-        module._pii_proxy_healthy = _dead
-        module._spawn_headless = _fake_spawn
-        module._notify_owner = _fake_notify
-
-        class _FakeRequest:
-            remote = "127.0.0.1"
-            headers = {"Authorization": "Bearer listener-bearer"}
-
-            async def read(self) -> bytes:
-                return b'{"task_id": "t-1", "from_agent": "boss", "title": "x"}'
-
+    def test_dead_proxy_claude_runs_direct(self) -> None:
+        module = self._load_claude()
+        calls = self._wire(module, healthy=False)
         resp = asyncio.run(module.handle_webhook(_FakeRequest()))
-        # Не 2xx — воркер доставки не помечает задачу acked и повторит доставку.
-        self.assertEqual(resp.status, 503)
-        self.assertEqual(calls, [])
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(calls["spawn"], [("t-1", True)])
+        self.assertEqual(len(calls["owner"]), 1)
+
+    def test_no_warning_when_watchdog_already_switched(self) -> None:
+        module = self._load_codex()
+        (self.lab.workspace / "state").mkdir(parents=True, exist_ok=True)
+        (self.lab.workspace / "state" / "pii-mode").write_text("direct\n", encoding="utf-8")
+        calls = self._wire(module, healthy=False)
+        asyncio.run(module.handle_webhook(_FakeRequest()))
+        self.assertEqual(calls["spawn"], [("t-1", True)])
+        self.assertEqual(calls["owner"], [], "watchdog уже предупредил владельца")
+
+    def test_direct_command_codex(self) -> None:
+        os.environ["CODEX_BIN"] = "/opt/bin/codex"
+        module = self._load_codex()
+        argv, _ = module._headless_command(PROMPT, direct=True)
+        self.assertEqual(argv, ["/opt/bin/codex", "exec", "--skip-git-repo-check",
+                                "-c", 'model_providers.labops-pii.base_url='
+                                '"https://chatgpt.com/backend-api/codex"', PROMPT])
+        argv, _ = module._headless_command(PROMPT)
+        self.assertEqual(argv, ["/opt/bin/codex", "exec", "--skip-git-repo-check", PROMPT])
+
+    def test_direct_command_claude_drops_proxy_url(self) -> None:
+        module = self._load_claude()
+        argv_proxy, env_proxy = module._headless_command(PROMPT)
+        argv_direct, env_direct = module._headless_command(PROMPT, direct=True)
+        self.assertEqual(argv_proxy, argv_direct)
+        self.assertEqual(env_proxy["ANTHROPIC_BASE_URL"], "http://127.0.0.1:6311")
+        self.assertNotIn("ANTHROPIC_BASE_URL", env_direct)
 
 
 class CodexTimeoutKillTest(_EnvGuard):

@@ -67,26 +67,27 @@ CLI_UPDATE_IDLE_CYCLES="${WATCHDOG_CLI_UPDATE_IDLE_CYCLES:-2}"
 
 log() { echo "[watchdog/$AGENT] $(date -u '+%H:%M:%S') $*"; }
 
-# pii-proxy: агент ходит в модель только через него (ANTHROPIC_BASE_URL в settings.json).
+# pii-proxy: в норме агент ходит в модель через него (ANTHROPIC_BASE_URL в settings.json,
+# model_provider в config.toml у codex). Прокси молчит — агент работает напрямую (решение
+# владельца 23.11.2026), см. lib/pii.sh и pii_watch_cycle ниже.
 # shellcheck source=lib/pii.sh
 source "$SCRIPT_DIR/lib/pii.sh"
+# Сколько проходов чистого простоя выждать перед перезапуском claude ради смены режима — как у
+# подхвата обновлённого CLI: не рестартовать в паузе между двумя сообщениями оператора.
+PII_SWITCH_IDLE_CYCLES="${WATCHDOG_PII_SWITCH_IDLE_CYCLES:-2}"
 
-# pii_start_allowed — можно ли стартовать claude. Зачем: упавший прокси не должен привести к
-# старту «в обход» (fail closed). Если прокси настроен, но молчит, сначала пробуем его
-# поднять через user-юнит, затем перепроверяем; иначе алерт оператору, повтор на следующем
-# проходе цикла (~30с). Алерт троттлится notify.sh (раз в WATCHDOG_DOWN_ALERT_COOLDOWN).
-pii_start_allowed() {
-  if pii_gate "$AGENT"; then return 0; fi
-  if command -v systemctl >/dev/null 2>&1; then
-    XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
-      systemctl --user start "labops-pii-proxy@$AGENT.service" >/dev/null 2>&1 || true
-    sleep 3
-    if pii_gate "$AGENT"; then return 0; fi
+# pii_watch_cycle — проверка прокси раз в проход (гистерезис в pii_watch_step). Ставит PII_WANT.
+pii_watch_cycle() {
+  local prev_fail="$PII_FAIL_STREAK" prev_ok="$PII_OK_STREAK"
+  pii_watch_step "$AGENT"
+  if [ "$PII_FAIL_STREAK" -eq 1 ] && [ "$prev_fail" -eq 0 ]; then
+    log "pii-proxy не ответил на /health — пробую поднять юнит (порог $PII_DOWN_AFTER_FAILS)"
   fi
-  log "pii-proxy недоступен — claude не стартую (без прокси данные ушли бы в обход маски)"
-  WATCHDOG_ALERT_COOLDOWN="${WATCHDOG_DOWN_ALERT_COOLDOWN:-3600}" \
-    notify_op "$AGENT" "⛔ pii-proxy агента не отвечает — агент не запущен, чтобы данные не ушли в модель без маскирования. Проверьте: systemctl --user status labops-pii-proxy@$AGENT"
-  return 1
+  if [ "$PII_OK_STREAK" -eq 1 ] && [ "$prev_ok" -eq 0 ] \
+     && [ "$(pii_mode_get "$AGENT")" = "$PII_MODE_DIRECT" ]; then
+    log "pii-proxy снова отвечает — агент пока напрямую, верну (порог $PII_UP_AFTER_OKS)"
+  fi
+  return 0
 }
 
 # pii_report_stuck — алерт о застрявшей сессии (прокси пишет session_stuck после серии
@@ -178,16 +179,13 @@ log "starting..."
 if tmux has-session -t "=$SESSION" 2>/dev/null; then
   log "session already alive — resuming monitor without restart"
 else
-  # Если прокси не жив, сессию не поднимаем: основной цикл ниже увидит «session gone» и
-  # повторит попытку через restart_session (тот же gate).
-  if pii_start_allowed; then
-    if [ "$WATCHDOG_HARNESS" = "codex" ]; then
-      # Неудачный старт (например, нет входа в ChatGPT) не должен ронять демон под set -e:
-      # цикл ниже поднимет тревогу и повторит.
-      "$START_SCRIPT" "$AGENT" || log "первый старт не удался — повторю в цикле надзора"
-    else
-      "$START_SCRIPT" "$AGENT"
-    fi
+  # Прокси молчит — start-agent.sh сам стартует агента напрямую и предупредит оператора.
+  if [ "$WATCHDOG_HARNESS" = "codex" ]; then
+    # Неудачный старт (например, нет входа в ChatGPT) не должен ронять демон под set -e:
+    # цикл ниже поднимет тревогу и повторит.
+    "$START_SCRIPT" "$AGENT" || log "первый старт не удался — повторю в цикле надзора"
+  else
+    "$START_SCRIPT" "$AGENT"
   fi
 fi
 
@@ -356,8 +354,7 @@ attempt_stuck_input_recovery() {
 restart_session() {
   # Молча: одиночный рестарт — штатное самолечение, оператору сообщать не о чем.
   # Тревога поднимается только если рестарты пошли по кругу (см. note_restart).
-  # Прокси жив? Нет - не перезапускаем, повтор на следующем проходе (см. pii_start_allowed).
-  if ! pii_start_allowed; then return 0; fi
+  # Режим (через прокси или напрямую) выбирает сам start-agent.sh по /health прокси.
   log "restarting ($1)"
   if [ "$WATCHDOG_HARNESS" = "codex" ]; then
     "$START_SCRIPT" "$AGENT" || log "старт не удался — повторю на следующем проходе"
@@ -365,7 +362,9 @@ restart_session() {
     "$START_SCRIPT" "$AGENT"
   fi
   PREV_TAIL=""; FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
-  note_restart
+  # Плановый перезапуск (второй аргумент noflap: смена режима pii-proxy) — не признак
+  # нездоровья, в счётчик флапа его не берём.
+  if [ "${2:-}" != "noflap" ]; then note_restart; fi
 }
 
 # ── Харнес Codex ─────────────────────────────────────────────────────────────
@@ -409,6 +408,13 @@ codex_watch_loop() {
       BOT_TOKEN=""
     fi
     pii_report_stuck
+    # Смена режима pii-proxy: драйвер сам видит новый файл режима и перезапускает app-server
+    # между ходами, продолжая ту же нить, — идущий ход не рвётся, перезапуск сессии не нужен.
+    pii_watch_cycle
+    if pii_switch_due "$AGENT"; then
+      log "pii-proxy: режим $(pii_mode_get "$AGENT") → $PII_WANT (драйвер — между ходами)"
+      pii_mode_set "$AGENT" "$PII_WANT" || true
+    fi
     cycle=$((cycle + 1))
 
     # Вход в ChatGPT: на первом проходе, раз в CODEX_AUTH_CHECK_CYCLES и каждый проход, пока
@@ -496,6 +502,7 @@ while true; do
   done
 
   pii_report_stuck
+  pii_watch_cycle
 
   # Session gone entirely
   if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
@@ -715,6 +722,15 @@ while true; do
     # рестартовать в паузе между двумя сообщениями оператора.
     if [ "$IDLE_COUNT" -ge "$CLI_UPDATE_IDLE_CYCLES" ] && cli_version_drifted "$SESSION"; then
       restart_session "claude обновился: $(cli_version_label "$(cli_version_running_exe "$SESSION")") → $(cli_version_label "$(cli_version_installed_exe)")"
+      continue
+    fi
+    # Смена режима pii-proxy — тоже только из чистого простоя: адрес модели claude читает на
+    # старте, так что нужен перезапуск, а идущий ход рвать нельзя. Метка --continue сохраняет
+    # разговор (session-exec.sh), режим и предупреждение оператору выставит start-agent.sh.
+    if [ "$IDLE_COUNT" -ge "$PII_SWITCH_IDLE_CYCLES" ] && pii_switch_due "$AGENT"; then
+      mkdir -p "$(dirname "$(pii_switch_continue_file "$AGENT")")" 2>/dev/null || true
+      : > "$(pii_switch_continue_file "$AGENT")" 2>/dev/null || true
+      restart_session "pii-proxy: режим $(pii_mode_get "$AGENT") → $PII_WANT" noflap
       continue
     fi
     continue
