@@ -12,6 +12,20 @@ SKILLS_EXTERNAL_LIST=".labops-external"
 SKILLS_EXTERNAL_DEFAULT_BASE="https://codeload.github.com"
 SKILLS_EXTERNAL_TIMEOUT_SEC=120
 
+# _adapt_external_skill <каталог-скилла> <имя> — локальные правки совместимости поверх
+# свежеустановленного внешнего скилла (логику автора не меняем). Пока одна:
+# skill-creator зовёт в своём цикле эвала/оптимизации `claude -p`; на рое без бинаря
+# claude (Codex) добавляем guard, чтобы шаг чисто пропускался, а не падал с
+# «claude: command not found». Идемпотентно, перезапускается при каждой переустановке.
+_adapt_external_skill() {
+  local dir="$1" name="$2" guard
+  [ "$name" = "skill-creator" ] || return 0
+  guard="$(dirname "${BASH_SOURCE[0]}")/skill-creator-guard.py"
+  [ -f "$guard" ] || return 0
+  python3 "$guard" "$dir" >/dev/null 2>&1 \
+    || echo "  skill-creator: guard не применён (скилл работает; на рое без claude шаг оптимизации упадёт)" >&2
+}
+
 # sync_external_skills <manifest> <lab-dir>
 # Коды: 0 — всё актуально; 1 — нет манифеста или он испорчен (ничего не ставилось);
 # 4 — часть скиллов не поставилась (сеть, нет пути в репозитории, симлинк в скилле).
@@ -108,6 +122,7 @@ sync_external_skills() {
     else
       mv "$tmp" "$dst/$name"
     fi
+    _adapt_external_skill "$dst/$name" "$name"
     new_list+=("$name $sha"); installed=$((installed + 1))
   done
 

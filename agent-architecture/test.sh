@@ -1427,6 +1427,9 @@ unit "skills.sh: копия в shared/skills, перевод ссылок — ю
 unit "skills-external.sh: внешние скиллы по манифесту с SHA — юнит-тест зелёный" \
      "skills-external.sh: юнит-тест провален (orchestration/lib/skills-external.test.sh)" \
      bash orchestration/lib/skills-external.test.sh
+unit "skill-creator-guard: вставка/срабатывание без claude/идемпотентность — юнит-тест зелёный" \
+     "skill-creator-guard: юнит-тест провален (orchestration/lib/skill-creator-guard.test.sh)" \
+     bash orchestration/lib/skill-creator-guard.test.sh
 # Внешний скилл исполняется агентом без подтверждений, поэтому «плавающие» ссылки
 # (ветка вместо коммита) в манифесте недопустимы.
 if grep -vE '^[[:space:]]*(#|$)' skills/external-skills.manifest \
