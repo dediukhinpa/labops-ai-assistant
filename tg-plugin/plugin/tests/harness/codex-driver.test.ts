@@ -8,7 +8,12 @@ import { join } from 'path'
 import { Writable } from 'stream'
 
 import { createLogger } from '../../src/log.js'
-import { CodexDriver, type DriverEffects, type MemoryHook } from '../../src/harness/codex/driver.js'
+import {
+  CodexDriver,
+  type DriverEffects,
+  type MemoryHook,
+  type PiiMode,
+} from '../../src/harness/codex/driver.js'
 import type { LineTransport } from '../../src/harness/codex/rpc.js'
 
 const silent = createLogger('test', { stream: new Writable({ write: (_c, _e, cb) => cb() }) })
@@ -93,7 +98,16 @@ interface Recorded {
   asks: number
 }
 
-function setup(opts: { saved?: string; sessionContext?: string } = {}) {
+function setup(
+  opts: {
+    saved?: string
+    sessionContext?: string
+    piiMode?: () => PiiMode
+    servers?: Array<{ mode: PiiMode; server: FakeServer }>
+    /** Следующие запуски app-server не восстанавливают нить. */
+    laterFailResume?: boolean
+  } = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), 'codex-driver-'))
   const stateFile = join(dir, 'state', 'codex-thread.json')
   if (opts.saved !== undefined) {
@@ -124,7 +138,22 @@ function setup(opts: { saved?: string; sessionContext?: string } = {}) {
       rec.reads.push({ chatId, messageId })
     },
   }
-  const driver = new CodexDriver({ connect: () => server, workspace: dir, stateFile, effects, log: silent })
+  // С opts.servers каждый запуск app-server — новый поддельный сервер (смена режима pii-proxy).
+  const connect = (mode: PiiMode): LineTransport => {
+    if (opts.servers === undefined) return server
+    const fresh = opts.servers.length === 0 ? server : new FakeServer()
+    if (fresh !== server && opts.laterFailResume === true) fresh.failResume = true
+    opts.servers.push({ mode, server: fresh })
+    return fresh
+  }
+  const driver = new CodexDriver({
+    connect,
+    workspace: dir,
+    stateFile,
+    effects,
+    log: silent,
+    ...(opts.piiMode !== undefined ? { piiMode: opts.piiMode, piiModePollMs: 5 } : {}),
+  })
   return { driver, server, rec, stateFile, dir }
 }
 
@@ -421,5 +450,82 @@ describe('жизненный цикл', () => {
     await driver.stop()
     expect(rec.memory.at(-1)!.hook).toBe('session-end')
     expect(await driver.deliver(msg('42', 'x'))).toBe(false)
+  })
+})
+
+describe('режим pii-proxy', () => {
+  test('без файла режима — всегда через прокси, app-server один', async () => {
+    const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
+    const { driver } = setup({ servers })
+    await driver.start()
+    await tick()
+    expect(servers.map(s => s.mode)).toEqual(['proxy'])
+    expect(driver.piiMode).toBe('proxy')
+  })
+
+  test('старт напрямую, если так записано', async () => {
+    const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
+    const { driver } = setup({ servers, piiMode: () => 'direct' })
+    await driver.start()
+    expect(servers.map(s => s.mode)).toEqual(['direct'])
+    expect(driver.piiMode).toBe('direct')
+  })
+
+  test('смена режима в простое: новый app-server, та же нить, драйвер жив', async () => {
+    let mode: PiiMode = 'proxy'
+    const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
+    const { driver } = setup({ saved: 'thr-old', servers, piiMode: () => mode })
+    let exited = false
+    driver.onExit(() => {
+      exited = true
+    })
+    await driver.start()
+    mode = 'direct'
+    for (let i = 0; i < 20 && driver.piiMode !== 'direct'; i++) await tick()
+    await tick()
+    expect(servers.map(s => s.mode)).toEqual(['proxy', 'direct'])
+    expect(driver.thread).toBe('thr-old')
+    const resumed = servers[1]!.server.requests('thread/resume')
+    expect(resumed.map(r => r.params!.threadId)).toEqual(['thr-old'])
+    expect(exited).toBe(false)
+    // Сообщение после смены идёт в новый app-server.
+    await driver.deliver(msg('42', 'после смены'))
+    await tick()
+    expect(servers[1]!.server.requests('turn/start')).toHaveLength(1)
+    expect(servers[0]!.server.requests('turn/start')).toHaveLength(0)
+  })
+
+  test('идущий ход не рвётся: смена ждёт конца хода', async () => {
+    let mode: PiiMode = 'proxy'
+    const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
+    const { driver } = setup({ saved: 'thr-old', servers, piiMode: () => mode })
+    await driver.start()
+    await driver.deliver(msg('42', 'длинная работа'))
+    await tick()
+    mode = 'direct'
+    for (let i = 0; i < 10; i++) await tick()
+    expect(servers).toHaveLength(1)
+    expect(driver.busy).toBe(true)
+    servers[0]!.server.notify('turn/completed', {
+      threadId: 'thr-old',
+      turn: { id: 'turn-1', status: 'completed', items: [] },
+    })
+    for (let i = 0; i < 20 && driver.piiMode !== 'direct'; i++) await tick()
+    expect(servers.map(s => s.mode)).toEqual(['proxy', 'direct'])
+  })
+
+  test('нить не восстановилась после смены — драйвер выходит для чистого рестарта', async () => {
+    let mode: PiiMode = 'proxy'
+    const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
+    const piiMode = (): PiiMode => mode
+    const { driver } = setup({ saved: 'thr-old', servers, piiMode, laterFailResume: true })
+    let code: number | null | undefined
+    driver.onExit(c => {
+      code = c
+    })
+    await driver.start()
+    mode = 'direct'
+    for (let i = 0; i < 20 && code === undefined; i++) await tick()
+    expect(code).toBeNull()
   })
 })

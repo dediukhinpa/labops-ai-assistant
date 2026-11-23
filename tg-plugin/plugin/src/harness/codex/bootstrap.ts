@@ -1,13 +1,20 @@
 // Сборка драйвера Codex из зависимостей плагина (server.ts): Telegram, статус, вопросы
 // кнопками, хуки памяти. Здесь только связывание; логика — в driver.ts.
 
+import { readFileSync } from 'fs'
 import { join } from 'path'
 
 import type { Logger } from '../../log.js'
 import type { AskUserQuestionRelay } from '../../channel/ask-user-question.js'
 import type { AskUserQuestionUi } from '../../telegram/ask-user-question.js'
 import { ClaudeHookPayloadSchema } from '../../schemas.js'
-import { CodexDriver, READ_REACTION, type UserInputAnswers, type UserInputQuestion } from './driver.js'
+import {
+  CodexDriver,
+  READ_REACTION,
+  type PiiMode,
+  type UserInputAnswers,
+  type UserInputQuestion,
+} from './driver.js'
 import { CHANNEL_SERVER_NAME } from './events.js'
 import { CHANNEL_TOKEN_ENV, MCP_HTTP_PATH } from './mcp-http.js'
 import { rebuildAgentsMd, runMemoryHook } from './memory-hooks.js'
@@ -17,6 +24,17 @@ import { spawnAppServer } from './rpc.js'
 export const HARNESS_ENV = 'LABOPS_HARNESS'
 /** Путь к бинарю codex (закреплённая версия из установщика); по умолчанию — из PATH. */
 export const CODEX_BIN_ENV = 'CODEX_BIN'
+/** Файл режима pii-proxy агента (proxy|direct): его путь передаёт session-exec.sh. */
+export const PII_MODE_FILE_ENV = 'LABOPS_PII_MODE_FILE'
+/** Провайдер модели агента в config.toml (шаблон agent-template/templates/codex). */
+export const PII_MODEL_PROVIDER = 'labops-pii'
+/**
+ * Адрес бэкенда для режима напрямую: туда же ходит сам pii-proxy (его upstream chatgpt.com, путь
+ * как есть), вход ChatGPT тот же. Меняется только base_url провайдера, не сам провайдер: Codex
+ * не даёт продолжить нить с другим провайдером («Cannot change this thread's model provider …
+ * on resume», проверено на 0.171.0), а с тем же id нить продолжается и ходит по новому адресу.
+ */
+export const DIRECT_BACKEND_URL = 'https://chatgpt.com/backend-api/codex'
 /** Секреты плагина, которые не должны попасть в окружение codex (и в его shell-команды). */
 export const SECRETS_NOT_FOR_CODEX = [
   'TELEGRAM_BOT_TOKEN',
@@ -48,16 +66,41 @@ export function codexChildEnv(env: NodeJS.ProcessEnv, channelToken: string): Nod
   return out
 }
 
-/** Аргументы app-server: MCP канала по HTTP на внутреннем порту плагина. */
-export function appServerArgs(host: string, port: number): string[] {
+/**
+ * Аргументы app-server: MCP канала по HTTP на внутреннем порту плагина. Через прокси (норма)
+ * аргументы прежние; напрямую — плюс адрес бэкенда вместо pii-proxy для провайдера агента.
+ */
+export function appServerArgs(host: string, port: number, mode: PiiMode = 'proxy'): string[] {
   const url = `http://${host}:${port}${MCP_HTTP_PATH}`
-  return [
+  const args = [
     'app-server',
     '-c',
     `mcp_servers.${CHANNEL_SERVER_NAME}.url=${JSON.stringify(url)}`,
     '-c',
     `mcp_servers.${CHANNEL_SERVER_NAME}.bearer_token_env_var=${JSON.stringify(CHANNEL_TOKEN_ENV)}`,
   ]
+  if (mode === 'direct') {
+    const key = `model_providers.${PII_MODEL_PROVIDER}.base_url`
+    args.push('-c', `${key}=${JSON.stringify(DIRECT_BACKEND_URL)}`)
+  }
+  return args
+}
+
+/**
+ * Читатель режима pii-proxy из файла агента. Файла нет или в нём не direct — через прокси:
+ * обход прокси включается только явной записью watchdog/start-agent.
+ *
+ * @param path Путь файла режима; пусто — режим всегда «через прокси».
+ */
+export function piiModeReader(path: string): () => PiiMode {
+  return () => {
+    if (path === '') return 'proxy'
+    try {
+      return readFileSync(path, 'utf8').trim() === 'direct' ? 'direct' : 'proxy'
+    } catch {
+      return 'proxy'
+    }
+  }
 }
 
 export interface CodexBootstrapDeps {
@@ -119,15 +162,17 @@ export function createCodexDriver(deps: CodexBootstrapDeps): CodexDriver {
   const env = deps.env ?? process.env
   const bin = env[CODEX_BIN_ENV] !== undefined && env[CODEX_BIN_ENV] !== '' ? env[CODEX_BIN_ENV] : 'codex'
   const childEnv = codexChildEnv(env, deps.channelToken)
+  const modeFile = env[PII_MODE_FILE_ENV] ?? ''
   let driver: CodexDriver | undefined
   driver = new CodexDriver({
     workspace: deps.workspace,
     stateFile: join(deps.stateRoot, 'codex-thread.json'),
     log: deps.log,
-    connect: () =>
+    ...(modeFile !== '' ? { piiMode: piiModeReader(modeFile) } : {}),
+    connect: mode =>
       spawnAppServer({
         bin,
-        args: appServerArgs(deps.webhookHost, deps.webhookPort),
+        args: appServerArgs(deps.webhookHost, deps.webhookPort, mode),
         cwd: deps.workspace,
         env: childEnv,
         onStderr: line => deps.log.debug('codex', { line: line.slice(0, 500) }),

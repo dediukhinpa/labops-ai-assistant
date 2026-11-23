@@ -16,6 +16,7 @@ import {
   askViaRelay,
   codexChildEnv,
   codexHarnessEnabled,
+  piiModeReader,
 } from '../../src/harness/codex/bootstrap.js'
 import { runMemoryHook } from '../../src/harness/codex/memory-hooks.js'
 import { mapItemToTool, replyTextOf } from '../../src/harness/codex/events.js'
@@ -99,6 +100,29 @@ describe('запуск codex', () => {
       '-c',
       `mcp_servers.labops-channel.bearer_token_env_var="${CHANNEL_TOKEN_ENV}"`,
     ])
+  })
+
+  test('напрямую — тот же провайдер с адресом бэкенда; через прокси — флаги прежние', () => {
+    expect(appServerArgs('127.0.0.1', 6003, 'proxy')).toEqual(appServerArgs('127.0.0.1', 6003))
+    expect(appServerArgs('127.0.0.1', 6003, 'direct')).toEqual([
+      ...appServerArgs('127.0.0.1', 6003),
+      '-c',
+      'model_providers.labops-pii.base_url="https://chatgpt.com/backend-api/codex"',
+    ])
+  })
+
+  test('файл режима: direct — напрямую; нет файла или другое значение — через прокси', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pii-mode-'))
+    const file = join(dir, 'pii-mode')
+    const read = piiModeReader(file)
+    expect(read()).toBe('proxy')
+    writeFileSync(file, 'direct\n')
+    expect(read()).toBe('direct')
+    writeFileSync(file, 'proxy\n')
+    expect(read()).toBe('proxy')
+    writeFileSync(file, 'garbage')
+    expect(read()).toBe('proxy')
+    expect(piiModeReader('')()).toBe('proxy')
   })
 
   test('режим codex включается только LABOPS_HARNESS=codex', () => {
