@@ -229,6 +229,7 @@ done
 echo "── 8a. Харнес роя (lib/harness.sh) ──"
 unit "harness.sh: харнес роя из swarm.env, умолчание claude, смена при агентах запрещена — юнит-тест зелёный" "harness.sh: юнит-тест провален (orchestration/lib/harness.test.sh)" bash orchestration/lib/harness.test.sh
 unit "codex-watch.sh: вход ChatGPT / heartbeat / шаблоны процессов драйвера — юнит-тест зелёный" "codex-watch.sh: юнит-тест провален (orchestration/lib/codex-watch.test.sh)" bash orchestration/lib/codex-watch.test.sh
+unit "tg-send.sh: адрес Bot API из TELEGRAM_API_ROOT / channel.env, иначе облако — юнит-тест зелёный" "tg-send.sh: юнит-тест провален (orchestration/tg-send.test.sh)" bash orchestration/tg-send.test.sh
 unit "рендер воркспейса: claude как раньше, codex — AGENTS.md + config.toml через pii-proxy — юнит-тест зелёный" "рендер воркспейса по харнесу: юнит-тест провален (agent-template/codex-workspace.test.sh)" bash agent-template/codex-workspace.test.sh
 unit "codex-install.sh: пакет релиза закреплённой версии, sha256, ссылка в ~/.local/bin — юнит-тест зелёный" "codex-install.sh: юнит-тест провален (orchestration/lib/codex-install.test.sh)" bash orchestration/lib/codex-install.test.sh
 # Харнес — первый вопрос: от него зависит, какие хосты проверять и что ставить.
