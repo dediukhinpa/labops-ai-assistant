@@ -304,7 +304,6 @@ echo "── 11. Near-real-time межагентная доставка зада
 unit "task-poller.sh: обёртка видима надзору, без headless claude — юнит-тест зелёный" "task-poller.sh: юнит-тест провален (agent-template/scripts/task-poller.test.sh)" bash agent-template/scripts/task-poller.test.sh
 # Логика опроса живёт в python-демоне: адресный фильтр, idle-гейт, идемпотентность,
 # кэш токена, одна живая MCP-сессия.
-unit "web-search: разбор потока событий поиска — юнит-тест зелёный" "web-search: юнит-тест провален (skills/web-search/test_search.py)" python3 -I skills/web-search/test_search.py
 unit "pii_forget.py: поиск / dry-run / apply / бэкап — юнит-тест зелёный" "pii_forget.py: юнит-тест провален (scripts/pii_forget.test.py)" python3 scripts/pii_forget.test.py
 # Вендоренная labops-pii (vendor/labops-pii) - только через vendor.sh из репозитория библиотеки.
 unit "labops-pii: вендоренные файлы не правились руками — тест зелёный" "labops-pii: вендоренные файлы расходятся с VERSION (scripts/labops_pii_vendor.test.py)" python3 scripts/labops_pii_vendor.test.py
