@@ -114,9 +114,38 @@ if re.match(r"^http://(127\.0\.0\.1|localhost):[0-9]+/?$", url or ""):
 PY
 }
 
-# pii_proxy_healthy <base-url> — отвечает ли прокси на GET /health.
+# pii_proxy_healthy <base-url> — отвечает ли прокси на GET /health кодом 2xx. С тех пор как
+# /health прокси проверяет и сервис псевдонимизации, «прокси жив, псевдонимизатор нет» — это
+# 503, то есть тоже «не здоров»: такой прокси отвечает 503 на каждый запрос модели, и агент
+# стоял бы, не переходя на прямую работу.
 pii_proxy_healthy() {
   curl -fsS --max-time "$PII_HEALTH_TIMEOUT_SEC" -o /dev/null "${1%/}/health" 2>/dev/null
+}
+
+# Причины недоступности для сообщений оператору.
+PII_DOWN_REASON_PROXY="proxy"
+PII_DOWN_REASON_PSEUDONYMIZER="pseudonymizer"
+
+# pii_health_down_reason <base-url> — почему прокси нездоров: pseudonymizer (прокси отвечает, но
+# сервис псевдонимизации недоступен — поле "pseudonymizer":"down" в ответе /health) или proxy
+# (сам прокси не отвечает или ответ непонятен). Печатает причину; всегда 0.
+pii_health_down_reason() {
+  local body
+  body="$(curl -sS --max-time "$PII_HEALTH_TIMEOUT_SEC" "${1%/}/health" 2>/dev/null || true)"
+  if printf '%s' "$body" | grep -Eq '"pseudonymizer"[[:space:]]*:[[:space:]]*"down"'; then
+    printf '%s\n' "$PII_DOWN_REASON_PSEUDONYMIZER"
+  else
+    printf '%s\n' "$PII_DOWN_REASON_PROXY"
+  fi
+  return 0
+}
+
+# pii_proxy_down_reason <agent> — то же по агенту (пусто, если прокси у агента нет).
+pii_proxy_down_reason() {
+  local url
+  url="$(pii_agent_base_url "$1")"
+  if [ -z "$url" ]; then return 0; fi
+  pii_health_down_reason "$url"
 }
 
 # pii_gate <agent> — отвечает ли прокси агента. 0: у агента нет прокси либо он жив;
@@ -145,6 +174,11 @@ PII_MODE_ALERT_COOLDOWN="${PII_MODE_ALERT_COOLDOWN:-60}"
 # Счётчики гистерезиса (глобальные: живут в процессе watchdog).
 PII_FAIL_STREAK=0
 PII_OK_STREAK=0
+
+# pii_streak_reset — обнулить оба счётчика. Зовётся при смене режима и при каждом перезапуске
+# агента: прежде счётчик неудач переживал смену режима, и после возврата на прокси ОДНА неудача
+# (а не PII_DOWN_AFTER_FAILS подряд) снова уводила агента напрямую.
+pii_streak_reset() { PII_FAIL_STREAK=0; PII_OK_STREAK=0; return 0; }
 # Какой режим нужен агенту по итогам последней проверки (pii_watch_step); пусто - прокси нет.
 PII_WANT=""
 
@@ -192,9 +226,17 @@ pii_proxy_revive() {
   return 0
 }
 
-# pii_mode_message <agent> <mode> — текст предупреждения оператору о смене режима.
+# pii_mode_message <agent> <mode> [причина] — текст предупреждения оператору о смене режима.
+# Причина (pii_proxy_down_reason): pseudonymizer — прокси жив, но сервис псевдонимизации нет;
+# иначе — сам прокси.
 pii_mode_message() {
-  if [ "$2" = "$PII_MODE_DIRECT" ]; then
+  if [ "$2" = "$PII_MODE_DIRECT" ] && [ "${3:-}" = "$PII_DOWN_REASON_PSEUDONYMIZER" ]; then
+    printf '%s' "⚠️ сервис псевдонимизации недоступен (pii-proxy жив, но маскировать нечем) —" \
+      " работаю напрямую: персональные данные уходят в модель БЕЗ маскирования. Если ваше" \
+      " последнее сообщение не успело обработаться, повторяю его уже без прокси. Когда сервис" \
+      " поднимется, вернусь через прокси сам и сообщу. Проверить:" \
+      " systemctl --user status labops-pseudonymizer"
+  elif [ "$2" = "$PII_MODE_DIRECT" ]; then
     printf '%s' "⚠️ pii-proxy недоступен — работаю напрямую: персональные данные" \
       " уходят в модель БЕЗ маскирования. Если ваше последнее сообщение не успело" \
       " обработаться, повторяю его уже без прокси. Когда прокси поднимется, вернусь через" \
@@ -209,13 +251,16 @@ pii_mode_message() {
 # на смену: повторная запись того же режима ничего не шлёт). notify_op берётся из notify.sh,
 # если он подключён вызывающим. 0 - режим сменился, 1 - уже был таким.
 pii_mode_set() {
-  local agent="$1" mode="$2" old
+  local agent="$1" mode="$2" old reason=""
   old="$(pii_mode_get "$agent")"
   pii_mode_write "$agent" "$mode"
   if [ "$old" = "$mode" ]; then return 1; fi
+  # Новый режим — новый отсчёт гистерезиса (см. pii_streak_reset).
+  pii_streak_reset
   if declare -F notify_op >/dev/null 2>&1; then
+    if [ "$mode" = "$PII_MODE_DIRECT" ]; then reason="$(pii_proxy_down_reason "$agent")"; fi
     NOTIFY_TAG="${NOTIFY_TAG:-$agent}" WATCHDOG_ALERT_COOLDOWN="$PII_MODE_ALERT_COOLDOWN" \
-      notify_op "$agent" "$(pii_mode_message "$agent" "$mode")"
+      notify_op "$agent" "$(pii_mode_message "$agent" "$mode" "$reason")"
   fi
   return 0
 }
@@ -224,9 +269,24 @@ pii_mode_set() {
 # Прокси жив - proxy; молчит - одна попытка поднять юнит, повторная проверка, и если всё ещё
 # молчит - direct (агент стартует напрямую, оператор получает предупреждение). У агента без
 # прокси файл режима не нужен - удаляем, чтобы старый direct не повлиял на запуск.
+# PII_START_MODE (передаёт watchdog, см. run_start/restart_session):
+#   direct — решение watchdog о прямой работе, по /health не переигрывается;
+#   keep   — перезапуск: агент, работающий напрямую, напрямую и стартует. Возврат на прокси —
+#            только гистерезисом watchdog (PII_UP_AFTER_OKS удачных проверок подряд), а не одной
+#            удачной проверкой на старте, иначе crash-loop прокси давал рестарт каждые 30–40 с;
+#   иное/пусто (ручной запуск, первый старт) — выбор по /health, как раньше.
 # Печатает выбранный режим (none - прокси нет). Всегда возвращает 0.
 pii_mode_resolve_start() {
   local agent="$1" state
+  if [ -z "$(pii_agent_base_url "$agent")" ]; then
+    rm -f "$(pii_mode_file "$agent")" 2>/dev/null || true
+    echo none; return 0
+  fi
+  if [ "${PII_START_MODE:-}" = "$PII_MODE_DIRECT" ] \
+     || { [ "${PII_START_MODE:-}" = keep ] && [ "$(pii_mode_get "$agent")" = "$PII_MODE_DIRECT" ]; }; then
+    pii_mode_set "$agent" "$PII_MODE_DIRECT" || true
+    echo "$PII_MODE_DIRECT"; return 0
+  fi
   state="$(pii_proxy_state "$agent")"
   if [ "$state" = none ]; then
     rm -f "$(pii_mode_file "$agent")" 2>/dev/null || true

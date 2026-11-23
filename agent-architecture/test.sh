@@ -157,6 +157,9 @@ unit "pii-replay.sh: прерывание хода, повтор входяще�
 unit "start-agent.sh: прокси молчит — старт напрямую и одно предупреждение — юнит-тест зелёный" \
      "start-agent.sh: юнит-тест провален (orchestration/start-agent.test.sh)" \
      bash orchestration/start-agent.test.sh
+unit "watchdog: systemctl stop останавливает агента (маркер, ловушка SIGTERM) — юнит-тест зелёный" \
+     "watchdog: после systemctl stop агент поднимается снова (orchestration/watchdog-stop.test.sh)" \
+     bash orchestration/watchdog-stop.test.sh
 # 4b. create-agent flow спрашивает и пробрасывает PRIMARY_MODEL
 if grep -qE '^ask +PRIMARY_MODEL' skills/create-agent/new-agent.sh \
    && grep -qE 'PRIMARY_MODEL="\$PRIMARY_MODEL"' skills/create-agent/new-agent.sh; then
@@ -239,6 +242,19 @@ if [ -n "$_harness_line" ] && [ -n "$_preflight_line" ] && [ "$_harness_line" -l
   ok "install.sh: харнес роя спрашивается первым, до проверки хостов"
 else
   bad "install.sh: вопрос о харнесе не стоит первым (до шага 0)"
+fi
+# --no-agent на codex: путь «prep → codex login → new-agent.sh» должен работать. new-agent.sh для
+# codex требует сервис маскирования хоста (pii-setup.sh host), а codex login — существующий
+# каталог общего входа. Значит, prep на codex завершается ПОСЛЕ шага 5b и создаёт каталог.
+_pii_host_line="$(grep -n 'pii-setup.sh" host; then' install.sh | head -1 | cut -d: -f1)"
+_codex_prep_line="$(grep -n '^if \[ "\$MODE" = "prep" \]; then' install.sh | head -1 | cut -d: -f1)"
+if grep -q '^if \[ "\$MODE" = "prep" \] && \[ "\$HARNESS" != "codex" \]; then' install.sh \
+   && [ -n "$_pii_host_line" ] && [ -n "$_codex_prep_line" ] \
+   && [ "$_pii_host_line" -lt "$_codex_prep_line" ] \
+   && [[ "$(sed -n "${_codex_prep_line},$((_codex_prep_line + 8))p" install.sh)" == *'chmod 700 "$CODEX_SHARED"'* ]]; then
+  ok "install.sh --no-agent на codex: сервис маскирования и каталог входа готовы до выхода"
+else
+  bad "install.sh --no-agent на codex выходит раньше pii-setup host или без каталога входа"
 fi
 # Codex — в каталог пользователя, не в /usr/local/bin (общий бинарь зациклил рестарты роя).
 if grep -v '^[[:space:]]*#' orchestration/lib/codex-install.sh | grep -q '/usr/local/bin'; then

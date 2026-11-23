@@ -24,6 +24,18 @@ export const STUCK_ALERT_INTERVAL_MS = 60 * 60 * 1_000;
 export const STUCK_TRACKER_MAX_SESSIONS = 1_000;
 /** Маршрут проверки живости (без авторизации; прокси слушает только 127.0.0.1). */
 export const HEALTH_ROUTE = '/health';
+/**
+ * Сколько мс /health прокси доверяет последней проверке сервиса псевдонимизации. Короче
+ * прохода watchdog (~30 с), чтобы каждая его проверка видела свежее состояние, и достаточно
+ * долго, чтобы частые /health не нагружали сервис.
+ */
+export const PSEUDONYMIZER_HEALTH_CACHE_MS = 5_000;
+/** Таймаут проверки сервиса из /health, мс: меньше 3 с, которые /health ждёт оркестрация. */
+export const PSEUDONYMIZER_HEALTH_TIMEOUT_MS = 1_500;
+/** HTTP-код /health, когда прокси жив, а сервис псевдонимизации нет (маскировать нечем). */
+export const HEALTH_DEGRADED_STATUS = 503;
+/** Причина в ответе /health при недоступном сервисе (по ней оркестрация пишет оператору). */
+export const HEALTH_REASON_PSEUDONYMIZER = 'pseudonymizer_unavailable';
 
 /** Текст служебной пробы квоты, которую claude шлёт первым запросом сессии под подпиской. */
 export const QUOTA_PROBE_TEXT = 'quota';

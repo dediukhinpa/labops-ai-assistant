@@ -32,6 +32,8 @@ eq "$(cat "$TMP/home.log")" "$TMP/lab/dev/.codex" "login status зовётся �
 eq "$(FAKE_LOGIN="Logged in using an API key - sk-***" codex_auth_state dev)" apikey "вход по ключу API"
 eq "$(FAKE_LOGIN="Not logged in" FAKE_RC=1 codex_auth_state dev)" none "входа нет"
 eq "$(FAKE_LOGIN="???" FAKE_RC=0 codex_auth_state dev)" unknown "непонятный ответ — не тревога"
+eq "$(FAKE_LOGIN="" FAKE_RC=124 codex_auth_state dev)" unknown "таймаут login status — не «не вошёл»"
+eq "$(FAKE_LOGIN="panic: boom" FAKE_RC=101 codex_auth_state dev)" unknown "падение codex — не «не вошёл»"
 eq "$(PATH=/nonexistent HOME="$TMP" CODEX_BIN="$TMP/missing" codex_auth_state dev)" "unknown" "бинаря нет — не тревога о входе"
 case "$(codex_login_hint dev)" in *"CODEX_HOME=$TMP/lab/shared/codex codex login --device-auth"*) pass=$((pass + 1)) ;; *) fail=$((fail + 1)); echo "FAIL: подсказка входа" ;; esac
 eq "$(FAKE_LOGIN="Logged in using ChatGPT" codex_auth_state_home "$TMP/lab/shared/codex")" chatgpt "вход по общему CODEX_HOME"
@@ -52,6 +54,12 @@ eq "$(cat "$TMP/lab/a2/.codex/auth.json")" '{"own":1}' "второй агент 
 eq "$(ls "$TMP/lab/a2/.codex" | grep -c '^auth.json.bak-')" 1 "чужой вход a2 отложен в .bak"
 codex_link_shared_auth a2; eq "$?" 0 "повторный вызов идемпотентен"
 eq "$(ls "$TMP/lab/a2/.codex" | grep -c '^auth.json.bak-')" 1 "повтор ничего не откладывает"
+
+# Проверка входа: первый проход и каждые N; N=1 — каждый проход (раньше — никогда).
+due() { if codex_auth_check_due "$1" "$2"; then echo y; else echo n; fi; }
+eq "$(due 1 10)$(due 2 10)$(due 10 10)$(due 11 10)$(due 21 10)" "ynnyy" "проверка входа раз в 10 проходов"
+eq "$(due 1 1)$(due 2 1)$(due 3 1)" "yyy" "N=1 — каждый проход"
+eq "$(due 1 0)$(due 2 0)" "yy" "N=0 — как каждый проход, без деления на ноль"
 
 HB="$TMP/hb"
 codex_heartbeat_stale "$HB" 60; eq "$?" 0 "нет heartbeat = устарел"

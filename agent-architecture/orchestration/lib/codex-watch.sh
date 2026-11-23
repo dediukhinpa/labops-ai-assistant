@@ -93,14 +93,17 @@ codex_auth_state() {
 
 # codex_auth_state_home <codex-home> — то же для произвольного CODEX_HOME (общий вход роя).
 codex_auth_state_home() {
-  local bin out rc=0
+  local bin out
   bin="$(codex_bin)" || { echo unknown; return 0; }
-  out="$(CODEX_HOME="$1" timeout 20 "$bin" login status 2>&1)" || rc=$?
+  out="$(CODEX_HOME="$1" timeout 20 "$bin" login status 2>&1)" || true
   case "$out" in
     *"Logged in using ChatGPT"*) echo chatgpt ;;
     *"API key"*|*"api key"*) echo apikey ;;
     *"Not logged in"*) echo none ;;
-    *) if [ "$rc" -ne 0 ]; then echo none; else echo unknown; fi ;;
+    # Таймаут (код 124), падение или непонятный ответ — это НЕ «не вошёл»: прежде ненулевой код
+    # без текста считался none, и зависший `login status` поднимал тревогу оператору и рестарт
+    # здорового агента. Явное «Not logged in» выше — единственный признак отсутствия входа.
+    *) echo unknown ;;
   esac
   return 0
 }
@@ -136,6 +139,17 @@ codex_link_shared_auth() {
   done
   [ ! -e "$shared/auth.json" ] || chmod 600 "$shared/auth.json"
   return 0
+}
+
+# codex_auth_check_due <проход> <раз-в-N-проходов> — пора ли проверять вход в ChatGPT: на первом
+# проходе (номера с 1) и далее каждые N. Прежнее `cycle % N == 1` при N=1 не выполнялось никогда
+# (остаток всегда 0), и WATCHDOG_CODEX_AUTH_CHECK_CYCLES=1 отключал проверку вместо «каждый
+# проход». N < 1 считаем за 1.
+codex_auth_check_due() {
+  local cycle="$1" every="$2"
+  case "$every" in ''|*[!0-9]*) every=1 ;; esac
+  if [ "$every" -lt 1 ]; then every=1; fi
+  [ $(( (cycle - 1) % every )) -eq 0 ]
 }
 
 # codex_heartbeat_stale <heartbeat-file> <max-age-sec> — heartbeat старше предела или нет.

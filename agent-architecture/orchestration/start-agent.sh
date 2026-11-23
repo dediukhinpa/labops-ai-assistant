@@ -23,6 +23,19 @@ AGENT="$1"
 SESSION="labops-$AGENT"
 WORKSPACE="$CLAUDE_LAB/$AGENT/.claude"
 
+# Маркер «агент останавливается» (lib/agents.sh: agent_stop_mark). Вызов от watchdog
+# (LABOPS_START_FROM_WATCHDOG=1) при маркере — отказ без ошибки: идёт `systemctl stop`, и
+# поднятая сейчас сессия пережила бы остановку юнита. Ручной запуск — явная воля оператора:
+# маркер снимается, агент стартует.
+start_cancelled_by_stop() {
+  [ "${LABOPS_START_FROM_WATCHDOG:-0}" = "1" ] && agent_stopping "$AGENT"
+}
+if start_cancelled_by_stop; then
+  echo "[start-agent] $AGENT останавливается (systemctl stop) — старт отменён"
+  exit 0
+fi
+if [ "${LABOPS_START_FROM_WATCHDOG:-0}" != "1" ]; then agent_stop_clear "$AGENT"; fi
+
 # claude's CWD must be inside the plugin dir, not the workspace root: config
 # discovery (CLAUDE.md, .mcp.json) walks UP from CWD, so plugin/.mcp.json
 # (defines the labops-channel MCP server) is only found if CWD starts there
@@ -182,6 +195,12 @@ fi
 # забытый в этом списке, молча протекал от соседа — чужой bot_id ронял поллер
 # канала. Теперь экспорт идёт внутри панели и перекрывает унаследованное
 # целиком, так что полнота списка ни на что не влияет.
+# Повторная проверка перед самым созданием сессии: старт длится секунды (проверка прокси,
+# ожидание драйвера codex), а остановка могла начаться за это время.
+if start_cancelled_by_stop; then
+  echo "[start-agent] $AGENT останавливается (systemctl stop) — старт отменён"
+  exit 0
+fi
 tmux new-session -d -s "$SESSION" -c "$PLUGIN_CWD" \
   "$(dirname "$(realpath "$0")")/session-exec.sh" "$AGENT"
 

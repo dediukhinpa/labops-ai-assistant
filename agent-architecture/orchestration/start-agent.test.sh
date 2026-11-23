@@ -95,4 +95,22 @@ rm -f "$WS/state/pii-mode" "$TMP/sent.log"
 bash "$HERE/start-agent.sh" "$AGENT" >/dev/null 2>&1 || fail "обычный старт упал"
 [ "$(sent_count)" -eq 0 ] || fail "при живом прокси оператору ничего не шлём"
 
-echo "OK: start-agent.test.sh — 4 сценария"
+# 5. Перезапуск watchdog'ом (PII_START_MODE=keep): агент напрямую так и стартует напрямую, даже
+#    если прокси на старте ответил — возврат только гистерезисом watchdog.
+printf 'direct\n' > "$WS/state/pii-mode"; rm -f "$TMP/sent.log"
+LABOPS_START_FROM_WATCHDOG=1 PII_START_MODE=keep bash "$HERE/start-agent.sh" "$AGENT" \
+  >/dev/null 2>&1 || fail "перезапуск watchdog'ом упал"
+[ "$(cat "$WS/state/pii-mode")" = direct ] || fail "перезапуск вернул агента на прокси в обход гистерезиса"
+[ "$(sent_count)" -eq 0 ] || fail "перезапуск в том же режиме не должен ничего слать"
+
+# 6. Идёт остановка (маркер stop-agent): старт от watchdog отменяется, ручной — снимает маркер.
+: > "$TMP/tmux.log"; date +%s > "$WS/state/stopping"
+LABOPS_START_FROM_WATCHDOG=1 bash "$HERE/start-agent.sh" "$AGENT" >/dev/null 2>&1 \
+  || fail "отмена старта при остановке должна быть без ошибки"
+grep -q '^new-session' "$TMP/tmux.log" && fail "watchdog поднял сессию во время остановки"
+[ -f "$WS/state/stopping" ] || fail "старт от watchdog не должен снимать маркер остановки"
+bash "$HERE/start-agent.sh" "$AGENT" >/dev/null 2>&1 || fail "ручной старт после остановки упал"
+grep -q '^new-session' "$TMP/tmux.log" || fail "ручной старт не поднял сессию"
+[ -f "$WS/state/stopping" ] && fail "ручной старт не снял маркер остановки"
+
+echo "OK: start-agent.test.sh — 6 сценариев"

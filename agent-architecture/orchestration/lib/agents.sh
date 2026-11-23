@@ -92,3 +92,31 @@ agent_bot_token() {
   echo "agent_bot_token: no TELEGRAM_BOT_TOKEN found for agent '$agent'" >&2
   return 1
 }
+
+# ── Маркер «агент останавливается» ───────────────────────────────────────────
+# systemd при `systemctl stop` сначала исполняет ExecStop (stop-agent.sh), пока главный процесс
+# юнита — watchdog — ещё жив, и только потом шлёт ему SIGTERM. У агента на Codex stop-agent ждёт
+# сброса памяти драйвером до 35 с; watchdog в это окно видел «сессии нет» и поднимал агента
+# заново, а его start-agent переживал SIGTERM главному процессу (KillMode=process) — остановка
+# не останавливала. Маркер ставит stop-agent ДО снятия сессии; watchdog перед любым рестартом
+# его проверяет. Снимается при старте watchdog и при ручном запуске start-agent.
+# Все функции возвращают 0 (кроме agent_stopping): их зовут из скриптов под set -e.
+
+# agent_stop_marker <agent> — путь маркера (в state рабочей папки агента).
+agent_stop_marker() { printf '%s/%s/.claude/state/stopping\n' "$CLAUDE_LAB" "$1"; }
+
+# agent_stop_mark <agent> — поставить маркер. Нет рабочей папки агента — не создаём мусор.
+agent_stop_mark() {
+  local f
+  [ -d "$CLAUDE_LAB/$1/.claude" ] || return 0
+  f="$(agent_stop_marker "$1")"
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  date +%s > "$f" 2>/dev/null || true
+  return 0
+}
+
+# agent_stop_clear <agent> — снять маркер.
+agent_stop_clear() { rm -f "$(agent_stop_marker "$1")" 2>/dev/null || true; return 0; }
+
+# agent_stopping <agent> — 0, если агент сейчас останавливается.
+agent_stopping() { [ -f "$(agent_stop_marker "$1")" ]; }

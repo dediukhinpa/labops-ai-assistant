@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ProxyConfig } from './config';
 import {
-  HEALTH_ROUTE, MAX_REQUEST_BODY_BYTES, QUOTA_PROBE_MAX_TOKENS, QUOTA_PROBE_TEXT,
+  HEALTH_DEGRADED_STATUS, HEALTH_REASON_PSEUDONYMIZER, HEALTH_ROUTE, MAX_REQUEST_BODY_BYTES, QUOTA_PROBE_MAX_TOKENS, QUOTA_PROBE_TEXT,
   SERVER_IDLE_TIMEOUT_S, SESSION_HEADER, UPSTREAM_ERROR_BODY_MAX_BYTES, UPSTREAM_LOG_HEADER,
   CODEX_SESSION_HEADERS,
 } from './proxy-constants';
@@ -14,6 +14,7 @@ import {
   type JsonObject, type LogFields, type Logger, type Pseudonymizer, type RequestFormat,
   type SseEvent,
 } from '@labops/pii';
+import { PseudonymizerHealth } from './pseudonymizer-health';
 import { SessionStuckTracker, type StuckSignal } from './session-stuck';
 
 /**
@@ -38,6 +39,8 @@ export interface ProxyDeps {
   readonly onStuck?: (signal: StuckSignal) => void;
   /** Счётчик застревания (в тестах - с малым порогом и своими часами). */
   readonly stuckTracker?: SessionStuckTracker;
+  /** Проверка сервиса для /health (в тестах - со своими часами и таймаутом). */
+  readonly pseudonymizerHealth?: PseudonymizerHealth;
 }
 
 /** Запущенный прокси. */
@@ -62,6 +65,7 @@ export class PiiProxy {
   private readonly service: Pseudonymizer;
   private readonly masker: RequestMasker;
   private readonly stuck: SessionStuckTracker;
+  private readonly serviceHealth: PseudonymizerHealth;
 
   constructor(
     private readonly config: ProxyConfig,
@@ -81,6 +85,7 @@ export class PiiProxy {
       this.service, config.imagePolicy, config.caseLabels, this.mediaProcessor(),
       { logger: deps.logger });
     this.stuck = deps.stuckTracker ?? new SessionStuckTracker();
+    this.serviceHealth = deps.pseudonymizerHealth ?? new PseudonymizerHealth(this.service);
   }
 
   /** Клиент media-masker с кэшем: только при политике mask (конфиг гарантирует токен). */
@@ -123,9 +128,11 @@ export class PiiProxy {
   async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     // Проверка живости для watchdog: без авторизации и без обращения к API. Это не маршрут
-    // API, поэтому в upstream он не уходит; прокси слушает только 127.0.0.1.
+    // API, поэтому в upstream он не уходит; прокси слушает только 127.0.0.1. Отражает и сервис
+    // псевдонимизации: без него каждый запрос модели получил бы 503, и «прокси жив» было бы
+    // неправдой — оркестрация должна перевести агента на прямую работу (см. PseudonymizerHealth).
     if (req.method === 'GET' && url.pathname === HEALTH_ROUTE) {
-      return Response.json({ status: 'ok' });
+      return this.health();
     }
     const sessionId = sessionOf(req.headers);
     const ephemeral = sessionId === null || sessionId === '';
@@ -149,6 +156,17 @@ export class PiiProxy {
     } finally {
       if (ctx.ephemeral && ctx.used && !keepThread) await this.dropThread(ctx);
     }
+  }
+
+  /** Ответ /health: 200 ok при живом сервисе, иначе 503 с причиной. */
+  private async health(): Promise<Response> {
+    if (await this.serviceHealth.state() === 'ok') {
+      return Response.json({ status: 'ok', pseudonymizer: 'ok' });
+    }
+    return Response.json(
+      { status: 'degraded', pseudonymizer: 'down', reason: HEALTH_REASON_PSEUDONYMIZER },
+      { status: HEALTH_DEGRADED_STATUS },
+    );
   }
 
   private async route(

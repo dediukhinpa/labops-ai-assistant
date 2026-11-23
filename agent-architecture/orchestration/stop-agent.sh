@@ -24,12 +24,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/harness.sh"
 # shellcheck source=lib/codex-watch.sh
 . "$SCRIPT_DIR/lib/codex-watch.sh"
+# shellcheck source=lib/agent-env.sh
+. "$SCRIPT_DIR/lib/agent-env.sh"
 
 AGENT="${1:?agent required}"
 SESSION="labops-$AGENT"
 WORKSPACE="$CLAUDE_LAB/$AGENT/.claude"
 
 echo "[stop-agent] останавливаю '$AGENT'"
+
+# 0. Маркер «останавливаюсь» — ДО снятия сессии: watchdog этого же юнита ещё жив (systemd шлёт
+#    ему SIGTERM только после ExecStop) и без маркера поднял бы агента заново, пока мы ждём
+#    драйвер codex (см. agent_stop_mark в lib/agents.sh).
+agent_stop_mark "$AGENT"
 
 # 1. Сессия tmux. Именно kill-session, а не kill-server: сервер общий, снос
 #    сервера уронил бы сессии всех остальных агентов.
@@ -60,7 +67,9 @@ echo "[stop-agent] поллеров остановлено: $stopped_pollers"
 #     мозг. Сразу SIGKILL терял этот сброс, поэтому сначала SIGTERM и ожидание (не дольше
 #     CODEX_STOP_WAIT_DEFAULT_SEC), и только потом -9. App-server агента — по его порту.
 if [ "$(harness_current)" = "codex" ]; then
-  CODEX_PORT="$(agent_channel_var "$AGENT" TELEGRAM_WEBHOOK_PORT 2>/dev/null || true)"
+  # Порт — как у start-agent и watchdog: из channel.env, иначе 6000 + индекс в ростере. Без
+  # запасного варианта app-server агента без порта в channel.env оставался сиротой.
+  CODEX_PORT="$(agent_env_webhook_port "$AGENT" 2>/dev/null || true)"
   case "$(codex_stop_driver "$AGENT" "$CODEX_PORT")" in
     graceful) echo "[stop-agent] драйвер codex завершился сам (память сброшена)" ;;
     killed) echo "[stop-agent] драйвер codex не вышел за отведённое время — снят принудительно" ;;
@@ -73,6 +82,13 @@ fi
 #    чужой канал не заденет.
 if pkill -9 -f "$CLAUDE_LAB/$AGENT/.claude/.*/plugin/src/server.ts" 2>/dev/null; then
   echo "[stop-agent] осиротевший канал агента прибран"
+fi
+
+# 4. Сессию мог успеть поднять start-agent, запущенный watchdog'ом до появления маркера (он
+#    проверяет маркер, но между проверкой и new-session есть окно). Снимаем ещё раз.
+if tmux has-session -t "=$SESSION" 2>/dev/null; then
+  tmux kill-session -t "=$SESSION" 2>/dev/null || true
+  echo "[stop-agent] сессия $SESSION поднялась во время остановки — снята повторно"
 fi
 
 echo "[stop-agent] '$AGENT' остановлен"

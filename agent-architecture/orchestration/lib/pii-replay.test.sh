@@ -39,7 +39,7 @@ tmux() {
   return 0
 }
 log() { echo "LOG $*" >> "$EVENTS"; }
-restart_session() { echo "RESTART $1 ${2:-}" >> "$EVENTS"; PANE_NOW="$PANE_IDLE"; }
+restart_session() { echo "RESTART $1 ${2:-} mode=${3:-}" >> "$EVENTS"; PANE_NOW="$PANE_IDLE"; }
 PII_WANT="$PII_MODE_DIRECT"
 
 deliver() {   # <секунд назад> <текст> — метка доставки плагина
@@ -77,7 +77,8 @@ deliver 60 "сделай сводку"
 PANE_NOW=$'✻ Working… (12s · esc to interrupt)\n❯\xc2\xa0'
 pii_switch_claude "посреди хода" interrupt
 grep -qx Escape "$KEYS" || fail "ход не прерван"
-grep -q '^RESTART .* noflap$' "$EVENTS" || fail "рестарт без noflap"
+grep -q '^RESTART .* noflap mode=direct$' "$EVENTS" \
+  || fail "рестарт без noflap или без решения watchdog о режиме (start-agent переиграл бы его)"
 [ -e "$(pii_switch_continue_file "$AGENT")" ] || fail "нет метки --continue"
 grep -qx "сделай сводку" "$KEYS" || fail "входящее не повторено"
 eq "$(grep -cx Enter "$KEYS")" 1 "повтор отправлен один раз"
@@ -110,7 +111,7 @@ deliver 30 "ещё вопрос"
 PII_WANT="$PII_MODE_PROXY"
 pii_switch_claude "простой"
 [ -s "$KEYS" ] && fail "возврат через прокси ничего не набирает"
-grep -q '^RESTART' "$EVENTS" || fail "возврат через прокси — перезапуск в простое"
+grep -q '^RESTART .* mode=proxy$' "$EVENTS" || fail "возврат через прокси — перезапуск в простое"
 
 # 5. Промпт не дождались — ничего не набираем.
 PANE_NOW=$'✻ Working… (1s · esc to interrupt)'

@@ -137,3 +137,47 @@ harness_bin() {
     *) echo "harness: неизвестный харнес '$1'" >&2; return 1 ;;
   esac
 }
+
+# harness_agent_user_homes — домашние каталоги кандидатов в пользователи агентов, по строке на
+# каталог. Если задан AGENT_OS_USER — только его. Иначе все пользователи из passwd с домом
+# (системные учётки без лаборатории всё равно отсеются по отсутствию swarm.env).
+# HARNESS_PASSWD_FILE подменяет базу пользователей (тесты).
+harness_agent_user_homes() {
+  local passwd
+  if [ -n "${HARNESS_PASSWD_FILE:-}" ]; then
+    passwd="$(cat "$HARNESS_PASSWD_FILE" 2>/dev/null || true)"
+  else
+    passwd="$(getent passwd 2>/dev/null || cat /etc/passwd 2>/dev/null || true)"
+  fi
+  if [ -n "${AGENT_OS_USER:-}" ]; then
+    printf '%s\n' "$passwd" | awk -F: -v u="$AGENT_OS_USER" '$1 == u && $6 != "" { print $6 }'
+  else
+    printf '%s\n' "$passwd" | awk -F: '$1 != "root" && $6 != "" && $6 != "/" { print $6 }'
+  fi
+}
+
+# harness_read_swarm_agent_users — харнес, уже выбранный в лаборатории пользователя агентов.
+#
+# Зачем: установщик спрашивает харнес первым, ещё от root — до создания пользователя агентов и
+# до перезапуска от его имени. А swarm.env лежит в лаборатории ЭТОГО пользователя, у root
+# ($HOME=/root) его нет. Без этой функции повторный `sudo bash install.sh` для роя на codex брал
+# умолчание claude: проверка хостов требовала api.anthropic.com и падала, интерактивно харнес
+# переспрашивался, а NONINTERACTIVE=1 переписывал swarm.env на claude.
+#
+# Печатает значение HARNESS (пусто — нигде не выбран). Код 2 — у разных пользователей разные
+# харнесы: какой из них имеется в виду, установщик не угадывает.
+harness_read_swarm_agent_users() {
+  local home value found=""
+  while IFS= read -r home; do
+    [ -n "$home" ] || continue
+    value="$(CLAUDE_LAB="$home/.claude-lab" harness_read_swarm 2>/dev/null || true)"
+    [ -n "$value" ] || continue
+    if [ -z "$found" ]; then
+      found="$value"
+    elif [ "$found" != "$value" ]; then
+      return 2
+    fi
+  done < <(harness_agent_user_homes)
+  printf '%s' "$found"
+  return 0
+}

@@ -56,6 +56,9 @@ cat > "$MOCKS/curl" <<'EOF'
 #!/usr/bin/env bash
 # Последний аргумент — адрес; MOCK_CURL_LOG фиксирует, куда стучался doctor.
 [ -n "${MOCK_CURL_LOG:-}" ] && printf '%s\n' "${!#}" >> "$MOCK_CURL_LOG"
+# MOCK_CURL_BODY — тело ответа (например, /health прокси при мёртвом псевдонимизаторе); с
+# «-o /dev/null» тело, как у настоящего curl, не печатается.
+case " $* " in *" -o /dev/null "*) ;; *) printf '%s' "${MOCK_CURL_BODY:-}" ;; esac
 exit "${MOCK_CURL_RC:-0}"
 EOF
 
@@ -289,6 +292,16 @@ if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "работает напря
   ok "прокси молчит: предупреждение о режиме напрямую, вердикт «на связи»"
 else
   bad "прокси молчит: нет предупреждения или вердикт «сломано» (код $rc)"; echo "    $out"
+fi
+# Прокси жив, псевдонимизатор нет (/health 503 с "pseudonymizer":"down"): предупреждение
+# называет сервис, а не прокси.
+out="$(quiet_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE" MOCK_CURL_RC=22 \
+  MOCK_CURL_BODY='{"status":"degraded","pseudonymizer":"down"}')" && rc=0 || rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "сервис псевдонимизации недоступен" \
+   && printf '%s' "$out" | grep -qF "без маскирования"; then
+  ok "псевдонимизатор мёртв: предупреждение называет сервис, вердикт «на связи»"
+else
+  bad "псевдонимизатор мёртв: причина не названа (код $rc)"; echo "    $out"
 fi
 printf 'direct\n' > "$PII_WS/state/pii-mode"
 out="$(quiet_run env CLAUDE_CREDENTIALS_FILE="$CREDS_OK" MOCK_PANE="$IDLE")" && rc=0 || rc=$?

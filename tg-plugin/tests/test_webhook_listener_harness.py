@@ -12,11 +12,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import http.server
 import importlib.util
 import os
 import sys
 import tempfile
+import threading
 import unittest
+from collections.abc import Iterator
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from types import ModuleType
@@ -243,6 +247,30 @@ class _FakeRequest:
         return b'{"task_id": "t-1", "from_agent": "boss", "title": "x"}'
 
 
+@contextlib.contextmanager
+def _health_server(status: int, body: bytes) -> Iterator[str]:
+    """Локальный HTTP-сервер: GET /health отвечает заданным кодом и телом; отдаёт корень URL."""
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 — имя задаёт BaseHTTPRequestHandler
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: Any) -> None:
+            return None
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 class PiiProxyDirectTest(_EnvGuard):
     """pii-proxy молчит — задача выполняется напрямую, владелец предупреждён с троттлингом.
 
@@ -260,13 +288,14 @@ class PiiProxyDirectTest(_EnvGuard):
             '{"env": {"ANTHROPIC_BASE_URL": "%s"}}' % url, encoding="utf-8")
         return self.lab.load()
 
-    def _wire(self, module: ModuleType, healthy: bool) -> dict[str, list[Any]]:
+    def _wire(self, module: ModuleType, healthy: bool,
+              reason: str = "proxy") -> dict[str, list[Any]]:
         """Подменить /health, запуск и Telegram; вернуть журнал вызовов."""
         calls: dict[str, list[Any]] = {"spawn": [], "owner": [], "health": []}
 
-        async def _health(url: str) -> bool:
+        async def _health(url: str) -> str:
             calls["health"].append(url)
-            return healthy
+            return "" if healthy else reason
 
         async def _spawn(prompt: str, task_id: str, direct: bool = False) -> None:
             calls["spawn"].append((task_id, direct))
@@ -277,7 +306,7 @@ class PiiProxyDirectTest(_EnvGuard):
         async def _notify(*_args: Any) -> None:
             return None
 
-        module._pii_proxy_healthy = _health
+        module._pii_proxy_down_reason = _health
         module._spawn_headless = _spawn
         module._send_owner_text = _owner
         module._notify_owner = _notify
@@ -306,6 +335,27 @@ class PiiProxyDirectTest(_EnvGuard):
         # Порт 1 на loopback никто не слушает: соединение отклоняется сразу.
         module = self._load_codex()
         self.assertFalse(asyncio.run(module._pii_proxy_healthy("http://127.0.0.1:1")))
+
+    def test_dead_pseudonymizer_reported_from_health_body(self) -> None:
+        # Прокси жив, сервис псевдонимизации нет: /health 503 с "pseudonymizer": "down".
+        module = self._load_codex()
+        with _health_server(503, b'{"status":"degraded","pseudonymizer":"down"}') as url:
+            self.assertEqual(asyncio.run(module._pii_proxy_down_reason(url)), "pseudonymizer")
+            self.assertFalse(asyncio.run(module._pii_proxy_healthy(url)))
+        with _health_server(503, b"not json") as url:
+            self.assertEqual(asyncio.run(module._pii_proxy_down_reason(url)), "proxy")
+        with _health_server(200, b'{"status":"ok","pseudonymizer":"ok"}') as url:
+            self.assertEqual(asyncio.run(module._pii_proxy_down_reason(url)), "")
+
+    def test_dead_pseudonymizer_runs_direct_and_names_cause(self) -> None:
+        module = self._load_codex()
+        calls = self._wire(module, healthy=False, reason="pseudonymizer")
+        resp = asyncio.run(module.handle_webhook(_FakeRequest()))
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(calls["spawn"], [("t-1", True)])
+        self.assertEqual(len(calls["owner"]), 1)
+        self.assertIn("сервис псевдонимизации недоступен", calls["owner"][0])
+        self.assertIn("без маскирования", calls["owner"][0])
 
     def test_live_proxy_task_runs_as_before(self) -> None:
         for module in (self._load_codex(), self._load_claude()):

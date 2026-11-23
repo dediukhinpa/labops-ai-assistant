@@ -121,7 +121,10 @@ pii_switch_claude() {
   fi
   mkdir -p "$(dirname "$(pii_switch_continue_file "$AGENT")")" 2>/dev/null || true
   : > "$(pii_switch_continue_file "$AGENT")" 2>/dev/null || true
-  restart_session "pii-proxy: режим $from → $want ($1)" noflap
+  # Третий аргумент — режим для start-agent (PII_START_MODE): direct он не переигрывает по
+  # /health (иначе юнит прокси, поднятый на старте, тут же возвращал агента на прокси, и одна
+  # следующая неудача снова уводила напрямую — рестарт каждые 30–40 с).
+  restart_session "pii-proxy: режим $from → $want ($1)" noflap "$want"
   if [ -n "$text" ]; then
     if pii_replay_type "$SESSION" "$text"; then
       log "pii-proxy: последнее входящее повторено напрямую"

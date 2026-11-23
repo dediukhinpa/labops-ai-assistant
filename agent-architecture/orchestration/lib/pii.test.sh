@@ -139,11 +139,81 @@ pii_switch_due alpha || fail "после $PII_UP_AFTER_OKS успехов под
 eq "$PII_WANT" proxy "нужен режим через прокси"
 pii_mode_set alpha "$PII_WANT" || fail "возврат через прокси - смена"
 eq "$(wc -l < "$SENT" | tr -d ' ')" 4 "одно сообщение о восстановлении"
+# смена режима обнуляет счётчики: после возврата на прокси одна неудача не уводит напрямую
+eq "$PII_OK_STREAK$PII_FAIL_STREAK" "00" "смена режима сбросила счётчики"
+set_proxy "http://127.0.0.1:$DEAD_PORT"
+pii_watch_step alpha
+pii_switch_due alpha && fail "после возврата на прокси одна неудача не должна переключать"
+set_proxy "$LIVE_URL"; pii_watch_step alpha
+
+# Симуляция crash-loop прокси (D): down,down,down → watchdog решает «напрямую» → перезапуск
+# агента, на старте юнит прокси поднялся (up) → снова down. Решение watchdog не переигрывается
+# стартом, счётчики после смены режима начинаются заново — ни рестарта, ни лишних сообщений.
+pii_streak_reset; pii_mode_write alpha proxy; : > "$SENT"
+set_proxy "http://127.0.0.1:$DEAD_PORT"
+for _ in $(seq 1 "$PII_DOWN_AFTER_FAILS"); do pii_watch_step alpha; done
+eq "$PII_WANT" direct "симуляция: после серии неудач нужно напрямую"
+# restart_session watchdog: сброс счётчиков и старт с решением watchdog (PII_START_MODE=direct)
+pii_streak_reset
+set_proxy "$LIVE_URL"   # юнит прокси поднялся на старте
+eq "$(PII_START_MODE=direct pii_mode_resolve_start alpha)" direct \
+  "старт по решению watchdog не возвращает на прокси по одной удачной проверке"
+eq "$(pii_mode_get alpha)" direct "симуляция: режим напрямую"
+set_proxy "http://127.0.0.1:$DEAD_PORT"   # прокси снова упал
+pii_watch_step alpha
+pii_switch_due alpha && fail "симуляция: агент уже напрямую — нового переключения нет"
+eq "$(wc -l < "$SENT" | tr -d ' ')" 1 "симуляция: одно предупреждение на весь эпизод"
+# прочие перезапуски (keep): агент напрямую напрямую и стартует, даже если прокси ответил
+set_proxy "$LIVE_URL"
+eq "$(PII_START_MODE=keep pii_mode_resolve_start alpha)" direct "keep: прямой режим сохраняется"
+eq "$(wc -l < "$SENT" | tr -d ' ')" 1 "keep: без сообщений"
+# keep на прокси при мёртвом прокси — fail-open сразу, без ожидания гистерезиса
+pii_mode_write alpha proxy; set_proxy "http://127.0.0.1:$DEAD_PORT"
+eq "$(PII_START_MODE=keep pii_mode_resolve_start alpha)" direct "keep: мёртвый прокси на старте — напрямую"
+# возврат на прокси — только гистерезисом watchdog
+set_proxy "$LIVE_URL"; pii_streak_reset
+for _ in $(seq 1 "$PII_UP_AFTER_OKS"); do pii_watch_step alpha; done
+eq "$PII_WANT" proxy "возврат на прокси после $PII_UP_AFTER_OKS удачных подряд"
+eq "$(PII_START_MODE=proxy pii_mode_resolve_start alpha)" proxy "старт по решению вернуться на прокси"
+pii_streak_reset
+
 # агент без прокси: переключать нечего
 pii_watch_step beta
 eq "$PII_WANT" "" "у агента без прокси нет нужного режима"
 pii_switch_due beta && fail "агента без прокси не переключаем"
 unset -f notify_op
+
+# 4c. Прокси жив, псевдонимизатор нет (E): /health отвечает 503 с "pseudonymizer":"down" —
+# это «недоступен» (напрямую), а сообщение оператору называет причину.
+python3 - "$TMP/port503" <<'PY' &
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b'{"status":"degraded","pseudonymizer":"down","reason":"pseudonymizer_unavailable"}'
+        self.send_response(503); self.send_header("content-type", "application/json")
+        self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(s.server_address[1]))
+s.serve_forever()
+PY
+SRV503_PID=$!
+for _ in $(seq 1 50); do [ -s "$TMP/port503" ] && break; sleep 0.1; done
+NOPSEUDO_URL="http://127.0.0.1:$(cat "$TMP/port503")"
+set_proxy "$NOPSEUDO_URL"
+eq "$(pii_proxy_state alpha)" down "псевдонимизатор мёртв — прокси считается недоступным"
+eq "$(pii_proxy_down_reason alpha)" pseudonymizer "причина — псевдонимизатор"
+set_proxy "http://127.0.0.1:$DEAD_PORT"
+eq "$(pii_proxy_down_reason alpha)" proxy "прокси не отвечает — причина прокси"
+set_proxy "$NOPSEUDO_URL"
+pii_mode_write alpha proxy; : > "$SENT"
+notify_op() { shift; printf '%s\n' "$*" >> "$SENT"; }
+pii_mode_set alpha direct || fail "смена режима при мёртвом псевдонимизаторе"
+grep -q 'сервис псевдонимизации недоступен' "$SENT" || fail "сообщение не называет псевдонимизатор"
+grep -q 'БЕЗ маскирования' "$SENT" || fail "сообщение не говорит о немаскированных ПДн"
+unset -f notify_op
+kill "$SRV503_PID" 2>/dev/null
+pii_mode_write alpha proxy; set_proxy "$LIVE_URL"
 
 # 5. опрос session_stuck: считает только новые строки
 eq "$(pii_stuck_poll alpha)" 0 "файла нет"
