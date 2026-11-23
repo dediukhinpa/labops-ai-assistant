@@ -13,7 +13,6 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { createMcpHttpHandler, CHANNEL_TOKEN_ENV } from '../../src/harness/codex/mcp-http.js'
 import {
   appServerArgs,
-  askViaRelay,
   codexChildEnv,
   codexHarnessEnabled,
   instructionsHash,
@@ -23,8 +22,6 @@ import {
 } from '../../src/harness/codex/bootstrap.js'
 import { runMemoryHook } from '../../src/harness/codex/memory-hooks.js'
 import { mapItemToTool, replyTextOf } from '../../src/harness/codex/events.js'
-import type { AskUserQuestionRelay, AskUserQuestionResult } from '../../src/channel/ask-user-question.js'
-import type { AskUserQuestionUi } from '../../src/telegram/ask-user-question.js'
 
 async function withMcpServer(
   token: string,
@@ -176,46 +173,6 @@ describe('перевод событий', () => {
     const item = { type: 'mcpToolCall', id: '1', server: 'labops-channel', tool: 'reply', arguments: { chat_id: 5, text: 'Hi' } }
     expect(replyTextOf(item)).toEqual({ chatId: '5', text: 'Hi' })
     expect(replyTextOf({ ...item, tool: 'react' })).toBeUndefined()
-  })
-})
-
-describe('вопросы кнопками', () => {
-  test('ответы релея (ключ — текст вопроса) превращаются в ответы Codex (ключ — id)', async () => {
-    let submitted: unknown
-    const relay = {
-      submit: (input: unknown) => {
-        submitted = input
-        const result: AskUserQuestionResult = {
-          status: 'answered',
-          updatedInput: { questions: [], answers: { 'Удалить?': 'Да', 'Что ещё?': ['A', 'B'] } },
-        }
-        return { requestId: 'req-1', result: Promise.resolve(result) }
-      },
-    } as unknown as AskUserQuestionRelay
-    let started = ''
-    const ui = { startQuestion: async (id: string) => void (started = id) } as unknown as AskUserQuestionUi
-    const out = await askViaRelay(
-      relay,
-      ui,
-      '42',
-      [
-        { id: 'q1', header: 'H', question: 'Удалить?', isOther: false, isSecret: false, options: [{ label: 'Да', description: '' }] },
-        { id: 'q2', header: 'H', question: 'Что ещё?', isOther: true, isSecret: false, options: null },
-      ],
-      'item-1',
-      'thr',
-    )
-    expect(started).toBe('req-1')
-    expect(submitted).toMatchObject({ chatId: '42', toolUseId: 'item-1', sessionId: 'thr' })
-    expect(out).toEqual({ answers: { q1: { answers: ['Да'] }, q2: { answers: ['A', 'B'] } } })
-  })
-
-  test('таймаут — null', async () => {
-    const relay = {
-      submit: () => ({ requestId: undefined, result: Promise.resolve({ status: 'timeout' }) }),
-    } as unknown as AskUserQuestionRelay
-    const ui = { startQuestion: async () => undefined } as unknown as AskUserQuestionUi
-    expect(await askViaRelay(relay, ui, '42', [], 'i', 't')).toBeNull()
   })
 })
 

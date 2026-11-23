@@ -6,8 +6,6 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 
 import type { Logger } from '../../log.js'
-import type { AskUserQuestionRelay } from '../../channel/ask-user-question.js'
-import type { AskUserQuestionUi } from '../../telegram/ask-user-question.js'
 import { ClaudeHookPayloadSchema } from '../../schemas.js'
 import {
   CodexDriver,
@@ -16,8 +14,6 @@ import {
   ITEM_STALL_ENV,
   TURN_STALL_ENV,
   type PiiMode,
-  type UserInputAnswers,
-  type UserInputQuestion,
 } from './driver.js'
 import { CHANNEL_SERVER_NAME } from './events.js'
 import { CHANNEL_TOKEN_ENV, MCP_HTTP_PATH } from './mcp-http.js'
@@ -109,8 +105,10 @@ export const CODEX_CHANNEL_INSTRUCTIONS = [
   'do not repeat in the final message what reply already sent. Photos arrive as <media kind="photo" local_path="...">',
   '— read the file. Other attachments: call download_attachment with file_id and chat_id, then read the returned path.',
   'Telegram exposes no history — ask the user to paste earlier context if you need it.',
-  'request_user_input_async questions are shown in the chat as buttons; the answer arrives later as a new',
-  '<channel ... answer_to="<call id>"> message. Keep working meanwhile — do not sleep waiting for it.',
+  'When you need something from the operator, ask in a plain message — never as buttons or a menu. List any',
+  'choices in words in that message. The operator answers in their own words as the next message. Ask one',
+  'thing at a time and wait for the reply before continuing; do not use request_user_input tools to present',
+  'choices as buttons.',
 ].join('\n')
 
 /** Окружение для codex app-server: без секретов плагина, с токеном MCP канала. */
@@ -170,46 +168,9 @@ export interface CodexBootstrapDeps {
   /** Отправка текста оператору тем же путём, что инструмент reply. */
   sendReply: (chatId: string, text: string) => Promise<void>
   react: (chatId: string, messageId: number, emoji: string) => Promise<void>
-  askRelay: AskUserQuestionRelay
-  askUi: AskUserQuestionUi
   /** Личка оператора для предупреждений драйвера; не задана — только журнал. */
   operatorChatId?: string
   env?: NodeJS.ProcessEnv
-}
-
-/**
- * Вопросы Codex → вопросы релея кнопок; ответы релея (ключ — текст вопроса) → ответы Codex
- * (ключ — id вопроса).
- */
-export async function askViaRelay(
-  relay: AskUserQuestionRelay,
-  ui: AskUserQuestionUi,
-  chatId: string,
-  questions: UserInputQuestion[],
-  requestId: string,
-  sessionId: string,
-): Promise<UserInputAnswers | null> {
-  const submitted = relay.submit({
-    toolUseId: requestId,
-    sessionId,
-    chatId,
-    questions: questions.map(q => ({
-      question: q.question,
-      header: q.header,
-      multiSelect: false,
-      options: (q.options ?? []).map(o => ({ label: o.label, description: o.description })),
-    })),
-  })
-  if (submitted.requestId !== undefined) await Promise.resolve(ui.startQuestion(submitted.requestId))
-  const result = await submitted.result
-  if (result.status !== 'answered' || result.updatedInput === undefined) return null
-  const answers: UserInputAnswers['answers'] = {}
-  for (const q of questions) {
-    const value = result.updatedInput.answers[q.question]
-    if (value === undefined) continue
-    answers[q.id] = { answers: Array.isArray(value) ? value : [value] }
-  }
-  return { answers }
 }
 
 /**
@@ -251,8 +212,6 @@ export function createCodexDriver(deps: CodexBootstrapDeps): CodexDriver {
         await deps.dispatchHook(parsed.data)
       },
       deliverFinal: (chatId, text) => deps.sendReply(chatId, text),
-      askUser: (chatId, questions, requestId) =>
-        askViaRelay(deps.askRelay, deps.askUi, chatId, questions, requestId, driver?.thread ?? ''),
       memory: (hook, payload) => runMemoryHook(deps.workspace, hook, payload, childEnv),
       rebuildIdentity: async () => {
         if (!(await rebuildAgentsMd(deps.workspace, childEnv))) {
