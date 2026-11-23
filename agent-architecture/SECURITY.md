@@ -46,8 +46,10 @@ outside Russia, and the operator decides where personal data of Russian citizens
 
 **When the proxy is down, agents work directly — personal data is then not masked.** Owner
 decision of 23.11.2026: an agent whose `pii-proxy` stops answering `/health` keeps working
-without it (the agent itself, both harnesses, and agent-to-agent jobs of the webhook-listener)
-instead of going silent. For as long as the proxy is down, personal data goes to the model
+without it (the agent itself, both harnesses, multichat sessions and agent-to-agent jobs of the
+webhook-listener) instead of going silent. The switch does not wait for idle: a running turn is
+interrupted and the last incoming message (from the plugin's delivery marker) is repeated
+directly — that message is therefore sent to the model unmasked as well. For as long as the proxy is down, personal data goes to the model
 provider **unmasked**; the owner accepts this risk. The operator is told in Telegram once when
 an agent switches to direct mode and once when it is back through the proxy; `/doctor` shows a
 warning while it lasts; the current mode is in `~/.claude-lab/<agent>/.claude/state/pii-mode`.

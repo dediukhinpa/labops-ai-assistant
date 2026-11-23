@@ -122,6 +122,10 @@ eq "$(grep -c alpha "$TMP/revive.log")" 1 "юнит поднимаем один 
 pii_mode_set alpha "$PII_WANT" || fail "смена режима должна вернуть 0"
 pii_mode_set alpha direct && fail "повторная запись того же режима - не смена"
 eq "$(wc -l < "$SENT" | tr -d ' ')" 3 "одно предупреждение на падение"
+# Текст: последнее сообщение повторяется само, переслать пользователя не просят.
+pii_mode_message alpha direct | grep -q "повторяю его уже без прокси" \
+  || fail "предупреждение не говорит, что сообщение повторяется"
+pii_mode_message alpha direct | grep -q "ещё раз" && fail "предупреждение просит переслать"
 pii_watch_step alpha
 pii_switch_due alpha && fail "уже напрямую - больше не переключать"
 # восстановление: PII_UP_AFTER_OKS удачных подряд
