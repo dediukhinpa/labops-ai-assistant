@@ -119,16 +119,19 @@ run_bwrap() {
     ulimit -f 262144 2>/dev/null || true
     ulimit -t $(( TIMEOUT + 5 )) 2>/dev/null || true
     exec timeout --kill-after=5 "$TIMEOUT" \
+      # Рабочую папку монтируем ПОД tmpfs /tmp: корень --ro-bind'ом read-only,
+      # и точку монтирования на верхнем уровне (/work) bwrap там создать не может
+      # («Read-only file system»). /tmp — tmpfs, туда mkdir проходит.
       bwrap \
         --ro-bind / / \
         --dev /dev --proc /proc --tmpfs /tmp \
-        --bind "$WORK" /work --chdir /work \
+        --bind "$WORK" /tmp/work --chdir /tmp/work \
         --unshare-all --die-with-parent --new-session \
         --clearenv \
         --setenv PATH "/usr/local/bin:/usr/bin:/bin" \
-        --setenv HOME /work \
+        --setenv HOME /tmp/work \
         --setenv LANG C.UTF-8 --setenv LC_ALL C.UTF-8 \
-        -- "${INTERP[@]}" "/work/script.$EXT"
+        -- "${INTERP[@]}" "/tmp/work/script.$EXT"
   )
 }
 
