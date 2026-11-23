@@ -53,8 +53,11 @@ This page explains, in plain words, what changes when you pick `codex`.
    hooks — they are not needed on Codex.
 7. Creates the first agent (Developer), as on Claude.
 
-`bash install.sh --no-agent` prepares the machine and prints the sign-in command instead of
-creating the agent.
+`bash install.sh --no-agent` prepares the machine — including the host PII-masking service and the
+shared sign-in directory `~/.claude-lab/shared/codex` (mode 700) — and prints the sign-in command and
+the `new-agent.sh` command instead of creating the agent. Re-running the installer as root (including
+with `NONINTERACTIVE=1`) finds the harness already chosen in the agent user's swarm (`AGENT_OS_USER`
+names that user explicitly) and does not replace it with the `claude` default.
 
 ## 3. Signing in: one ChatGPT login for the whole swarm
 

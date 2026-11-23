@@ -55,6 +55,8 @@
 #   HARNESS=claude|codex      # харнес роя без вопроса (первый вопрос установки). Один на весь
 #                             # рой: все агенты на Claude Code или все на Codex (подписка ChatGPT)
 #   SKIP_CODEX_LOGIN=1        # рой на Codex: не входить в ChatGPT при установке (войти позже)
+#   AGENT_OS_USER=<имя>       # запуск от root: пользователь агентов без вопроса; его рой (swarm.env)
+#                             # задаёт харнес повторной установки (иначе ищется по всем пользователям)
 #
 # Монорепо (обычно задаётся корневым ../install.sh — единой точкой входа):
 #   TG_PLUGIN_DIR=<path>      # взять tg-plugin из локального дерева, НЕ клонировать
@@ -112,20 +114,47 @@ command -v bash >/dev/null || die "нужен bash"
 # и шаблоны агентов. Ответ уходит дальше через окружение (HARNESS доживает до перезапуска от
 # пользователя агентов) и записывается в shared/swarm.env на шаге 3.
 choose_harness() {
-  local answer="" existing
+  local answer="" existing rc=0
+  # HARNESS, пришедший из прогона от root как УМОЛЧАНИЕ (LABOPS_HARNESS_DEFAULTED=1, см. ниже), —
+  # не выбор оператора: уже записанный в лаборатории харнес главнее. Иначе повтор установки с
+  # NONINTERACTIVE=1 после --no-agent на codex переписывал swarm.env на claude.
+  if [ -n "${HARNESS:-}" ] && [ "${LABOPS_HARNESS_DEFAULTED:-0}" = "1" ]; then
+    existing="$(harness_read_swarm 2>/dev/null || true)"
+    if [ -n "$existing" ]; then
+      HARNESS="$existing"
+      note "харнес роя уже выбран: $HARNESS ($(harness_swarm_env))"
+    fi
+    return 0
+  fi
   if [ -n "${HARNESS:-}" ]; then
     harness_is_known "$HARNESS" || die "HARNESS=$HARNESS — ожидается: $HARNESS_KNOWN"
     note "харнес роя задан окружением: $HARNESS"
     return 0
   fi
   existing="$(harness_read_swarm 2>/dev/null || true)"
+  # От root своей лаборатории нет: swarm.env лежит у пользователя агентов, под которого установка
+  # перезапустится позже (шаг 2). Выбранный там харнес не переспрашиваем и не подменяем умолчанием.
+  if [ -z "$existing" ] && [ "$(id -u)" -eq 0 ]; then
+    existing="$(harness_read_swarm_agent_users)" || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      existing=""
+      if [ "${NONINTERACTIVE:-0}" = "1" ]; then
+        die "у разных пользователей этой машины рои на разных харнесах — укажите нужный явно:" \
+            "HARNESS=claude|codex (или AGENT_OS_USER=<пользователь агентов>)"
+      fi
+      warn "у разных пользователей этой машины рои на разных харнесах — выберите нужный"
+    fi
+  fi
   if [ -n "$existing" ]; then
+    harness_is_known "$existing" || die "харнес '$existing' в swarm.env — ожидается: $HARNESS_KNOWN"
     HARNESS="$existing"
-    note "харнес роя уже выбран: $HARNESS ($(harness_swarm_env))"
+    note "харнес роя уже выбран: $HARNESS"
     return 0
   fi
   if [ "${NONINTERACTIVE:-0}" = "1" ]; then
     HARNESS="$HARNESS_DEFAULT"
+    # Метка для прогона от пользователя агентов: это умолчание, а не выбор (см. начало функции).
+    export LABOPS_HARNESS_DEFAULTED=1
     note "харнес роя по умолчанию: $HARNESS (другой — HARNESS=codex)"
     return 0
   fi
@@ -478,7 +507,9 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
   CREATE_AGENT_USER=""
   ask_yn CREATE_AGENT_USER "Создать/использовать такого пользователя?" y
   if [ "$CREATE_AGENT_USER" = "y" ]; then
-    AGENT_OS_USER=""
+    # AGENT_OS_USER из окружения — тот же пользователь, по которому choose_harness искал уже
+    # выбранный харнес; без него имя спрашивается, как раньше.
+    AGENT_OS_USER="${AGENT_OS_USER:-}"
     while [ -z "$AGENT_OS_USER" ]; do
       printf "${UI_INFO}[?]${UI_RESET} %s: " "Имя пользователя для агентов"
       read -r AGENT_OS_USER || die "нет ввода — имя пользователя не задано"
@@ -862,13 +893,13 @@ fi
 [ "$MODE" = "test" ] && { ok "только self-test — готово."; exit 0; }
 
 # ── 6. Первый агент — Developer ──────────────────────────────────
-if [ "$MODE" = "prep" ]; then
+# Подготовка без агента (--no-agent) на claude заканчивается здесь, как и раньше. На codex — после
+# шага 5b: new-agent.sh для codex ставит pii-proxy агента, а тот требует сервис маскирования хоста
+# (pii-setup.sh host); без него путь «prep → codex login → new-agent.sh» упирался в «нет токена
+# сервиса». Завершение prep для codex — ниже, после 5b.
+if [ "$MODE" = "prep" ] && [ "$HARNESS" != "codex" ]; then
   say "Подготовка завершена (--no-agent). Чтобы создать первого агента:"
-  if [ "$HARNESS" = "codex" ]; then
-    echo "    CODEX_HOME=$(codex_shared_home) codex login --device-auth   # один раз на рой"
-  else
-    echo "    claude --dangerously-skip-permissions   # один раз, войдите в браузере, затем /exit"
-  fi
+  echo "    claude --dangerously-skip-permissions   # один раз, войдите в браузере, затем /exit"
   echo "    bash skills/create-agent/new-agent.sh"
   exit 0
 fi
@@ -898,6 +929,19 @@ if pii_enabled; then
 else
   warn "SKIP_PII_PROXY=1: маскирование ПДн ОТКЛЮЧЕНО. Агент пойдёт в модель напрямую,"
   warn "персональные данные уйдут провайдеру немаскированными (152-ФЗ)."
+fi
+
+# Подготовка без агента на codex: сервис маскирования уже стоит (выше), осталось создать каталог
+# общего входа роя — `codex login` с CODEX_HOME на несуществующий каталог не работает, а раньше его
+# создавал только шаг 6, до которого prep не доходит.
+if [ "$MODE" = "prep" ]; then
+  CODEX_SHARED="$(codex_shared_home)"
+  mkdir -p "$CODEX_SHARED" && chmod 700 "$CODEX_SHARED"
+  ok "каталог общего входа роя в ChatGPT: $CODEX_SHARED (700)"
+  say "Подготовка завершена (--no-agent). Чтобы создать первого агента:"
+  echo "    CODEX_HOME=$CODEX_SHARED $(codex_bin || echo codex) login --device-auth   # один раз на рой"
+  echo "    bash $REPO_DIR/skills/create-agent/new-agent.sh"
+  exit 0
 fi
 
 say "6. Первый агент — Developer (Разработчик)"

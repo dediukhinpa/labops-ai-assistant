@@ -89,5 +89,33 @@ check "бинарь codex" eq "$(harness_bin codex)" "codex"
 harness_default_model gemini >/dev/null 2>&1; rc=$?
 check "модель неизвестного — код 1" eq "$rc" "1"
 
+# 11. Установщик от root: харнес из лаборатории пользователя агентов (у root swarm.env нет).
+U="$TMP/users"
+mkdir -p "$U/agents/.claude-lab/shared" "$U/other" "$U/second/.claude-lab/shared"
+printf 'HARNESS=codex\n' > "$U/agents/.claude-lab/shared/swarm.env"
+cat > "$TMP/passwd" <<EOF2
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+agents:x:1001:1001::$U/agents:/bin/bash
+other:x:1002:1002::$U/other:/bin/bash
+EOF2
+export HARNESS_PASSWD_FILE="$TMP/passwd"
+check "root: харнес из лаборатории пользователя агентов" \
+  eq "$(harness_read_swarm_agent_users)" "codex"
+check "root: AGENT_OS_USER без лаборатории — пусто" \
+  eq "$(AGENT_OS_USER=other harness_read_swarm_agent_users)" ""
+check "root: AGENT_OS_USER с лабораторией" \
+  eq "$(AGENT_OS_USER=agents harness_read_swarm_agent_users)" "codex"
+printf 'second:x:1003:1003::%s/second:/bin/bash\n' "$U" >> "$TMP/passwd"
+printf 'HARNESS=claude\n' > "$U/second/.claude-lab/shared/swarm.env"
+harness_read_swarm_agent_users >/dev/null; rc=$?
+check "root: у пользователей разные харнесы — код 2, без догадок" eq "$rc" "2"
+check "root: AGENT_OS_USER снимает неоднозначность" \
+  eq "$(AGENT_OS_USER=second harness_read_swarm_agent_users)" "claude"
+printf 'HARNESS=codex\n' > "$U/second/.claude-lab/shared/swarm.env"
+check "root: одинаковый харнес у нескольких — он и есть" \
+  eq "$(harness_read_swarm_agent_users)" "codex"
+unset HARNESS_PASSWD_FILE
+
 echo "harness.test.sh: $PASS ok, $FAIL fail"
 [ "$FAIL" -eq 0 ]

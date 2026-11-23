@@ -38,13 +38,15 @@ EOF
 # тот честно докладывал, что установка дошла до пакетов вопреки 403, хотя код
 # был цел. Поймано 12.09.2026 у клиента. Поэтому гасим весь набор флагов, а
 # нужные для теста задаём тут же, явно.
-run_install() {   # <файл-вывода> → код возврата в RC
+run_install() {   # <файл-вывода> [ПЕРЕМЕННАЯ=значение...] → код возврата в RC
+  local out="$1"; shift
   RC=0
   env -u PREFLIGHT_DONE -u SKIP_SELFTEST -u GITHUB_TOKEN -u TG_PLUGIN_DIR \
       -u INSTALL_TG_LOCAL -u SECOND_BRAIN_DIR -u CLAUDE_LAB -u REUSE_EXISTING \
+      -u HARNESS -u LABOPS_HARNESS_DEFAULTED -u NONINTERACTIVE -u AGENT_OS_USER \
       PATH="$TMP/bin:$PATH" HOME="$TMP/home" \
-      SKIP_SECOND_BRAIN=1 SKIP_TG_PLUGIN=1 SKIP_USER_SETUP=1 \
-      bash "$REPO/install.sh" >"$1" 2>&1 </dev/null || RC=$?
+      SKIP_SECOND_BRAIN=1 SKIP_TG_PLUGIN=1 SKIP_USER_SETUP=1 "$@" \
+      bash "$REPO/install.sh" >"$out" 2>&1 </dev/null || RC=$?
 }
 
 mkdir -p "$TMP/home"
@@ -106,4 +108,24 @@ printf '%s' "$OUT_DOWN" | grep -qi 'нет соединения' \
 printf '%s' "$OUT_DOWN" | grep -q 'закрытый регион' \
   && fail "про регионы сказано там, где дело в сети — оператор пойдёт чинить не то"
 
-echo "OK: install.sh preflight — 5 проверок пройдено"
+# 6. Рой уже на codex, а прогон от root передал под пользователя агентов умолчание claude
+#    (LABOPS_HARNESS_DEFAULTED=1, NONINTERACTIVE=1): берётся записанный codex — проверяются
+#    хосты Codex, а не api.anthropic.com, и swarm.env не переписывается.
+mkdir -p "$TMP/home/.claude-lab/shared"
+printf 'HARNESS=codex\n' > "$TMP/home/.claude-lab/shared/swarm.env"
+make_curl_stub 403
+run_install "$TMP/out-codex.txt" HARNESS=claude LABOPS_HARNESS_DEFAULTED=1 NONINTERACTIVE=1
+OUT_CX="$(cat "$TMP/out-codex.txt")"
+printf '%s' "$OUT_CX" | grep -q 'chatgpt.com' \
+  || fail "умолчание от root подменило записанный харнес codex: хосты Codex не проверялись"
+printf '%s' "$OUT_CX" | grep -q 'api.anthropic.com' \
+  && fail "рой на codex, а проверяется api.anthropic.com"
+grep -qx 'HARNESS=codex' "$TMP/home/.claude-lab/shared/swarm.env" \
+  || fail "swarm.env роя на codex переписан"
+# Явный выбор оператора (без метки умолчания) по-прежнему главнее.
+run_install "$TMP/out-explicit.txt" HARNESS=claude NONINTERACTIVE=1
+grep -q 'api.anthropic.com' "$TMP/out-explicit.txt" \
+  || fail "явный HARNESS=claude не учтён"
+rm -rf "$TMP/home/.claude-lab"
+
+echo "OK: install.sh preflight — 6 проверок пройдено"
