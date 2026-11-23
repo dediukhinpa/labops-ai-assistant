@@ -29,7 +29,7 @@ it when the description matches.
 | `memory-consolidate` | Distil raw episodic memory into durable insights on a reflection nudge. | the agent memory layout |
 | `second_brain-doctor` | Diagnose the agent's second_brain setup end to end; output is redacted. | second_brain |
 | `local-voice` | Transcribe voice/audio files (`.ogg`) with the local voice-transcriber service (faster-whisper); audio never leaves the host. | `VOICE_TRANSCRIBER_TOKEN` |
-| `agent-browser` | Browser automation CLI (Chrome/Chromium via CDP). Navigate, click, fill forms, screenshot. | `agent-browser` binary + Chrome, not installed by `install.sh` |
+| `agent-browser` | Browser automation CLI (Chrome/Chromium via CDP). Navigate, click, fill forms, screenshot. | `agent-browser` binary + Chrome, installed by `install.sh` (step 2e) |
 
 | `deep-research` | Cited, cross-checked research report with stated confidence and gaps. | web search; perplexity-research skill optional |
 | `report-generator` | Formatted report from numbers, tables and metrics. | - |

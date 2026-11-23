@@ -36,6 +36,9 @@
 #   SKIP_PII_PROXY=1          # НЕ ставить маскирование ПДн (pii-proxy): агент пойдёт в модель
 #                             # напрямую, с громким предупреждением. По умолчанию - ставится.
 #   SKIP_VOICE=1              # не ставить локальную расшифровку голоса (voice-transcriber)
+#   SKIP_SKILL_TOOLS=1        # не ставить программы скиллов (LibreOffice, pandoc, Node.js,
+#                             # библиотеки Python/Node, agent-browser + Chrome): скиллы документов
+#                             # и браузера работать не будут
 #   SKIP_OCR=1                # не ставить Tesseract: фото и PDF не маскируются, а вырезаются
 #                             # из запросов к модели (по SKIP_PII_PROXY=1 тоже не ставится)
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
@@ -71,6 +74,9 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ocr_install: Tesseract для media-masker, ставится, пока у установки есть root.
 # shellcheck source=orchestration/lib/ocr-install.sh
 . "$REPO_DIR/orchestration/lib/ocr-install.sh"
+# skill_tools_install: программы и библиотеки скиллов, ставятся, пока у установки есть root.
+# shellcheck source=orchestration/lib/skill-tools-install.sh
+. "$REPO_DIR/orchestration/lib/skill-tools-install.sh"
 # Харнес роя (claude|codex), установка Codex закреплённой версии и общий вход роя в ChatGPT.
 # shellcheck source=orchestration/lib/harness.sh
 . "$REPO_DIR/orchestration/lib/harness.sh"
@@ -279,6 +285,22 @@ run_ocr_step() {
   echo "  маскировались до отправки в модель. Без него вложения модели не передаются."
   ocr_install \
     || warn "Tesseract не поставлен — вложения будут вырезаться; повторите установку (пропустить: SKIP_OCR=1)"
+}
+
+# run_skill_tools_step <пользователь агентов> <его дом> — шаг «Инструменты скиллов». Агент
+# сам их не доставит (sudo нет, pip в системный Python запрещён), поэтому ставим, пока есть
+# root. Сбой не останавливает установку: агент работает, не работают отдельные скиллы.
+run_skill_tools_step() {
+  export LABOPS_SKILL_TOOLS_DONE=1
+  if [ "${SKIP_SKILL_TOOLS:-0}" = "1" ]; then
+    note "программы скиллов пропущены (SKIP_SKILL_TOOLS=1) — скиллы документов и браузера не заработают"
+    return 0
+  fi
+  say "2e. Программы для скиллов"
+  echo "  LibreOffice, pandoc, Node.js и библиотеки для скиллов документов (docx/pptx/xlsx/pdf),"
+  echo "  agent-browser с Chrome для работы с сайтами. Около 2 ГБ, ставится один раз."
+  skill_tools_install "$1" "$2" \
+    || warn "часть программ скиллов не поставлена — см. выше; повторите установку (пропустить: SKIP_SKILL_TOOLS=1)"
 }
 
 # write_runtime_conf <владелец> <checkout монорепо> <лаборатория> — записать от
@@ -534,6 +556,7 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
     fi
     run_voice_step "$AGENT_OS_USER" "$NEW_HOME"
     run_ocr_step
+    run_skill_tools_step "$AGENT_OS_USER" "$NEW_HOME"
     ok "продолжаю установку от имени $AGENT_OS_USER"
     # Флаги установщика (REUSE_EXISTING=1, SKIP_TG_PLUGIN, PREFLIGHT_DONE,
     # TG_PLUGIN_DIR, INSTALL_TG_LOCAL, ...) должны дойти до install.sh под
@@ -611,6 +634,17 @@ if [ "$MODE" != "test" ] && [ "${LABOPS_OCR_DONE:-0}" != "1" ]; then
     run_ocr_step
   else
     warn "нет sudo — Tesseract не поставить (нужен root); фото и PDF не будут маскироваться"
+  fi
+fi
+
+# ── 2e. Программы для скиллов ─────────────────────────────────────
+# Под root с отдельным пользователем шаг уже выполнен выше (LABOPS_SKILL_TOOLS_DONE пришёл с
+# окружением). Здесь — установка от root без отдельного пользователя и от обычного с sudo.
+if [ "$MODE" != "test" ] && [ "${LABOPS_SKILL_TOOLS_DONE:-0}" != "1" ]; then
+  if [ "$(id -u)" -eq 0 ] || [ -n "$SUDO" ]; then
+    run_skill_tools_step "$(id -un)" "$HOME"
+  else
+    warn "нет sudo — программы скиллов не поставить (нужен root); скиллы документов и браузера не заработают"
   fi
 fi
 

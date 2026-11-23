@@ -471,7 +471,7 @@ clone, not against the agent itself.
 | `memory-consolidate` | distils raw episodic memory into durable insights on a reflection nudge | — |
 | `local-voice` | transcribes voice/audio `.ogg` with the local voice-transcriber service (when the channel gave no transcript) | `VOICE_TRANSCRIBER_TOKEN` |
 | `second_brain-doctor` | agent-side diagnostics of second_brain: connect, identity, memory_router, agent_router, hooks-parity, webhooks, repo, MCP-URL safety; output is redacted (secrets masked) | — |
-| `agent-browser` | browser automation via CDP (navigation, forms, screenshots) | the `agent-browser` binary + Chrome — `install.sh` does not install them |
+| `agent-browser` | browser automation via CDP (navigation, forms, screenshots) | the `agent-browser` binary + Chrome — installed by `install.sh` (step 2e) |
 
 ---
 

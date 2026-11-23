@@ -69,6 +69,8 @@ cp "$HERE/orchestration/lib/plugin.sh" "$REPO/orchestration/lib/plugin.sh"
 cp "$HERE/orchestration/lib/voice-install.sh" "$REPO/orchestration/lib/voice-install.sh"
 # ocr-install.sh даёт ocr_install (шаг «OCR»): install.sh сорсит его при старте.
 cp "$HERE/orchestration/lib/ocr-install.sh" "$REPO/orchestration/lib/ocr-install.sh"
+# skill-tools-install.sh даёт skill_tools_install (шаг «Программы для скиллов»): сорсится при старте.
+cp "$HERE/orchestration/lib/skill-tools-install.sh" "$REPO/orchestration/lib/skill-tools-install.sh"
 # harness.sh, codex-watch.sh, codex-install.sh: харнес роя спрашивается до шага 0, от него
 # зависит набор проверяемых хостов (без ввода — claude по умолчанию).
 for _lib in harness.sh codex-watch.sh codex-install.sh; do
