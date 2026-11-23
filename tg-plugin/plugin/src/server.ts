@@ -119,6 +119,7 @@ import {
 } from './telegram/album-persistence.js'
 import type { BotIdentity } from './prompt/build.js'
 import { accessRuleText } from './prompt/access-rule.js'
+import { createCrashHandler, guardSink } from './safety/crash-guard.js'
 
 const INSTRUCTIONS_TEMPLATE = [
   'The sender reads Telegram, not this session. Anything you want them to see must go through the reply tool — your transcript output never reaches their chat.',
@@ -251,37 +252,22 @@ if (process.env.TELEGRAM_BOT_TOKEN !== undefined) {
 // When the parent (claude) dies, stderr is a broken socketpair: writing to it
 // raises EPIPE, which as an uncaughtException re-invokes this handler → a
 // synchronous ~90%-CPU spin that keeps this orphaned process alive (observed
-// 2026-06-13: a leaked channel-bun spun for over an hour, starving the box). So:
-// (1) if the exception itself is a broken pipe, the parent is gone — just exit,
-//     which also reaps this would-be orphan; (2) guard the log write so a
-//     failing write exits instead of looping.
-let handlingCrash = false
-function isBrokenPipe(err: unknown): boolean {
-  const code = (err as { code?: unknown } | null | undefined)?.code
-  return (
-    code === 'EPIPE' ||
-    code === 'ERR_STREAM_DESTROYED' ||
-    code === 'ERR_STREAM_WRITE_AFTER_END'
-  )
-}
-function crashLog(kind: string, err: unknown): void {
-  // Re-entry (the log write below threw or re-fired) or a broken pipe means the
-  // log sink is gone — exit instead of looping. The re-entry guard makes the
-  // loop-break independent of the error code and of bun's sync/async write
-  // semantics (cross-review nit, 2026-06-13).
-  if (handlingCrash || isBrokenPipe(err)) {
-    process.exit(1)
-  }
-  handlingCrash = true
-  try {
-    process.stderr.write(
-      redactToken(`telegram channel: ${kind}: ${String(err)}\n`, crashSecrets),
-    )
-  } catch {
-    process.exit(1)
-  }
-  handlingCrash = false
-}
+// 2026-06-13: a leaked channel-bun spun for over an hour, starving the box).
+// У Codex то же самое, но с EIO: tmux kill-session удаляет pty панели, где драйвер —
+// главный процесс (прогон 23.11.2026: сирота с ppid=1 крутил CPU и держал порт). Логику
+// вынесли в safety/crash-guard.ts: мёртвый stderr больше не трогаем; у Claude Code — выход,
+// у Codex — штатная остановка (brain-flush, ограничена дедлайном shutdown).
+const stderrSink = guardSink(process.stderr)
+// Задаётся ниже, когда shutdown() готов, и только у Codex.
+let gracefulStopFn: (() => void) | undefined
+const crashLog = createCrashHandler({
+  sink: stderrSink,
+  redact: line => redactToken(line, crashSecrets),
+  exit: code => process.exit(code),
+  gracefulStop: () => gracefulStopFn,
+})
+// Ошибка записи в stderr — событие потока; без слушателя она стала бы uncaughtException.
+process.stderr.on('error', err => crashLog('stderr', err))
 process.on('unhandledRejection', err => crashLog('unhandled rejection', err))
 process.on('uncaughtException', err => crashLog('uncaught exception', err))
 
@@ -340,7 +326,7 @@ if (env.VOICE_TRANSCRIBER_TOKEN) {
   logSecrets.push(env.VOICE_TRANSCRIBER_TOKEN)
   crashSecrets.push(env.VOICE_TRANSCRIBER_TOKEN)
 }
-const log = createLogger('labops-channel', { secrets: logSecrets })
+const log = createLogger('labops-channel', { secrets: logSecrets, stream: stderrSink })
 
 // Lock down the env file to owner-only after we've read it.
 try {
@@ -1057,6 +1043,8 @@ function shutdown(exitCode = 0): void {
 process.on('SIGTERM', () => shutdown())
 process.on('SIGINT', () => shutdown())
 process.on('SIGHUP', () => shutdown())
+// Codex: пропавшая консоль (pty удалён) = остановка с brain-flush, а не мгновенный выход.
+if (codexMode) gracefulStopFn = () => shutdown()
 
 if (!codexMode) {
   // Claude Code держит плагин на stdio: закрытый stdin = сессия умерла.
