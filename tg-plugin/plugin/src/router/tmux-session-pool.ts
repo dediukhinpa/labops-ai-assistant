@@ -29,8 +29,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { MultichatPolicy } from '../chats/policy-loader.js'
-import { sessionTarget } from '../tmux/index.js'
-import { ensureChatsProxyEnv } from './proxy-env.js'
+import { paneTarget, sessionTarget } from '../tmux/index.js'
+import { type ChatsPiiMode, chatsPiiMode, ensureChatsProxyEnv } from './proxy-env.js'
 
 // Resolve the spawn-chat-shell.sh wrapper relative to THIS module so
 // it works regardless of cwd. The wrapper lives at
@@ -200,7 +200,12 @@ export type SessionHandle = {
   sessionName: string
   spawnedAt: number
   lastMessageAt: number
+  /** Режим pii-proxy, в котором поднята сессия (settings.json claude читает на старте). */
+  piiMode?: ChatsPiiMode
 }
+
+/** Признак идущего хода на экране claude (как ACTIVE_RE в orchestration/lib/pane.sh). */
+const ACTIVE_TURN_MARK = 'esc to interrupt'
 
 // Minimal logger contract — matches the shape used by status-manager and
 // tmux-mirror so callers can pass the same instance.
@@ -590,7 +595,12 @@ export class TmuxSessionPool {
   async runIdleCheck(): Promise<void> {
     const now = Date.now()
     const toKill: string[] = []
+    const modeMismatch = await this.sessionsOnStalePiiMode()
     for (const [chatId, handle] of this.sessions) {
+      if (modeMismatch.has(chatId)) {
+        toKill.push(chatId)
+        continue
+      }
       const chatPolicy = this.policy.chats[chatId]
       // 30min default mirrors policy-loader's Zod default.
       const ttl = chatPolicy?.idle_ttl_ms ?? 1_800_000
@@ -607,6 +617,44 @@ export class TmuxSessionPool {
     }
     for (const chatId of toKill) {
       await this.kill(chatId)
+    }
+  }
+
+  /**
+   * Сессии, поднятые не в том режиме pii-proxy, что нужен сейчас (watchdog сменил файл режима
+   * агента). Адрес модели claude читает на старте, поэтому такую сессию закрываем, а следующее
+   * сообщение собеседника поднимет её в нужном режиме. Идущий ход не рвём: и после падения
+   * прокси, и после восстановления сессия закрывается только между ходами.
+   */
+  private async sessionsOnStalePiiMode(): Promise<Set<string>> {
+    const stale = new Set<string>()
+    const candidates = [...this.sessions.values()].filter(
+      h => h.piiMode !== undefined && h.piiMode !== 'none',
+    )
+    if (candidates.length === 0) return stale
+    const want = chatsPiiMode(this.workspaceDir)
+    if (want === 'none') return stale
+    for (const handle of candidates) {
+      if (handle.piiMode === want) continue
+      if (await this.turnInProgress(handle.sessionName)) continue
+      this.logger.info('pool.pii_mode_respawn', {
+        chatId: handle.chatId,
+        sessionName: handle.sessionName,
+        from: handle.piiMode,
+        to: want,
+      })
+      stale.add(handle.chatId)
+    }
+    return stale
+  }
+
+  /** Идёт ли в сессии ход; экран не прочитан - считаем, что идёт (не рвём вслепую). */
+  private async turnInProgress(sessionName: string): Promise<boolean> {
+    try {
+      const pane = await captureTmux(['capture-pane', '-p', '-t', paneTarget(sessionName)])
+      return pane.includes(ACTIVE_TURN_MARK)
+    } catch {
+      return true
     }
   }
 
@@ -691,9 +739,13 @@ export class TmuxSessionPool {
 
     // 152-ФЗ: сессия собеседника ходит в модель через pii-proxy агента. ANTHROPIC_* из окружения
     // вычищен (см. FORBIDDEN_ENV_REGEX), поэтому адрес прокси кладём в settings.json сессии.
-    // При ошибке записи бросаем: лучше не поднять сессию, чем уйти в API напрямую.
-    if (ensureChatsProxyEnv(this.workspaceDir, this.chatsBasePath)) {
+    // При ошибке записи бросаем: лучше не поднять сессию, чем уйти в API не тем путём. Прокси
+    // упал (файл режима агента = direct) - сессия поднимается напрямую, без адреса прокси.
+    const piiMode = ensureChatsProxyEnv(this.workspaceDir, this.chatsBasePath)
+    if (piiMode === 'proxy') {
       this.logger.info('pool.pii_proxy_env_applied', { chatId })
+    } else if (piiMode === 'direct') {
+      this.logger.warn('pool.pii_proxy_down_direct', { chatId })
     }
 
     // C4 fix (2026-05-23): cwd MUST be chatsBasePath so claude's
@@ -802,6 +854,7 @@ export class TmuxSessionPool {
       sessionName,
       spawnedAt: stamp,
       lastMessageAt: stamp,
+      piiMode,
     }
     this.sessions.set(chatId, handle)
     await this.atomicSaveSessions()
@@ -820,6 +873,7 @@ export class TmuxSessionPool {
         sessionName: handle.sessionName,
         spawnedAt: handle.spawnedAt,
         lastMessageAt: handle.lastMessageAt,
+        ...(handle.piiMode !== undefined ? { piiMode: handle.piiMode } : {}),
       }
     }
 
@@ -876,6 +930,22 @@ function runTmux(
     child.on('close', (code) => {
       if (code === 0) resolve()
       else reject(new Error(`tmux ${args.join(' ')} exited ${code}: ${stderrBuf.trim()}`))
+    })
+  })
+}
+
+/** Вызвать tmux и вернуть его stdout (capture-pane). */
+function captureTmux(args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tmux', args as string[], { stdio: ['ignore', 'pipe', 'ignore'] })
+    let out = ''
+    child.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString('utf8')
+    })
+    child.on('error', reject)
+    child.on('close', code => {
+      if (code === 0) resolve(out)
+      else reject(new Error(`tmux ${args.join(' ')} exited ${code}`))
     })
   })
 }
