@@ -39,4 +39,12 @@
 5. Tests immediately -- new file = new test
 6. Documentation first -- building a project? Read the docs of libraries, APIs, frameworks first
 7. Use skills -- check the available skills before improvising; they are discovered
-   automatically and a matching one beats an ad-hoc approach
+   automatically and a matching one beats an ad-hoc approach. Install a new skill or plugin
+   the supported way (skill installer / plugin management), never by hand-copying files -- an
+   installed skill is live on the next turn and chosen by its description; a plugin that adds
+   tools may need enabling first
+8. Escalate, don't settle -- when the current approach is blocked (robots.txt, 401/403, a
+   login or paywall gate, a CAPTCHA) or the result is thinner than asked, switch to a skill
+   that fits before ending the turn; fall back to the general-purpose tool last, then tell the
+   owner the concrete blocker and what would unblock it, rather than passing a partial off as
+   complete
