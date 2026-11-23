@@ -106,6 +106,19 @@ PII_DIRECT_WARN_TEXT = (
     "персональные данные уходят в модель без маскирования. Проверьте: "
     "systemctl --user status labops-pii-proxy@{agent}"
 )
+# Прокси жив, но сервис псевдонимизации нет: /health прокси отвечает 503 с полем
+# "pseudonymizer": "down". Такой прокси отвечал бы 503 на каждый запрос модели — для задачи это
+# тот же «прокси недоступен», но причину владельцу называем точно.
+PII_DIRECT_WARN_TEXT_PSEUDONYMIZER = (
+    "⚠️ сервис псевдонимизации недоступен (pii-proxy агента {agent} жив, но маскировать нечем) — "
+    "задачу от другого агента выполняю напрямую: персональные данные уходят в модель без "
+    "маскирования. Проверьте: systemctl --user status labops-pseudonymizer"
+)
+# Причины недоступности pii-proxy (как PII_DOWN_REASON_* в lib/pii.sh).
+PII_DOWN_PROXY = "proxy"
+PII_DOWN_PSEUDONYMIZER = "pseudonymizer"
+# Значение поля pseudonymizer в /health прокси, когда сервис недоступен.
+PII_HEALTH_PSEUDONYMIZER_DOWN = "down"
 # Корень локального pii-proxy в base_url провайдера: только 127.0.0.1/localhost, как в
 # pii_agent_base_url (lib/pii.sh). Путь (/backend-api/codex) для /health отбрасывается.
 _PII_LOCAL_URL = re.compile(r"^(http://(?:127\.0\.0\.1|localhost):[0-9]+)(?:/|$)")
@@ -419,8 +432,14 @@ def _codex_pii_proxy_url(config_path: Path) -> str:
     return match.group(1) if match else ""
 
 
-async def _pii_proxy_healthy(base_url: str) -> bool:
-    """Отвечает ли pii-proxy на GET /health кодом 2xx."""
+async def _pii_proxy_down_reason(base_url: str) -> str:
+    """Почему pii-proxy нельзя использовать: пусто — можно (GET /health ответил 2xx).
+
+    Returns:
+        "" — прокси здоров; PII_DOWN_PSEUDONYMIZER — прокси отвечает, но сервис
+        псевдонимизации недоступен (503 с полем "pseudonymizer": "down"); PII_DOWN_PROXY — прокси
+        не отвечает или ответ непонятен.
+    """
     import aiohttp
     try:
         async with aiohttp.ClientSession() as session:
@@ -428,9 +447,23 @@ async def _pii_proxy_healthy(base_url: str) -> bool:
                 f"{base_url.rstrip('/')}/health",
                 timeout=aiohttp.ClientTimeout(total=PII_HEALTH_TIMEOUT_SEC),
             ) as resp:
-                return 200 <= resp.status < 300
+                if 200 <= resp.status < 300:
+                    return ""
+                try:
+                    body = await resp.json(content_type=None)
+                except (ValueError, aiohttp.ContentTypeError):
+                    body = None
+                if (isinstance(body, dict)
+                        and body.get("pseudonymizer") == PII_HEALTH_PSEUDONYMIZER_DOWN):
+                    return PII_DOWN_PSEUDONYMIZER
+                return PII_DOWN_PROXY
     except Exception:  # noqa: BLE001 — любой сбой сети значит «не отвечает»
-        return False
+        return PII_DOWN_PROXY
+
+
+async def _pii_proxy_healthy(base_url: str) -> bool:
+    """Отвечает ли pii-proxy на GET /health кодом 2xx (и жив ли за ним сервис)."""
+    return not await _pii_proxy_down_reason(base_url)
 
 
 def _pii_proxy_url() -> str:
@@ -447,16 +480,19 @@ def _pii_proxy_url() -> str:
     return match.group(1) if match else ""
 
 
-async def _pii_direct_needed() -> bool:
-    """Нужно ли запускать задачу напрямую: прокси у агента настроен, но не отвечает на /health.
+async def _pii_direct_needed() -> str:
+    """Нужно ли запускать задачу напрямую: прокси у агента настроен, но /health не 2xx.
 
     Раньше codex при этом не запускался (503, задача оставалась pending), а claude уходил в
     мёртвый прокси. Теперь задача выполняется напрямую (решение владельца 23.11.2026).
+
+    Returns:
+        Причина прямого запуска (PII_DOWN_PROXY / PII_DOWN_PSEUDONYMIZER); пусто — через прокси.
     """
     url = _pii_proxy_url()
     if not url:
-        return False
-    return not await _pii_proxy_healthy(url)
+        return ""
+    return await _pii_proxy_down_reason(url)
 
 
 def _direct_warn_due(now: float) -> bool:
@@ -505,14 +541,21 @@ async def _send_owner_text(text: str) -> None:
         log.warning("owner message failed: %s", exc)
 
 
-async def _warn_direct(task_id: str) -> None:
-    """Задача пойдёт напрямую: запись в журнал всегда, владельцу — с троттлингом."""
+async def _warn_direct(task_id: str, reason: str = PII_DOWN_PROXY) -> None:
+    """Задача пойдёт напрямую: запись в журнал всегда, владельцу — с троттлингом.
+
+    Args:
+        task_id: Идентификатор задачи.
+        reason: Причина (PII_DOWN_PROXY / PII_DOWN_PSEUDONYMIZER) — от неё зависит текст.
+    """
     log.warning(
-        "pii-proxy of agent %s is not answering /health — task_id=%s runs DIRECT "
-        "(personal data is not masked)", AGENT_NAME, task_id,
+        "pii-proxy of agent %s is unusable (%s) — task_id=%s runs DIRECT "
+        "(personal data is not masked)", AGENT_NAME, reason, task_id,
     )
     if _direct_warn_due(time.time()):
-        await _send_owner_text(PII_DIRECT_WARN_TEXT.format(agent=AGENT_NAME))
+        text = (PII_DIRECT_WARN_TEXT_PSEUDONYMIZER if reason == PII_DOWN_PSEUDONYMIZER
+                else PII_DIRECT_WARN_TEXT)
+        await _send_owner_text(text.format(agent=AGENT_NAME))
 
 
 def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
@@ -797,9 +840,10 @@ async def handle_webhook(request: web.Request) -> web.Response:
         task_id = _sanitize_task_id(str(task_id))
         payload["task_id"] = task_id
 
-    direct = await _pii_direct_needed()
+    direct_reason = await _pii_direct_needed()
+    direct = bool(direct_reason)
     if direct:
-        await _warn_direct(task_id)
+        await _warn_direct(task_id, direct_reason)
 
     title = payload.get("title") or "(no title)"
     await _notify_owner(from_agent, task_id, title)

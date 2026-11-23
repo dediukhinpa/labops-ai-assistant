@@ -355,7 +355,13 @@ check_pii() {
     state="$(pii_proxy_state "$AGENT")"
     if [ "$state" = up ]; then add_fixed "поднял pii-proxy"; fi
   fi
-  if [ "$state" = down ]; then
+  if [ "$state" = down ] \
+     && [ "$(pii_proxy_down_reason "$AGENT")" = "$PII_DOWN_REASON_PSEUDONYMIZER" ]; then
+    # Прокси жив, но сервис псевдонимизации нет: перезапуск прокси тут не поможет.
+    add_warn "сервис псевдонимизации недоступен (pii-proxy жив, маскировать нечем) — агент\
+ работает напрямую, персональные данные уходят в модель без маскирования. Проверьте:\
+ systemctl --user status labops-pseudonymizer"
+  elif [ "$state" = down ]; then
     add_warn "pii-proxy не отвечает — агент работает напрямую, персональные данные уходят\
  в модель без маскирования. Проверьте: systemctl --user status labops-pii-proxy@$AGENT"
   elif [ "$mode" = "$PII_MODE_DIRECT" ]; then
