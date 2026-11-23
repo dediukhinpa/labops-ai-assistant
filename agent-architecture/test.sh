@@ -138,17 +138,22 @@ if grep -q 'pii-setup.sh" agent' skills/create-agent/new-agent.sh \
 else
   bad "pii-proxy: start-agent / session-exec / watchdog нарушают «прокси молчит — напрямую»"
 fi
-# Работающий claude переключается только из чистого простоя (идущий ход не рвём), с меткой
-# --continue (разговор не теряется) и без счёта во флап рестартов; codex — записью режима,
-# драйвер сам переключается между ходами.
+# Работающий claude: переход напрямую — сразу, с прерыванием идущего хода и повтором последнего
+# входящего; возврат через прокси — только из чистого простоя. Оба с меткой --continue и без
+# счёта во флап рестартов; codex — записью режима, драйвер переключается сам.
 if grep -q 'PII_SWITCH_IDLE_CYCLES" \] && pii_switch_due' orchestration/watchdog.sh \
-   && grep -q ': > "$(pii_switch_continue_file "$AGENT")"' orchestration/watchdog.sh \
-   && grep -q 'PII_WANT" noflap' orchestration/watchdog.sh \
+   && grep -q 'pii_switch_claude "прокси упал посреди хода" interrupt' orchestration/watchdog.sh \
+   && grep -q 'source "$SCRIPT_DIR/lib/pii-replay.sh"' orchestration/watchdog.sh \
+   && grep -q ': > "$(pii_switch_continue_file "$AGENT")"' orchestration/lib/pii-replay.sh \
+   && grep -q '($1)" noflap' orchestration/lib/pii-replay.sh \
    && grep -q 'pii_mode_set "$AGENT" "$PII_WANT"' orchestration/watchdog.sh; then
-  ok "watchdog: смена режима pii-proxy в простое, с --continue, без флап-тревоги"
+  ok "watchdog: прокси упал — прерывание хода и повтор; возврат в простое; --continue, без флапа"
 else
-  bad "watchdog: смена режима pii-proxy может порвать ход или стереть разговор"
+  bad "watchdog: смена режима pii-proxy потеряет ход, разговор или поднимет флап-тревогу"
 fi
+unit "pii-replay.sh: прерывание хода, повтор входящего без задвоения — юнит-тест зелёный" \
+     "pii-replay.sh: юнит-тест провален (orchestration/lib/pii-replay.test.sh)" \
+     bash orchestration/lib/pii-replay.test.sh
 unit "start-agent.sh: прокси молчит — старт напрямую и одно предупреждение — юнит-тест зелёный" \
      "start-agent.sh: юнит-тест провален (orchestration/start-agent.test.sh)" \
      bash orchestration/start-agent.test.sh

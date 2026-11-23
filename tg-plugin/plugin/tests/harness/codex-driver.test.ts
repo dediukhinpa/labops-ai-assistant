@@ -34,6 +34,8 @@ class FakeServer implements LineTransport {
   turnSeq = 0
   failResume = false
   failSteer = false
+  /** Чем закончить ход на turn/interrupt (как настоящий app-server); не задано — молчать. */
+  interruptStatus: string | undefined
 
   write(line: string): void {
     const msg = JSON.parse(line) as Sent
@@ -81,8 +83,16 @@ class FakeServer implements LineTransport {
         return reply({ turn: { id: `turn-${this.turnSeq}`, items: [], status: 'inProgress' } })
       case 'turn/steer':
         return this.failSteer ? fail('no active turn') : reply({ turnId: msg.params?.expectedTurnId })
-      case 'turn/interrupt':
-        return reply({})
+      case 'turn/interrupt': {
+        reply({})
+        const status = this.interruptStatus
+        if (status === undefined) return
+        const turnId = String(msg.params?.turnId)
+        return this.notify('turn/completed', {
+          threadId: String(msg.params?.threadId),
+          turn: { id: turnId, status, items: [] },
+        })
+      }
       default:
         return fail(`unexpected ${String(msg.method)}`)
     }
@@ -495,23 +505,90 @@ describe('режим pii-proxy', () => {
     expect(servers[0]!.server.requests('turn/start')).toHaveLength(0)
   })
 
-  test('идущий ход не рвётся: смена ждёт конца хода', async () => {
+  test('прокси упал посреди хода: turn/interrupt и повтор того же входа в той же нити', async () => {
     let mode: PiiMode = 'proxy'
+    const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
+    const { driver, rec } = setup({ saved: 'thr-old', servers, piiMode: () => mode })
+    await driver.start()
+    servers[0]!.server.interruptStatus = 'interrupted'
+    await driver.deliver(msg('42', 'длинная работа', 7))
+    await tick()
+    mode = 'direct'
+    for (let i = 0; i < 40 && servers.length < 2; i++) await tick()
+    for (let i = 0; i < 10; i++) await tick()
+    const old = servers[0]!.server
+    expect(old.requests('turn/interrupt').map(r => r.params!.turnId)).toEqual(['turn-1'])
+    expect(servers.map(s => s.mode)).toEqual(['proxy', 'direct'])
+    const fresh = servers[1]!.server
+    expect(fresh.requests('thread/resume').map(r => r.params!.threadId)).toEqual(['thr-old'])
+    const replay = fresh.requests('turn/start')
+    expect(replay).toHaveLength(1)
+    // Повторяется ровно тот вход, что ушёл в прерванный ход.
+    const first = old.requests('turn/start')[0]!.params!
+    expect(replay[0]!.params).toEqual({ ...first, threadId: 'thr-old' })
+    expect(JSON.stringify(replay[0]!.params!.input)).toContain('длинная работа')
+    // Прерванный ход — не ответ и не ошибка: пользователю ничего не уходит, «прочитано» — раз.
+    expect(rec.finals).toHaveLength(0)
+    expect(rec.reads).toEqual([{ chatId: '42', messageId: 7 }])
+  })
+
+  test('ход успел закончиться сам до прерывания — ответ один, повтора нет', async () => {
+    let mode: PiiMode = 'proxy'
+    const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
+    const { driver, rec } = setup({ saved: 'thr-old', servers, piiMode: () => mode })
+    await driver.start()
+    await driver.deliver(msg('42', 'короткий вопрос'))
+    await tick()
+    const old = servers[0]!.server
+    old.interruptStatus = 'completed'
+    old.notify('item/completed', {
+      threadId: 'thr-old',
+      item: { type: 'agentMessage', id: 'a1', text: 'готово' },
+    })
+    mode = 'direct'
+    for (let i = 0; i < 40 && driver.piiMode !== 'direct'; i++) await tick()
+    for (let i = 0; i < 10; i++) await tick()
+    expect(servers.map(s => s.mode)).toEqual(['proxy', 'direct'])
+    expect(servers[1]!.server.requests('turn/start')).toHaveLength(0)
+    expect(rec.finals).toEqual([{ chatId: '42', text: 'готово' }])
+  })
+
+  test('ход упал на мёртвом прокси — без ошибки пользователю, повтор напрямую', async () => {
+    let mode: PiiMode = 'proxy'
+    const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
+    const { driver, rec } = setup({ saved: 'thr-old', servers, piiMode: () => mode })
+    await driver.start()
+    await driver.deliver(msg('42', 'посчитай'))
+    await tick()
+    mode = 'direct'
+    servers[0]!.server.notify('turn/completed', {
+      threadId: 'thr-old',
+      turn: { id: 'turn-1', status: 'failed', items: [], error: { message: 'proxy down' } },
+    })
+    for (let i = 0; i < 40 && servers.length < 2; i++) await tick()
+    for (let i = 0; i < 10; i++) await tick()
+    expect(rec.finals).toHaveLength(0)
+    expect(servers[1]!.server.requests('turn/start')).toHaveLength(1)
+  })
+
+  test('возврат через прокси не рвёт ход: смена ждёт его конца', async () => {
+    let mode: PiiMode = 'direct'
     const servers: Array<{ mode: PiiMode; server: FakeServer }> = []
     const { driver } = setup({ saved: 'thr-old', servers, piiMode: () => mode })
     await driver.start()
     await driver.deliver(msg('42', 'длинная работа'))
     await tick()
-    mode = 'direct'
+    mode = 'proxy'
     for (let i = 0; i < 10; i++) await tick()
     expect(servers).toHaveLength(1)
+    expect(servers[0]!.server.requests('turn/interrupt')).toHaveLength(0)
     expect(driver.busy).toBe(true)
     servers[0]!.server.notify('turn/completed', {
       threadId: 'thr-old',
       turn: { id: 'turn-1', status: 'completed', items: [] },
     })
-    for (let i = 0; i < 20 && driver.piiMode !== 'direct'; i++) await tick()
-    expect(servers.map(s => s.mode)).toEqual(['proxy', 'direct'])
+    for (let i = 0; i < 20 && driver.piiMode !== 'proxy'; i++) await tick()
+    expect(servers.map(s => s.mode)).toEqual(['direct', 'proxy'])
   })
 
   test('нить не восстановилась после смены — драйвер выходит для чистого рестарта', async () => {

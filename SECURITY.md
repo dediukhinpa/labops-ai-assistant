@@ -34,10 +34,12 @@ secret-scan guards to catch accidental commits.
 
 Agents talk to the model through a local `pii-proxy` that masks personal data. Owner decision of
 23.11.2026: if an agent's proxy stops answering, the agent **keeps working directly** (both
-harnesses, the agent itself and agent-to-agent jobs) instead of going silent. While the proxy is
-down, **personal data goes to the model without masking** — the owner accepts this risk. The
-operator gets one Telegram message when an agent switches to direct mode and one when it is back;
-`/doctor` shows a warning meanwhile. Details:
+harnesses, the agent itself, multichat sessions and agent-to-agent jobs) instead of going
+silent. A turn running at the switch is interrupted and the last incoming message is repeated
+directly, without asking the user to resend it. While the proxy is down, **personal data goes
+to the model without masking** — the owner accepts this risk. The operator gets one Telegram
+message when an agent switches to direct mode and one when it is back; `/doctor` shows a warning
+meanwhile. Details:
 [`agent-architecture/SECURITY.md`](agent-architecture/SECURITY.md#pii-masking-and-data-localisation).
 
 ## Codex harness (ChatGPT subscription)

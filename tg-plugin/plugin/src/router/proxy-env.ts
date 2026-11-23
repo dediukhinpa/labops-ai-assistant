@@ -7,6 +7,10 @@
 //
 // Источник правды - settings.json самого агента (`{workspaceDir}/settings.json`): тот же ключ,
 // что читает его основная сессия, поэтому порт прокси не может разойтись.
+//
+// Прокси упал - сессии собеседников тоже работают напрямую (решение владельца 23.11.2026), по
+// тому же файлу режима агента `{workspaceDir}/state/pii-mode`, что пишет watchdog: в режиме
+// direct адрес прокси из settings.json сессий убирается, при восстановлении возвращается.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -27,6 +31,15 @@ export const PROXY_ENV_KEYS = [
  */
 export const TRANSCRIPT_KEEP_DAYS = 36500
 
+/** Файл режима pii-proxy агента относительно его рабочего каталога (пишет watchdog). */
+export const PII_MODE_FILE = join('state', 'pii-mode')
+
+/**
+ * Режим сессий собеседников относительно pii-proxy: через прокси, напрямую (прокси агента не
+ * отвечает) или none - прокси у агента нет вовсе.
+ */
+export type ChatsPiiMode = 'proxy' | 'direct' | 'none'
+
 /** Прокси слушает только локальный адрес: любое другое значение не считается прокси агента. */
 const LOCAL_PROXY_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/
 
@@ -42,22 +55,45 @@ function readJsonObject(path: string): Record<string, unknown> | undefined {
   return undefined
 }
 
+/** env из settings.json агента, если в нём прописан его локальный прокси. */
+function agentProxyEnv(workspaceDir: string): Record<string, unknown> | undefined {
+  const agentEnv = readJsonObject(join(workspaceDir, 'settings.json'))?.env
+  if (agentEnv === null || typeof agentEnv !== 'object') return undefined
+  const env = agentEnv as Record<string, unknown>
+  const url = env.ANTHROPIC_BASE_URL
+  return typeof url === 'string' && LOCAL_PROXY_URL.test(url) ? env : undefined
+}
+
 /**
- * Прописать прокси агента в `{chatsBasePath}/.claude/settings.json` (идемпотентно).
+ * Нужный сейчас режим сессий собеседников. Файла режима нет или в нём не direct - через прокси:
+ * напрямую только по явной записи watchdog.
+ *
+ * @param workspaceDir Рабочий каталог агента.
+ */
+export function chatsPiiMode(workspaceDir: string): ChatsPiiMode {
+  if (agentProxyEnv(workspaceDir) === undefined) return 'none'
+  try {
+    const mode = readFileSync(join(workspaceDir, PII_MODE_FILE), 'utf8').trim()
+    return mode === 'direct' ? 'direct' : 'proxy'
+  } catch {
+    return 'proxy'
+  }
+}
+
+/**
+ * Привести `{chatsBasePath}/.claude/settings.json` к режиму pii-proxy агента (идемпотентно):
+ * через прокси - адрес прокси агента прописан; напрямую - убран.
  *
  * @param workspaceDir Рабочий каталог агента (там лежит его settings.json).
  * @param chatsBasePath cwd сессий собеседников.
- * @returns true, если у агента есть прокси и он прописан; false, если прокси у агента нет.
- * @throws Error, если прокси есть, а записать его нельзя: сессию лучше не поднимать, чем
- *   отправить данные собеседника в API напрямую.
+ * @returns Режим, в котором поднимется сессия; none - прокси у агента нет, файл не тронут.
+ * @throws Error, если прокси есть, а записать настройки нельзя: сессию лучше не поднимать, чем
+ *   отправить данные собеседника в API не тем путём.
  */
-export function ensureChatsProxyEnv(workspaceDir: string, chatsBasePath: string): boolean {
-  const agentSettings = readJsonObject(join(workspaceDir, 'settings.json'))
-  const agentEnv = agentSettings?.env
-  if (agentEnv === null || typeof agentEnv !== 'object') return false
-  const env = agentEnv as Record<string, unknown>
-  const url = env.ANTHROPIC_BASE_URL
-  if (typeof url !== 'string' || !LOCAL_PROXY_URL.test(url)) return false
+export function ensureChatsProxyEnv(workspaceDir: string, chatsBasePath: string): ChatsPiiMode {
+  const env = agentProxyEnv(workspaceDir)
+  if (env === undefined) return 'none'
+  const mode = chatsPiiMode(workspaceDir)
 
   const target = join(chatsBasePath, '.claude', 'settings.json')
   const existing = existsSync(target) ? readJsonObject(target) : {}
@@ -72,12 +108,19 @@ export function ensureChatsProxyEnv(workspaceDir: string, chatsBasePath: string)
   let changed = existing.cleanupPeriodDays !== TRANSCRIPT_KEEP_DAYS
   for (const key of PROXY_ENV_KEYS) {
     const value = env[key]
+    if (mode === 'direct' && key === 'ANTHROPIC_BASE_URL') {
+      if (key in chatsEnv) {
+        delete chatsEnv[key]
+        changed = true
+      }
+      continue
+    }
     if (typeof value === 'string' && value !== '' && chatsEnv[key] !== value) {
       chatsEnv[key] = value
       changed = true
     }
   }
-  if (!changed) return true
+  if (!changed) return mode
   try {
     mkdirSync(dirname(target), { recursive: true })
     const tmp = `${target}.tmp`
@@ -90,5 +133,5 @@ export function ensureChatsProxyEnv(workspaceDir: string, chatsBasePath: string)
   } catch (e) {
     throw new Error(`multichat: не удалось записать прокси ПДн в ${target}: ${String(e)}`)
   }
-  return true
+  return mode
 }

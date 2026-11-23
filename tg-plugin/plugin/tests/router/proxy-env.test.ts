@@ -5,7 +5,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { TRANSCRIPT_KEEP_DAYS, ensureChatsProxyEnv } from '../../src/router/proxy-env.js'
+import {
+  PII_MODE_FILE,
+  TRANSCRIPT_KEEP_DAYS,
+  chatsPiiMode,
+  ensureChatsProxyEnv,
+} from '../../src/router/proxy-env.js'
 
 let root: string
 let workspace: string
@@ -33,7 +38,7 @@ describe('ensureChatsProxyEnv', () => {
       DISABLE_TELEMETRY: '1',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000',
     })
-    expect(ensureChatsProxyEnv(workspace, chats)).toBe(true)
+    expect(ensureChatsProxyEnv(workspace, chats)).toBe('proxy')
     const env = readTarget().env
     expect(env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:6311')
     expect(env.DISABLE_ERROR_REPORTING).toBe('1')
@@ -66,9 +71,9 @@ describe('ensureChatsProxyEnv', () => {
 
   test('у агента нет прокси - ничего не пишется', () => {
     agentSettings({ ANTHROPIC_BASE_URL: 'https://api.example.com' })
-    expect(ensureChatsProxyEnv(workspace, chats)).toBe(false)
+    expect(ensureChatsProxyEnv(workspace, chats)).toBe('none')
     rmSync(join(workspace, 'settings.json'))
-    expect(ensureChatsProxyEnv(workspace, chats)).toBe(false)
+    expect(ensureChatsProxyEnv(workspace, chats)).toBe('none')
   })
 
   test('битый chats/.claude/settings.json - ошибка, сессия не поднимается', () => {
@@ -84,7 +89,7 @@ describe('cleanupPeriodDays сессий собеседников', () => {
     agentSettings({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:6311' })
     mkdirSync(join(chats, '.claude'), { recursive: true })
     writeFileSync(target(), JSON.stringify({ cleanupPeriodDays: 30, foo: 'bar' }))
-    expect(ensureChatsProxyEnv(workspace, chats)).toBe(true)
+    expect(ensureChatsProxyEnv(workspace, chats)).toBe('proxy')
     expect(readTarget().cleanupPeriodDays).toBe(TRANSCRIPT_KEEP_DAYS)
     expect(readTarget().foo).toBe('bar')
   })
@@ -98,5 +103,46 @@ describe('cleanupPeriodDays сессий собеседников', () => {
     )
     ensureChatsProxyEnv(workspace, chats)
     expect(readTarget().cleanupPeriodDays).toBe(TRANSCRIPT_KEEP_DAYS)
+  })
+})
+
+describe('режим pii-proxy сессий собеседников', () => {
+  const setMode = (mode: string): void => {
+    mkdirSync(join(workspace, 'state'), { recursive: true })
+    writeFileSync(join(workspace, PII_MODE_FILE), `${mode}\n`)
+  }
+
+  test('прокси упал (direct) - адрес прокси убран, остальное на месте', () => {
+    agentSettings({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:6311', DISABLE_ERROR_REPORTING: '1' })
+    mkdirSync(join(chats, '.claude'), { recursive: true })
+    writeFileSync(target(), JSON.stringify({ hooks: { Stop: [] }, env: { FOO: 'bar' } }))
+    ensureChatsProxyEnv(workspace, chats)
+    setMode('direct')
+    expect(chatsPiiMode(workspace)).toBe('direct')
+    expect(ensureChatsProxyEnv(workspace, chats)).toBe('direct')
+    const t = readTarget()
+    expect(t.env.ANTHROPIC_BASE_URL).toBeUndefined()
+    expect(t.env.DISABLE_ERROR_REPORTING).toBe('1')
+    expect(t.env.FOO).toBe('bar')
+    expect(t.hooks).toEqual({ Stop: [] })
+  })
+
+  test('прокси поднялся - адрес возвращается', () => {
+    agentSettings({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:6311' })
+    setMode('direct')
+    ensureChatsProxyEnv(workspace, chats)
+    setMode('proxy')
+    expect(ensureChatsProxyEnv(workspace, chats)).toBe('proxy')
+    expect(readTarget().env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:6311')
+  })
+
+  test('нет файла режима или в нём мусор - через прокси; нет прокси у агента - none', () => {
+    agentSettings({ ANTHROPIC_BASE_URL: 'http://127.0.0.1:6311' })
+    expect(chatsPiiMode(workspace)).toBe('proxy')
+    setMode('whatever')
+    expect(chatsPiiMode(workspace)).toBe('proxy')
+    agentSettings({})
+    setMode('direct')
+    expect(chatsPiiMode(workspace)).toBe('none')
   })
 })

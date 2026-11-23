@@ -72,9 +72,14 @@ log() { echo "[watchdog/$AGENT] $(date -u '+%H:%M:%S') $*"; }
 # владельца 23.11.2026), см. lib/pii.sh и pii_watch_cycle ниже.
 # shellcheck source=lib/pii.sh
 source "$SCRIPT_DIR/lib/pii.sh"
-# Сколько проходов чистого простоя выждать перед перезапуском claude ради смены режима — как у
-# подхвата обновлённого CLI: не рестартовать в паузе между двумя сообщениями оператора.
+# Сколько проходов чистого простоя выждать перед перезапуском claude ради возврата через прокси —
+# как у подхвата обновлённого CLI: не рестартовать в паузе между двумя сообщениями оператора.
+# Переход напрямую простоя не ждёт (см. (P) в основном цикле).
 PII_SWITCH_IDLE_CYCLES="${WATCHDOG_PII_SWITCH_IDLE_CYCLES:-2}"
+
+# Повтор последнего входящего после перевода claude на прямую работу (lib/pii-replay.sh).
+# shellcheck source=lib/pii-replay.sh
+source "$SCRIPT_DIR/lib/pii-replay.sh"
 
 # pii_watch_cycle — проверка прокси раз в проход (гистерезис в pii_watch_step). Ставит PII_WANT.
 pii_watch_cycle() {
@@ -408,11 +413,12 @@ codex_watch_loop() {
       BOT_TOKEN=""
     fi
     pii_report_stuck
-    # Смена режима pii-proxy: драйвер сам видит новый файл режима и перезапускает app-server
-    # между ходами, продолжая ту же нить, — идущий ход не рвётся, перезапуск сессии не нужен.
+    # Смена режима pii-proxy: драйвер сам видит новый файл режима и перезапускает app-server,
+    # продолжая ту же нить; перезапуск сессии не нужен. Напрямую — сразу (идущий ход прерывается
+    # и его вход повторяется), обратно через прокси — между ходами.
     pii_watch_cycle
     if pii_switch_due "$AGENT"; then
-      log "pii-proxy: режим $(pii_mode_get "$AGENT") → $PII_WANT (драйвер — между ходами)"
+      log "pii-proxy: режим $(pii_mode_get "$AGENT") → $PII_WANT (переключит драйвер)"
       pii_mode_set "$AGENT" "$PII_WANT" || true
     fi
     cycle=$((cycle + 1))
@@ -515,6 +521,20 @@ while true; do
   # рестарта сессии. Идемпотентно; логируем только фактический повторный подъём.
   if [ "$(ensure_task_poller "$AGENT" "$AGENT_WS")" = "launched" ]; then
     log "task-poller был мёртв при живой сессии — поднял заново (supervise)"
+  fi
+
+  # (P) pii-proxy упал (гистерезис пройден): простоя не ждём (решение владельца 23.11.2026).
+  # Идёт ход — прерываем его, не дожидаясь встроенных повторов CLI; в любом случае перезапуск
+  # напрямую с --continue и повтор последнего входящего без ответа (pii_switch_claude).
+  # Возврат через прокси — только из чистого простоя, ниже.
+  if [ "$PII_WANT" = "$PII_MODE_DIRECT" ] && pii_switch_due "$AGENT"; then
+    TAIL=$(tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -8 2>/dev/null || true)
+    if has_active_turn "$TAIL"; then
+      pii_switch_claude "прокси упал посреди хода" interrupt
+    else
+      pii_switch_claude "прокси упал"
+    fi
+    continue
   fi
 
   TAIL=$(tmux capture-pane -pt "=$SESSION:^.{top-left}" -S -8 2>/dev/null || true)
@@ -724,13 +744,12 @@ while true; do
       restart_session "claude обновился: $(cli_version_label "$(cli_version_running_exe "$SESSION")") → $(cli_version_label "$(cli_version_installed_exe)")"
       continue
     fi
-    # Смена режима pii-proxy — тоже только из чистого простоя: адрес модели claude читает на
-    # старте, так что нужен перезапуск, а идущий ход рвать нельзя. Метка --continue сохраняет
-    # разговор (session-exec.sh), режим и предупреждение оператору выставит start-agent.sh.
+    # Возврат через pii-proxy — только из чистого простоя, ход не рвём: адрес модели claude
+    # читает на старте, так что нужен перезапуск. Метка --continue сохраняет разговор
+    # (session-exec.sh), режим и сообщение оператору выставит start-agent.sh. Переход напрямую
+    # обработан выше, (P), без ожидания простоя.
     if [ "$IDLE_COUNT" -ge "$PII_SWITCH_IDLE_CYCLES" ] && pii_switch_due "$AGENT"; then
-      mkdir -p "$(dirname "$(pii_switch_continue_file "$AGENT")")" 2>/dev/null || true
-      : > "$(pii_switch_continue_file "$AGENT")" 2>/dev/null || true
-      restart_session "pii-proxy: режим $(pii_mode_get "$AGENT") → $PII_WANT" noflap
+      pii_switch_claude "простой"
       continue
     fi
     continue

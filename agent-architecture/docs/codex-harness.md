@@ -126,9 +126,12 @@ this risk. How it works:
 - the watchdog checks the proxy's `/health` every ~30 s. Three failures in a row switch the
   agent to *direct* mode, two successes in a row switch it back (one slow answer changes
   nothing). It also tries to start the proxy unit itself;
-- the switch never breaks a running turn: the driver waits until the turn ends, restarts
-  `codex app-server` and continues the **same thread** (`thread/resume`), so the conversation
-  is kept. In direct mode only the provider's address changes
+- switching to direct does not wait for the turn: the driver interrupts it (`turn/interrupt`;
+  on a dead proxy it would fail anyway), restarts `codex app-server`, continues the **same
+  thread** (`thread/resume`), so the conversation is kept, and repeats the same turn input. A
+  turn that finished on its own before the interrupt is not repeated; a turn that already
+  failed on the dead proxy is repeated without an error message to the user. Switching back
+  through the proxy happens only between turns. In direct mode only the provider's address changes
   (`-c model_providers.labops-pii.base_url="https://chatgpt.com/backend-api/codex"`, the same
   backend the proxy forwards to, the same ChatGPT sign-in). The provider itself is not
   switched: Codex refuses to resume a thread with a different provider;
