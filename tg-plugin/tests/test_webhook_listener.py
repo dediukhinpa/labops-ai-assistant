@@ -162,6 +162,38 @@ class BuildPromptTest(unittest.TestCase):
             self.assertIn("Do the thing", prompt)
 
 
+class TaskTextTest(unittest.TestCase):
+    """Текст задачи из payload notify: body → text → context; без шага list_my_pending."""
+
+    def _prompt(self, payload: dict) -> str:
+        with tempfile.TemporaryDirectory() as raw:
+            module = _load_listener(Path(raw))
+            return module._build_prompt({"from_agent": "a", "task_id": "t1", **payload})
+
+    def test_text_field_used_when_body_missing(self) -> None:
+        prompt = self._prompt({"text": "сделай отчёт"})
+        self.assertIn("Body:\nсделай отчёт\n", prompt)
+
+    def test_body_wins_over_text(self) -> None:
+        prompt = self._prompt({"body": "главное", "text": "второе"})
+        self.assertIn("Body:\nглавное\n", prompt)
+        self.assertNotIn("второе", prompt)
+
+    def test_context_becomes_text_only_as_last_resort(self) -> None:
+        prompt = self._prompt({"context": "только контекст"})
+        self.assertIn("Body:\nтолько контекст\n", prompt)
+        self.assertEqual(prompt.count("только контекст"), 1)
+        both = self._prompt({"body": "задача", "context": "фон"})
+        self.assertIn("Body:\nзадача\n", both)
+        self.assertIn("Context: фон", both)
+
+    def test_no_list_my_pending_step(self) -> None:
+        prompt = self._prompt({"body": "x"})
+        self.assertNotIn("list_my_pending", prompt)
+        self.assertIn("1) Check the task board", prompt)
+        self.assertIn("Body IS the task", prompt)
+
+
 class NotifyOwnerTest(unittest.TestCase):
     def test_notify_owner_noop_without_chat_id(self) -> None:
         """When WEBHOOK_OWNER_CHAT_ID is unset, _notify_owner is a silent no-op."""

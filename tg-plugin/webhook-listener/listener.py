@@ -208,13 +208,37 @@ def _sanitize_task_id(raw: str) -> str:
     return _SAFE_TASK_ID.sub("_", raw)[:64] or "no-id"
 
 
+# Поля payload notify, где отправитель кладёт текст задачи, по старшинству. Агенты пишут и
+# `body`, и `text` (прогон 23.11.2026: отправитель прислал `text`, а listener читал только
+# `body` — задача приехала пустой). `context` идёт отдельной строкой, а текстом задачи
+# становится, только если ни `body`, ни `text` нет. Формат — AGENT_ROUTER.md.
+_TASK_TEXT_KEYS: tuple[str, ...] = ("body", "text")
+
+
+def _task_text(payload: dict) -> tuple[str, str]:
+    """Текст задачи и её контекст из payload notify.
+
+    Args:
+        payload: Тело вебхука.
+
+    Returns:
+        (текст, контекст): текст -- первое непустое из body/text, иначе context (тогда
+        контекст пуст, чтобы не дублировать).
+    """
+    context = str(payload.get("context") or "")
+    for key in _TASK_TEXT_KEYS:
+        value = payload.get(key)
+        if value:
+            return str(value), context
+    return context, ""
+
+
 def _build_prompt(payload: dict) -> str:
     from_agent = payload.get("from_agent") or payload.get("from") or "unknown"
     raw_task_id = payload.get("task_id") or payload.get("_task_id") or "no-id"
     task_id = _sanitize_task_id(str(raw_task_id))
     title = payload.get("title") or "(no title)"
-    body = payload.get("body") or ""
-    context = payload.get("context") or ""
+    body, context = _task_text(payload)
 
     if payload.get("instruction_type") == "memory_consolidate":
         # Побудка на консолидацию памяти -- это работа над файлами воркспейса,
@@ -249,23 +273,26 @@ def _build_prompt(payload: dict) -> str:
         f"Title: {title}\n\n"
         f"Body:\n{body}\n\n"
         f"Context: {context}\n\n"
+        # Шага «прочитай входящие (list_my_pending)» больше нет: текст задачи уже выше, а в
+        # стандартной выкладке (core_mcp) у agent_router только notify/ack — шаг падал.
         f"Steps:\n"
-        f"1) Read your inbox: mcp__second_brain-agent_router__list_my_pending(agent=\"{AGENT_NAME}\")\n"
-        f"2) Check the task board IN THIS ORDER:\n"
+        f"1) Check the task board IN THIS ORDER:\n"
         f"   a) task_list(assignee=\"{AGENT_NAME}\", status=\"progress\") — your ACTIVE tasks. "
         f"If any — continue the FRESHEST (max id), do not reject it as new.\n"
         f"   b) If progress is empty — task_list(assignee=\"{AGENT_NAME}\", status=\"new\") — "
         f"take the FRESHEST (max id). IGNORE stale tasks older than 7 days "
         f"(created_at < today minus 7d) — residual garbage, not work.\n"
-        f"   c) If both empty — webhook was a fluke retry. agent_router.ack and exit.\n"
-        f"3) If payload carries a meaningful task_id, it wins. Otherwise use the task from (a) or (b).\n"
-        f"4) Do the work.\n"
-        f"5) Report to the owner via your usual channel.\n"
-        f"6) After the owner report, send a short summary to the dispatching agent via "
+        f"   c) If both empty and Body above is empty too — webhook was a fluke retry. "
+        f"agent_router.ack and exit. If Body is not empty, Body IS the task.\n"
+        f"2) If payload carries a meaningful task_id, it wins. Otherwise use the task from "
+        f"(1a) or (1b), or Body.\n"
+        f"3) Do the work.\n"
+        f"4) Report to the owner via your usual channel.\n"
+        f"5) After the owner report, send a short summary to the dispatching agent via "
         f"mcp__second_brain-agent_router__notify with payload "
         f"{{'title': 'Report from {AGENT_NAME}: <task title>', 'body': '<2-4 bullets>', "
         f"'_task_id': '{task_id}'}}.\n"
-        f"7) Only then call mcp__second_brain-agent_router__ack(task_id=\"{task_id}\").\n"
+        f"6) Only then call mcp__second_brain-agent_router__ack(task_id=\"{task_id}\").\n"
     )
 
 
