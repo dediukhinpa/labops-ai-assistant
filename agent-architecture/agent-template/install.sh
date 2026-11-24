@@ -617,9 +617,6 @@ echo "       - ${WORKSPACE}/AGENTS.src.md (SOUL; AGENTS.md is assembled from it 
 else
 echo "       - ${WORKSPACE}/CLAUDE.md (SOUL)"
 fi
-echo "       Optional to review (pre-filled, usually fine as-is):"
-echo "       - ${WORKSPACE}/core/AGENTS.md (models, team)"
-echo "       - ${WORKSPACE}/tools/TOOLS.md (servers, services)"
 echo "       (core/USER.md is copied from the first agent — no need to fill it in.)"
 echo ""
 # Раньше тут предлагался одиночный curl с tools/list. Транспорт MCP сессионный:
