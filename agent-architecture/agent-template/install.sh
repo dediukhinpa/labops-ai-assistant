@@ -611,15 +611,16 @@ if [ "$HARNESS" != "codex" ] && [ -f "${GLOBAL_MD}.labops-new" ]; then
 fi
 echo "  Next steps:"
 echo ""
-echo "    1. Review and customize identity files:"
+echo "    1. Fill in the agent's identity (the one file you must personalize):"
 if [ "$HARNESS" = "codex" ]; then
-echo "       - ${WORKSPACE}/AGENTS.src.md (SOUL; AGENTS.md is assembled from it)"
+echo "       - ${WORKSPACE}/AGENTS.src.md (SOUL; AGENTS.md is assembled from it — do not edit AGENTS.md)"
 else
 echo "       - ${WORKSPACE}/CLAUDE.md (SOUL)"
 fi
+echo "       Optional to review (pre-filled, usually fine as-is):"
 echo "       - ${WORKSPACE}/core/AGENTS.md (models, team)"
-echo "       - ${WORKSPACE}/core/USER.md (your profile)"
 echo "       - ${WORKSPACE}/tools/TOOLS.md (servers, services)"
+echo "       (core/USER.md is copied from the first agent — no need to fill it in.)"
 echo ""
 # Раньше тут предлагался одиночный curl с tools/list. Транспорт MCP сессионный:
 # без initialize сервер отвечает 400 «Missing session ID» при любом токене, и
