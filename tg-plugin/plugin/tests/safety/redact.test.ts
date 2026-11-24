@@ -9,6 +9,7 @@
 import { describe, expect, test } from 'bun:test'
 import { redactSecrets } from '../../src/safety/redact.js'
 import { validateTelegramHtml } from '../../src/safety/html-validator.js'
+import { markdownToTelegramHtml } from '../../src/format/html.js'
 
 describe('redactSecrets — Telegram bot tokens', () => {
   test('masks Telegram bot token shape (digits:base64ish)', () => {
@@ -315,5 +316,37 @@ describe('redactSecrets — HTML-neutral marker', () => {
     const out = redactSecrets(`got header ${webhook} in log`, [webhook])
     expect(out).toContain('[REDACTED]')
     expect(out).not.toContain('<redacted>')
+  })
+})
+
+// 24.11.2026: агент на HRV написал путь к секрету в обратных кавычках. reply превратил
+// его в <code>…</code>, правило путей `secrets/\S+` съело закрывающий тег, Telegram
+// отверг HTML, и сообщение ушло простым текстом с видимыми `&lt;code&gt;`.
+describe('redactSecrets — маска не ломает HTML-теги', () => {
+  test('secret path inside <code> keeps the closing tag', () => {
+    const out = redactSecrets('<code>~/.claude-lab/shared/secrets/valera-telegram-token</code>')
+    expect(out).toBe('<code>~/.claude-lab/shared/secrets/***</code>')
+  })
+
+  test('tilde-form secret path inside <code> keeps the closing tag', () => {
+    expect(redactSecrets('<code>~/.lab/secrets/x.key</code>')).toBe('<code>~/.lab/secrets/***</code>')
+  })
+
+  test('query token inside <code> keeps the closing tag', () => {
+    expect(redactSecrets('<code>https://h/x?token=abc123</code>')).toBe('<code>https://h/x?token=[REDACTED]</code>')
+  })
+
+  test('the exact HRV reply stays valid HTML after redaction', () => {
+    const md =
+      'Бот создан. Сохрани его на сервере в `~/.claude-lab/shared/secrets/valera-telegram-token` ' +
+      'с правами `600` и напиши «сохранён».'
+    const validated = validateTelegramHtml(redactSecrets(markdownToTelegramHtml(md)))
+    expect(validated.downgraded).toBe(false)
+    expect(validated.text).toContain('secrets/***</code>')
+    expect(validated.text).not.toContain('&lt;code&gt;')
+  })
+
+  test('plain-text secret paths are still masked to the end of the word', () => {
+    expect(redactSecrets('см. secrets/openviking.key дальше')).toBe('см. secrets/*** дальше')
   })
 })

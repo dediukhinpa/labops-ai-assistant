@@ -60,7 +60,9 @@ const BEARER_RE = /(Bearer\s+)[A-Za-z0-9._\-+/=]{8,}/gi
 
 // Query-string tokens: ?token=, ?access_token=, ?api_key=, &key=.
 // Anchored by `[?&]` and the param name so we don't match `&keyword=` etc.
-const QUERY_TOKEN_RE = /([?&](?:access_token|api_key|token)=)[^&\s"']+/gi
+// Значение не заходит за `<`/`>`: в ответе `reply` текст уже HTML, и маска не должна
+// съедать закрывающий тег (`?token=x</code>` → `?token=[REDACTED]</code>`).
+const QUERY_TOKEN_RE = /([?&](?:access_token|api_key|token)=)[^&\s"'<>]+/gi
 
 // IPv4 — keep first and last octet (helps debugging) and mask the middle
 // two. Loopback (127.*) and 0.* placeholders are pure debug noise; the
@@ -77,8 +79,11 @@ function ipv4Replacer(full: string, first: string, last: string): string {
 //   2. anchored `secrets/<file>` — catches collapsed summaries like
 //      `secrets/openviking.key`. Must match at string start OR after a
 //      whitespace/path separator so we don't mangle `my-secrets/x`.
-const SECRET_PATH_TILDE_RE = /(~\/?\.\w+\/)secrets\/\S+/g
-const SECRET_PATH_ANCHORED_RE = /(^|[\s/])secrets\/\S+/g
+//   Путь кончается на пробеле ИЛИ на `<`/`>`: `reply` превращает `путь` в
+//   <code>путь</code>, и прежний `\S+` съедал `</code>` — Telegram отвергал HTML,
+//   плагин слал сообщение простым текстом с видимыми `&lt;code&gt;` (24.11.2026).
+const SECRET_PATH_TILDE_RE = /(~\/?\.\w+\/)secrets\/[^\s<>]+/g
+const SECRET_PATH_ANCHORED_RE = /(^|[\s/])secrets\/[^\s<>]+/g
 
 // Supabase project host: `<projectid>.supabase.co`. The callback masks the
 // inner project-id segment while leaving `.supabase.co` intact so the
