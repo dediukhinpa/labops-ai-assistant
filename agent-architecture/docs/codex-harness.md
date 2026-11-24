@@ -224,10 +224,10 @@ The watchdog does not look at a screen. It checks:
 
 ## 7. `/reset` and `/doctor` on Codex
 
-- **`/reset force`** — starts the agent from a clean context, memory is kept. On Codex the
+- **`/reset`** — starts the agent from a clean context, memory is kept. On Codex the
   plugin does it itself: it waits until the current turn ends, saves memory to the
-  second-brain, rebuilds `AGENTS.md` and starts a new thread. `/reset` without `force` only asks
-  for confirmation.
+  second-brain, rebuilds `AGENTS.md` and starts a new thread. No confirmation needed
+  (`/reset force` is still accepted).
 - **`/doctor`** — checks the agent and fixes what it can, as on Claude. On Codex it checks the
   ChatGPT sign-in, the systemd unit, the tmux session, the driver (process, port, heartbeat —
   restarts it if broken), the plumbing and the second-brain. If the plugin itself is down, the

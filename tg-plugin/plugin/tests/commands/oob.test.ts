@@ -259,14 +259,24 @@ describe('handleOobCommand', () => {
     expect(result.replyToTelegram!.text).toContain('без надзора')
   })
 
-  test('/reset (no force) returns reply asking for force flag, no channel notify', async () => {
-    const parsed = parseOobCommand('/reset')!
-    const result = await handleOobCommand(parsed, makeCtx())
+  // С 24.11.2026 подтверждение не нужно: /reset сразу кладёт ту же заявку, что /reset force.
+  test('/reset without force files the reset request right away, no channel notify', async () => {
+    const result = await handleOobCommand(parseOobCommand('/reset')!, makeCtx({ resetRequestPath: '/tmp/x/reset.request' }))
     expect(result.command).toBe('reset')
     expect(result.notifyChannel).toBeUndefined()
-    expect(result.writeRequest).toBeUndefined()
-    expect(result.replyToTelegram).toBeDefined()
-    expect(result.replyToTelegram!.text).toContain('force')
+    expect(result.writeRequest).toEqual({ path: '/tmp/x/reset.request', chatId: '100000001' })
+    expect(result.replyToTelegram!.text).not.toContain('force')
+  })
+
+  test('/reset force still works the same way', async () => {
+    const result = await handleOobCommand(parseOobCommand('/reset force')!, makeCtx({ resetRequestPath: '/tmp/x/reset.request' }))
+    expect(result.writeRequest).toEqual({ path: '/tmp/x/reset.request', chatId: '100000001' })
+  })
+
+  test('help and bot menu no longer ask for force', async () => {
+    const help = await handleOobCommand(parseOobCommand('/help')!, makeCtx())
+    expect(help.replyToTelegram!.text).not.toContain('/reset force')
+    expect(BOT_COMMANDS.find((c) => c.command === 'reset')!.description).not.toContain('force')
   })
 })
 

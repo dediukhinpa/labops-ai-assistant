@@ -12,7 +12,8 @@
 //   - Optional `@botname` suffix is stripped when it matches our bot's
 //     username (case-insensitive).
 //   - Command word is lowercased.
-//   - Trailing `force` token in args sets hasForceFlag (for /reset force).
+//   - Trailing `force` token in args sets hasForceFlag. /reset его больше не требует
+//     (24.11.2026: подтверждение только мешало); «/reset force» принимается как раньше.
 //
 // Handling notes:
 //   - /help and /status reply directly to Telegram and DO NOT wake Claude
@@ -23,12 +24,11 @@
 //     (no public API for that yet); /help documents this limitation. Codex:
 //     драйвер ловит meta.command=stop и сразу делает turn/interrupt, поэтому
 //     тексты /help и ответа /stop зависят от харнеса (codexHarness()).
-//   - /reset force, как и /doctor, кладёт заявку. Claude Code: исполняет watchdog
+//   - /reset, как и /doctor, кладёт заявку. Claude Code: исполняет watchdog
 //     набором /clear в панели сессии (плагин живёт внутри неё). Codex: заявку
 //     забирает сам плагин (watchResetRequest) и начинает новую нить драйвера.
 //     Раньше команда пересылала модели текст «/reset force» и сразу отвечала
 //     «сброшено», хотя сброса не было.
-//   - /reset without `force` returns a short reply asking for the flag.
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -160,7 +160,7 @@ function helpText(): string {
     + '<code>/status</code> — снимок плагина и сессии\n'
     + '<code>/doctor</code> — проверить агента и починить, если сломан\n'
     + '<code>/stop</code> — остановить текущую задачу агента\n'
-    + '<code>/reset force</code> — начать сессию с чистого контекста, память сохраняется\n\n'
+    + '<code>/reset</code> — начать сессию с чистого контекста, память сохраняется\n\n'
     + stopNote
   )
 }
@@ -176,7 +176,7 @@ export const BOT_COMMANDS: ReadonlyArray<BotCommandSpec> = [
   { command: 'status', description: 'снимок плагина и сессии' },
   { command: 'doctor', description: 'проверить и починить агента' },
   { command: 'stop', description: 'остановить текущую задачу агента' },
-  { command: 'reset', description: 'очистить контекст сессии (нужен force)' },
+  { command: 'reset', description: 'очистить контекст сессии' },
 ]
 
 function statusText(ctx: OobContext): string {
@@ -340,17 +340,8 @@ export async function handleOobCommand(
     }
 
     case 'reset': {
-      if (!parsed.hasForceFlag) {
-        return {
-          handled: true,
-          command: 'reset',
-          replyToTelegram: {
-            text: 'Для подтверждения добавь <code>force</code>: <code>/reset force</code>',
-            parseMode: 'HTML',
-          },
-        }
-      }
-      ctx.log.info('oob /reset force', { chat_id: ctx.chatId })
+      // Без подтверждения: /reset и /reset force делают одно и то же.
+      ctx.log.info('oob /reset', { chat_id: ctx.chatId })
       // Модель не будим: команда про сессию, а не для неё. «Сброшено» ответит
       // watchdog после фактического /clear, здесь только подтверждаем приём.
       if (ctx.resetRequestPath === undefined || ctx.resetRequestPath === '') {

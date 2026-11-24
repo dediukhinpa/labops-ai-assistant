@@ -23,7 +23,7 @@ Built into Claude Code:
 a plugin or your own skill that defines them (see *Superpowers Commands* below).
 
 In an agent driven from Telegram these commands are typed in the tmux session, not in
-the chat; the chat has its own commands (`/reset force`, `/status`, `/doctor`).
+the chat; the chat has its own commands (`/reset`, `/status`, `/doctor`).
 
 ## Decision Tree: What Command Do I Need?
 

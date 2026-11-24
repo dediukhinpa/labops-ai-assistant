@@ -191,7 +191,7 @@ Both jobs run from the Stop hook at most once per
 (`create_handoff`), skipping when nothing changed since the last flush. It is a safety
 net, not a substitute for writing decisions as they happen.
 
-### /reset force (Telegram)
+### /reset (Telegram)
 
 ```
 1. The plugin files a reset request

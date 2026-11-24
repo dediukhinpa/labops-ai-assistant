@@ -196,7 +196,7 @@ The **harness** is the program the agents live in. The swarm can run on **Claude
 - **If the proxy goes down, the agent keeps working directly** (both harnesses and multichat sessions, owner decision of 23.11.2026). A turn that is running at that moment is interrupted and your last message is repeated directly — you do not need to resend it. Personal data is then sent to the model **without masking**. You get one Telegram message when this starts and one when the agent is back through the proxy; `/doctor` shows a warning meanwhile. Details: [`agent-architecture/README.md`](agent-architecture/README.md#pii-masking-pii-proxy--on-by-default).
 - **Default model:** `gpt-6.2-sol`.
 - **No terminal app in tmux.** The watchdog starts the Telegram plugin in "driver" mode, and the driver runs `codex app-server` and talks to it over JSON-RPC: one queue for Telegram messages and tasks, 👀/👌 reactions, the agent's final message goes to the chat by itself, memory hooks are called by the driver, the conversation thread is resumed after a restart.
-- **`/reset force` and `/doctor`** work on Codex too; `/stop` interrupts the current turn.
+- **`/reset` and `/doctor`** work on Codex too; `/stop` interrupts the current turn.
 - **Tasks from other agents:** in a Codex swarm the `webhook-listener` runs `codex exec` instead of `claude -p`.
 
 ---
