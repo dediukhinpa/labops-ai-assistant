@@ -113,6 +113,20 @@ const TELEGRAM_TOKEN_PARTIAL_RE = /\b(\d{3})\d{7,}:(AA\w{2})\w+/g
 // and tail visible so a partial mask is still useful for debugging.
 const GENERIC_LONG_TOKEN_RE = /\b([A-Za-z0-9_-]{4})[A-Za-z0-9_-]{16,}([A-Za-z0-9_-]{4})\b/g
 
+// http(s) URL span. The generic rule above matches any ≥24-char run of
+// [A-Za-z0-9_-], which is exactly what a normal link's path / query / id
+// segment looks like (slugs, file ids, signed tokens, commit SHAs). Running
+// it over a URL injects `***` into the middle and silently rewrites the link
+// to a wrong-but-plausible address — the operator clicks and lands elsewhere.
+// So the generic rule is held back from URL spans (see `redactSecrets`). This
+// is safe: real secrets inside a URL carry their own shape and are already
+// masked by the specific rules above, which still run over the whole text —
+// `?token=`/`?api_key=`/`?access_token=` (QUERY_TOKEN_RE), provider keys
+// (sk-…, gsk_…, ghp_…), `Bearer …`, and the Telegram bot-token shape. The
+// span stops at whitespace or quote/angle/backtick so an href="…" boundary
+// and a bare trailing space both end it cleanly.
+const URL_SPAN_RE = /\bhttps?:\/\/[^\s<>"'`]+/gi
+
 // Исключение из общего правила: составные имена из строчных слов через `_`/`-` — имена
 // инструментов и серверов MCP (`mcp__second_brain-agent_router__list_my_pending`,
 // `second_brain-memory_router`). Их маскировка делала ленту хода нечитаемой (прогон
@@ -156,9 +170,30 @@ const RULES: ReadonlyArray<RedactionRule> = [
   { pattern: SUPABASE_HOST_RE, replacement: supabaseReplacer },
   // 7. Telegram partial-mask shape (renderer-style).
   { pattern: TELEGRAM_TOKEN_PARTIAL_RE, replacement: '$1***:$2***' },
-  // 8. Generic long-token rule — LAST.
-  { pattern: GENERIC_LONG_TOKEN_RE, replacement: genericLongTokenReplacer },
+  // NB: the generic long-token rule (rule 8) is applied separately in
+  // `redactSecrets`, URL-aware — see GENERIC_LONG_TOKEN_RE / URL_SPAN_RE.
 ]
+
+// Apply the generic long-token rule to every span of `text` that is NOT part
+// of an http(s) URL, leaving URLs byte-for-byte intact. Specific-shape secrets
+// have already been masked by `RULES` over the whole text (URLs included), so
+// the only thing this rule would still catch inside a URL is a legitimate long
+// path/id segment — which we must not corrupt.
+function applyGenericOutsideUrls(text: string): string {
+  const generic = (chunk: string): string =>
+    chunk.replace(GENERIC_LONG_TOKEN_RE, genericLongTokenReplacer)
+  let out = ''
+  let last = 0
+  URL_SPAN_RE.lastIndex = 0
+  for (const match of text.matchAll(URL_SPAN_RE)) {
+    const start = match.index ?? 0
+    out += generic(text.slice(last, start)) // text outside the URL — redact
+    out += match[0] // the URL itself — untouched
+    last = start + match[0].length
+  }
+  out += generic(text.slice(last))
+  return out
+}
 
 /**
  * Apply every redaction rule to `text` in declaration order, then mask
@@ -199,5 +234,8 @@ export function redactSecrets(
       out = out.replace(rule.pattern, rule.replacement as (sub: string, ...args: unknown[]) => string)
     }
   }
+  // Generic long-token rule LAST and URL-aware: it would otherwise inject
+  // `***` into a normal link's path/id segment and corrupt the address.
+  out = applyGenericOutsideUrls(out)
   return out
 }

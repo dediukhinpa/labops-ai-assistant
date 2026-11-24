@@ -212,6 +212,50 @@ describe('redactSecrets — имена инструментов MCP не мас�
   })
 })
 
+describe('redactSecrets — ссылки агента не корёжатся', () => {
+  test('обычная ссылка с длинным path/id сегментом остаётся целой', () => {
+    for (const url of [
+      'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/view',
+      'https://github.com/dediukhinpa/labops-ai-assistant/commit/deadbeef0123456789abcdef0123456789abcdef',
+      'https://app.example.com/s/aVeryLongShareTokenABCDEFGH1234567890XYZ',
+    ]) {
+      // в тексте сообщения
+      expect(redactSecrets(`смотри ${url} тут`)).toContain(url)
+      // как поле url у кнопки/ссылки (чистый URL) — байт в байт
+      expect(redactSecrets(url)).toBe(url)
+      // главное: никаких *** в середину ссылки
+      expect(redactSecrets(url)).not.toContain('***')
+    }
+  })
+
+  test('тот же длинный токен ВНЕ ссылки по-прежнему маскируется', () => {
+    const tok = 'aVeryLongShareTokenABCDEFGH1234567890XYZ'
+    const out = redactSecrets(`raw ${tok} here`)
+    expect(out).not.toContain(tok)
+    expect(out).toContain('***')
+  })
+
+  test('настоящие секреты внутри URL всё равно маскируются', () => {
+    expect(redactSecrets('https://x.test/p/sk-' + 'A'.repeat(30))).toContain('[REDACTED]')
+    const q = redactSecrets('https://x.test/cb?api_key=supersecretvalue1234567890&x=1')
+    expect(q).toContain('[REDACTED]')
+    expect(q).toContain('&x=1')
+  })
+
+  test('href="…" в HTML: URL цел, граница кавычки завершает спан', () => {
+    const tok = 'longTokenABCDEFGH1234567890XYZ'
+    const out = redactSecrets(`<a href="https://example.com/s/${tok}">open</a> ${tok}`)
+    expect(out).toContain(`href="https://example.com/s/${tok}"`)
+    expect(out).toContain('***') // голая копия вне href замаскирована
+  })
+
+  test('идемпотентность при наличии ссылки', () => {
+    const s = 'link https://example.com/s/longTokenABCDEFGH1234567890XYZ and tok longTokenABCDEFGH1234567890XYZ'
+    const once = redactSecrets(s)
+    expect(redactSecrets(once)).toBe(once)
+  })
+})
+
 describe('redactSecrets — idempotency', () => {
   test('applying twice yields the same result for a mix of secrets', () => {
     const input = [
