@@ -19,12 +19,15 @@
 //     (no channel notification). Status is a snapshot of plugin-side state
 //     only — Claude session lives in the host process and we don't poke it.
 //   - /stop acks the user AND emits a channel notification with
-//     meta.command=stop. The plugin can't truly interrupt Claude (no public
-//     API for that yet); /help documents this limitation.
-//   - /reset force, как и /doctor, кладёт заявку для watchdog: сбросить
-//     контекст может только набор /clear в панели сессии, а плагин живёт
-//     внутри неё. Раньше команда пересылала модели текст «/reset force» и
-//     сразу отвечала «сброшено», хотя сброса не было.
+//     meta.command=stop. Claude Code: the plugin can't truly interrupt Claude
+//     (no public API for that yet); /help documents this limitation. Codex:
+//     драйвер ловит meta.command=stop и сразу делает turn/interrupt, поэтому
+//     тексты /help и ответа /stop зависят от харнеса (codexHarness()).
+//   - /reset force, как и /doctor, кладёт заявку. Claude Code: исполняет watchdog
+//     набором /clear в панели сессии (плагин живёт внутри неё). Codex: заявку
+//     забирает сам плагин (watchResetRequest) и начинает новую нить драйвера.
+//     Раньше команда пересылала модели текст «/reset force» и сразу отвечала
+//     «сброшено», хотя сброса не было.
 //   - /reset without `force` returns a short reply asking for the flag.
 
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -33,7 +36,7 @@ import { dirname } from 'node:path'
 import type { AppConfig } from '../config.js'
 import type { Logger } from '../log.js'
 import type { TelegramApi } from '../channel/tools.js'
-import { sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
+import { inboundSinkActive, sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 
 export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'doctor'
@@ -140,16 +143,25 @@ export interface OobResult {
 // here — they belong to Scope B and grep checks enforce their absence.
 // ─────────────────────────────────────────────────────────────────────
 
+// Рой на Codex: входящие уходят в драйвер app-server (он ставит приёмник), а не в
+// канал Claude Code. Этим же признаком тексты команд выбирают формулировку.
+function codexHarness(): boolean {
+  return inboundSinkActive()
+}
+
 function helpText(): string {
+  const stopNote = codexHarness()
+    ? '<i>примечание: /stop прерывает текущий ход агента сразу.</i>'
+    : '<i>примечание: /stop — best-effort: плагин передаёт сигнал остановки через '
+      + 'канал, но не может гарантировать прерывание посреди вызова инструмента.</i>'
   return (
     '<b>команды</b>\n\n'
     + '<code>/help</code> — эта справка\n'
     + '<code>/status</code> — снимок плагина и сессии\n'
     + '<code>/doctor</code> — проверить агента и починить, если сломан\n'
-    + '<code>/stop</code> — попросить Claude остановить текущую задачу\n'
+    + '<code>/stop</code> — остановить текущую задачу агента\n'
     + '<code>/reset force</code> — начать сессию с чистого контекста, память сохраняется\n\n'
-    + '<i>примечание: /stop — best-effort: плагин передаёт сигнал остановки через '
-    + 'канал, но не может гарантировать прерывание посреди вызова инструмента.</i>'
+    + stopNote
   )
 }
 
@@ -163,7 +175,7 @@ export const BOT_COMMANDS: ReadonlyArray<BotCommandSpec> = [
   { command: 'help', description: 'справка по командам' },
   { command: 'status', description: 'снимок плагина и сессии' },
   { command: 'doctor', description: 'проверить и починить агента' },
-  { command: 'stop', description: 'попросить Claude остановиться' },
+  { command: 'stop', description: 'остановить текущую задачу агента' },
   { command: 'reset', description: 'очистить контекст сессии (нужен force)' },
 ]
 
@@ -315,7 +327,9 @@ export async function handleOobCommand(
         handled: true,
         command: 'stop',
         replyToTelegram: {
-          text: '<b>stop</b> — запрос принят. Claude увидит сигнал остановки при следующем чтении канала.',
+          text: codexHarness()
+            ? '<b>stop</b> — прерываю текущий ход агента.'
+            : '<b>stop</b> — запрос принят. Claude увидит сигнал остановки при следующем чтении канала.',
           parseMode: 'HTML',
         },
         notifyChannel: {

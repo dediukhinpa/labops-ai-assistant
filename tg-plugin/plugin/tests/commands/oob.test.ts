@@ -16,6 +16,7 @@ import {
 import type { AppConfig } from '../../src/config.js'
 import type { Logger } from '../../src/log.js'
 import type { TelegramApi } from '../../src/channel/tools.js'
+import { setInboundSink } from '../../src/channel/notify.js'
 
 function makeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -412,5 +413,40 @@ describe('resolveDoctorRequestPath', () => {
 
   test('empty when the agent is unknown — the command then reports it honestly', () => {
     expect(resolveDoctorRequestPath({ HOME: '/home/x' } as NodeJS.ProcessEnv)).toBe('')
+  })
+})
+
+// Тексты /help и /stop зависят от харнеса: на Codex драйвер сразу прерывает ход
+// (turn/interrupt), а не ждёт, пока Claude прочтёт канал. Признак Codex — активный
+// приёмник входящих драйвера (setInboundSink).
+describe('oob texts per harness', () => {
+  const codexOn = (): void => setInboundSink(async () => true)
+  const codexOff = (): void => setInboundSink(undefined)
+
+  test('claude (default): /stop keeps the best-effort wording', async () => {
+    codexOff()
+    const stop = await handleOobCommand(parseOobCommand('/stop')!, makeCtx())
+    expect(stop.replyToTelegram!.text).toContain('Claude увидит')
+    const help = await handleOobCommand(parseOobCommand('/help')!, makeCtx())
+    expect(help.replyToTelegram!.text).toContain('best-effort')
+  })
+
+  test('codex: /stop and /help promise an immediate interrupt, no Claude', async () => {
+    codexOn()
+    try {
+      const stop = await handleOobCommand(parseOobCommand('/stop')!, makeCtx())
+      expect(stop.replyToTelegram!.text).toContain('прерываю текущий ход')
+      expect(stop.replyToTelegram!.text).not.toContain('Claude')
+      expect(stop.notifyChannel!.meta.command).toBe('stop')
+      const help = await handleOobCommand(parseOobCommand('/help')!, makeCtx())
+      expect(help.replyToTelegram!.text).toContain('прерывает текущий ход агента сразу')
+      expect(help.replyToTelegram!.text).not.toContain('Claude')
+    } finally {
+      codexOff()
+    }
+  })
+
+  test('bot menu wording is harness-neutral', () => {
+    for (const c of BOT_COMMANDS) expect(c.description).not.toContain('Claude')
   })
 })
