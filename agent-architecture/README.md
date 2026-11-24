@@ -516,7 +516,7 @@ Everything above describes the default harness, **Claude Code**. The swarm can i
 - **pii-proxy is mandatory at install time.** On Codex `SKIP_PII_PROXY=1` is refused; the agent's proxy is set up before its workspace is rendered (its address goes into `config.toml`). If the proxy goes down later, the agent keeps working directly (see "When the proxy is down" below).
 - **Model.** Default `gpt-6.2-sol`, written to `~/.claude-lab/<agent>/.codex/config.toml`. Operator-owned, like on Claude.
 - **Driver instead of a terminal app.** In the tmux session `labops-<agent>` the watchdog starts the `tg-plugin` process in driver mode; the driver runs `codex app-server` and talks to it over JSON-RPC (one input queue, reactions, the final message goes to the chat by itself, memory hooks called by the driver, the thread is resumed after a restart). The watchdog checks the driver process, its port, its heartbeat and the ChatGPT sign-in instead of reading a screen.
-- **`/reset force`** (new thread, memory kept — done by the plugin itself) and **`/doctor`** work on Codex too.
+- **`/reset`** (new thread, memory kept — done by the plugin itself) and **`/doctor`** work on Codex too.
 - **Agent-to-agent jobs:** in a Codex swarm the `webhook-listener` runs `codex exec` instead of `claude -p`. `codex exec` is allowed; the `test.sh` ban on headless `claude -p` stays for Claude.
 
 ### Tests

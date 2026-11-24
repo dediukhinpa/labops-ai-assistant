@@ -197,7 +197,7 @@ If the swarm runs on **Codex CLI** instead of Claude Code (the installer's first
 - **The answer reaches the chat without `reply`.** The agent's final message of the turn is sent to the chat that started the turn; `reply` is for progress notes and files, and the same text is not sent twice. A failed turn sends a short warning.
 - **Questions** from Codex become Telegram buttons; approval requests are declined and logged (`approval_policy = never` is expected).
 - **Memory hooks** (session-start, stop, precompact, heartbeat, brain-flush) are run by the driver — the same workspace scripts Claude Code runs.
-- **`/reset force`** is served by the plugin itself: memory flush, `AGENTS.md` rebuild, new thread. **`/doctor`** goes to the watchdog as on Claude. **`/stop`** interrupts the turn.
+- **`/reset`** is served by the plugin itself: memory flush, `AGENTS.md` rebuild, new thread. **`/doctor`** goes to the watchdog as on Claude. **`/stop`** interrupts the turn.
 - The bot, webhook, voice and support tokens are removed from the environment Codex and its commands get.
 - `multichat` (per-person sessions) is not supported in driver mode yet — the plugin logs a warning and runs one session.
 - The separate [`webhook-listener/`](webhook-listener/) (one-off agent-to-agent jobs) runs `codex exec` instead of `claude -p` on a Codex swarm — in the agent's workspace, with the agent's `CODEX_HOME`, so the job goes through the same model, pii-proxy and second-brain access.

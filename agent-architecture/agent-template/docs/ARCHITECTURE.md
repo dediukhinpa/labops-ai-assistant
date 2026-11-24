@@ -26,7 +26,7 @@ systemd  claude-agent-<agent>.service
 ```
 
 The session is not restarted per message: it keeps its context until compaction,
-`/reset force` or a watchdog restart.
+`/reset` or a watchdog restart.
 
 ## Context Loading (at session start)
 
@@ -132,7 +132,7 @@ ${SECOND_BRAIN_TASKS_URL}         task board  default http://${MCP_HOST}:5003/mc
 
 | Command | What it does |
 |---------|-------------|
-| `/reset force` | Clear the session context: the watchdog waits for the current turn to finish, types `/clear` into the session pane, confirms via the SessionEnd/SessionStart hooks (SessionEnd flushes the diary to second_brain `inbox/`) and then replies. Memory files are untouched |
+| `/reset` | Clear the session context: the watchdog waits for the current turn to finish, types `/clear` into the session pane, confirms via the SessionEnd/SessionStart hooks (SessionEnd flushes the diary to second_brain `inbox/`) and then replies. Memory files are untouched |
 | `/status` | Snapshot of plugin state |
 | `/doctor` | Check the agent and repair it if broken (served by the watchdog) |
 | `/stop` | Ask Claude to stop the current task (best-effort) |

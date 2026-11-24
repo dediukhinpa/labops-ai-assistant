@@ -212,7 +212,7 @@ export async function serveResetRequest(opts: ResetWatchOptions): Promise<boolea
   if (opts.busy()) {
     opts.log.warn('codex /reset cancelled: the turn did not finish in time')
     if (chatId !== '') {
-      await opts.notify(chatId, '⚠️ Сброс сессии отменён: агент так и не закончил текущую задачу. Пришлите /stop, затем /reset force.')
+      await opts.notify(chatId, '⚠️ Сброс сессии отменён: агент так и не закончил текущую задачу. Пришлите /stop, затем /reset.')
     }
     return true
   }

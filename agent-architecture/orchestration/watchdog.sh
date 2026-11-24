@@ -283,7 +283,7 @@ source "$SCRIPT_DIR/lib/task-poller-launch.sh"
 # Очередь запросов «/doctor» от плагина + аварийный приём команды из Telegram.
 # shellcheck source=lib/doctor-request.sh
 source "$SCRIPT_DIR/lib/doctor-request.sh"
-# Заявки «/reset force»: очистка контекста сессии набором /clear.
+# Заявки «/reset»: очистка контекста сессии набором /clear.
 # shellcheck source=lib/session-reset.sh
 source "$SCRIPT_DIR/lib/session-reset.sh"
 # agent_bot_token — нужен только аварийному приёму (см. serve_doctor_request).
@@ -338,7 +338,7 @@ serve_doctor_request() {
   return 0
 }
 
-# ── Обслуживание команды /reset force ────────────────────────────────────────
+# ── Обслуживание команды /reset ────────────────────────────────────────
 # Логика — в lib/session-reset.sh (serve_session_reset). После набора /clear
 # прежний снимок панели и счётчики простоя больше ничего не значат.
 serve_reset_request() {

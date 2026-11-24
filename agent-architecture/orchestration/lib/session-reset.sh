@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# session-reset.sh — команда «/reset force» из Telegram: очистить контекст живой
+# session-reset.sh — команда «/reset» из Telegram: очистить контекст живой
 # сессии агента.
 #
 # ПОЧЕМУ ТАК. Раньше плагин отвечал «сессия сброшена» и пересылал модели текст
@@ -118,7 +118,7 @@ serve_session_reset() {
       SESSION_RESET_WAIT_LOGGED=0
       log "запрос /reset отменён: агент не освободился за ${SESSION_RESET_MAX_WAIT}с"
       ( TG_CHAT_ID="$chat" "$TG_SEND" "$AGENT" \
-          "⚠️ Сброс сессии отменён: агент так и не закончил текущую задачу. Пришлите /stop, затем /reset force." ) \
+          "⚠️ Сброс сессии отменён: агент так и не закончил текущую задачу. Пришлите /stop, затем /reset." ) \
         >/dev/null 2>&1 || true
     elif [ "$SESSION_RESET_WAIT_LOGGED" -eq 0 ]; then
       log "запрос /reset ждёт конца текущего хода"
