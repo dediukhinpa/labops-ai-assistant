@@ -80,6 +80,14 @@ bash orchestration/switch-harness.sh codex --dry-run # показать план
       `harness_render_agent` поверх штатного установщика skip-if-exists + обратная адаптация
       памяти на claude) — юнит + сквозной интеграционный тест claude→codex (память и ручные
       правки идентичности сохраняются).
-- [ ] Доустановка рантайма целевого харнеса + встроенный вход + pii-proxy.
-- [ ] Пауза/стоп/рестарт/откат.
+- [x] Доустановка рантайма целевого харнеса (`ensure_runtime`: `codex_install_pinned` /
+      официальный установщик claude под `~/.local`, без root) + встроенный вход (`ensure_login`:
+      codex `login --device-auth`, claude `/login` в tmux, со skip-if-logged-in) + pii-proxy
+      (`ensure_pii`: `pii-setup.sh host` + `agent <id>`). Knob'ы: `SKIP_RUNTIME_INSTALL`,
+      `SKIP_LOGIN`, `SKIP_PII_PROXY`.
+- [x] Пауза/стоп → флип → конвертация → рестарт с **автоматическим откатом** из бэкапа при любом
+      сбое после точки невозврата (`stop_all`/`flip_swarm`/`convert_all`/`restart_all`/`rollback`,
+      `agent_unit_cmd` через systemctl; тест-хук `SWITCH_UNITCTL`). Полный мок-прогон перехода и
+      откат — под юнит-тестом (реально установленный агент, systemd/вход/pii замоканы).
+      **Живой end-to-end на HRV ещё не прогонялся** — это следующий шаг валидации.
 - [ ] Скилл-враппер `switch-harness` и TG-команда `/harness` (отдельным шагом).
