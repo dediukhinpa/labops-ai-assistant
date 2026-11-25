@@ -26,6 +26,7 @@ it when the description matches.
 | Skill | What it does | Needs |
 |---|---|---|
 | `create-agent` | Roll out a new agent end to end: identity, Telegram bot, voice, autostart, smoke test. | this repo |
+| `switch-harness` | Switch the whole swarm between harnesses (claude ⇄ codex) in one command, keeping settings, memory and identity. | this repo |
 | `memory-consolidate` | Distil raw episodic memory into durable insights on a reflection nudge. | the agent memory layout |
 | `second_brain-doctor` | Diagnose the agent's second_brain setup end to end; output is redacted. | second_brain |
 | `local-voice` | Transcribe voice/audio files (`.ogg`) with the local voice-transcriber service (faster-whisper); audio never leaves the host. | `VOICE_TRANSCRIBER_TOKEN` |

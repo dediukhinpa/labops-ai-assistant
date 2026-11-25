@@ -95,21 +95,29 @@ harness_swarm_has_agents() {
 #     есть — отказ: рой целиком на одном харнесе, перевод — отдельная процедура;
 #   - иначе пишет swarm.env (права 600, остальные строки файла сохраняются).
 harness_set_swarm() {
-  local want="$1" have file tmp
+  local want="$1" have
   if ! harness_is_known "$want"; then
     echo "harness: неизвестный харнес '$want' (ожидается: $HARNESS_KNOWN)" >&2
     return 1
   fi
   have="$(harness_current)" || return 1
-  file="$(harness_swarm_env)"
   if [ "$have" = "$want" ] && [ -n "$(harness_read_swarm)" ]; then
     return 0
   fi
   if [ "$have" != "$want" ] && harness_swarm_has_agents; then
     echo "harness: рой уже работает на $have, а выбран $want. Все агенты роя на одном харнесе;" >&2
-    echo "harness: смена харнеса у существующего роя установщиком не делается." >&2
+    echo "harness: смена харнеса у существующего роя установщиком не делается" \
+         "(перевод — отдельная процедура: switch-harness.sh)." >&2
     return 1
   fi
+  harness_write_swarm "$want"
+}
+
+# harness_write_swarm <харнес> — атомарная запись строки HARNESS= в swarm.env (права 600,
+# прочие строки файла сохраняются). Без проверок: их делают вызывающие (set/switch).
+harness_write_swarm() {
+  local want="$1" file tmp
+  file="$(harness_swarm_env)"
   mkdir -p "$(dirname "$file")"
   tmp="$(mktemp "${file}.XXXXXX")"
   if [ -f "$file" ]; then
@@ -119,6 +127,20 @@ harness_set_swarm() {
   chmod 600 "$tmp"
   mv -f "$tmp" "$file"
   echo "harness: харнес роя — $want ($file)"
+}
+
+# harness_switch_swarm <харнес> — ПЕРЕВОД существующего роя на другой харнес: та самая
+# «отдельная процедура», поэтому guard harness_set_swarm (отказ при наличии агентов) здесь НЕ
+# применяется. Эта функция только переставляет выбор роя в swarm.env; доустановку рантайма,
+# конвертацию воркспейсов каждого агента, вход в целевую подписку и перезапуск юнитов делает
+# switch-harness.sh. Вызывать только из него, после бэкапа и остановки агентов.
+harness_switch_swarm() {
+  local want="$1"
+  if ! harness_is_known "$want"; then
+    echo "harness: неизвестный харнес '$want' (ожидается: $HARNESS_KNOWN)" >&2
+    return 1
+  fi
+  harness_write_swarm "$want"
 }
 
 # harness_default_model <харнес> — модель по умолчанию для новых агентов.

@@ -204,5 +204,44 @@ else
 fi
 rm -f "$CLAUDE_LAB/agents.conf"
 
+# ── 5. SIGHUP → watchdog переподнимает СЕБЯ (exec), перечитывает swarm.env, без рестарта юнита.
+#       Так switch-harness.sh переводит агента на новый харнес без sudo на `systemctl restart`:
+#       exec сохраняет PID (systemd доволен), а старт watchdog снимает маркер остановки и уходит
+#       в цикл нового харнеса. Снятие маркера делает ТОЛЬКО старт watchdog — не рабочий цикл,
+#       поэтому снятый после HUP маркер = доказанный re-exec.
+rm -f "$WS/state/stopping" "$TMP/session-alive" "$TMP/slow" "$TMP/slow.pid" "$TMP/sleep.pid"
+: > "$TMP/starts.log"
+printf 'HARNESS=claude\n' > "$CLAUDE_LAB/shared/swarm.env"
+: > "$TMP/watchdog.log"
+run_watchdog
+HUP_PID="$WD_PID"
+if wait_for 5 starts_at_least 1; then
+  ok "HUP: watchdog поднялся (claude)"
+else
+  bad "HUP: watchdog не стартовал"
+fi
+# Сменили харнес в swarm.env и поставили маркер остановки; HUP должен переподнять watchdog.
+printf 'HARNESS=codex\n' > "$CLAUDE_LAB/shared/swarm.env"
+date +%s > "$WS/state/stopping"
+sleep 0.3
+kill -HUP "$HUP_PID" 2>/dev/null || true
+marker_gone() { [ ! -f "$WS/state/stopping" ]; }
+if wait_for 5 marker_gone; then
+  ok "HUP: маркер снят при старте — watchdog сделал re-exec"
+else
+  bad "HUP: маркер остановки не снят — re-exec не произошёл"
+fi
+if kill -0 "$HUP_PID" 2>/dev/null; then
+  ok "HUP: тот же PID жив (exec, а не рестарт юнита)"
+else
+  bad "HUP: watchdog умер вместо re-exec"
+fi
+if grep -q 'SIGHUP' "$TMP/watchdog.log"; then
+  ok "HUP: приём SIGHUP залогирован"
+else
+  bad "HUP: нет записи о SIGHUP в логе"
+fi
+stop_watchdog
+
 echo "watchdog-stop.test.sh: $pass ok, $fail fail"
 [ "$fail" -eq 0 ]

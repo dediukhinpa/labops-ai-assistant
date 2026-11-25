@@ -39,7 +39,7 @@ import type { TelegramApi } from '../channel/tools.js'
 import { inboundSinkActive, sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 
-export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'doctor'
+export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'doctor' | 'harness'
 
 const KNOWN_COMMANDS = new Set<OobCommandName>([
   'help',
@@ -47,6 +47,7 @@ const KNOWN_COMMANDS = new Set<OobCommandName>([
   'stop',
   'reset',
   'doctor',
+  'harness',
 ])
 
 export interface ParsedOobCommand {
@@ -160,8 +161,32 @@ function helpText(): string {
     + '<code>/status</code> — снимок плагина и сессии\n'
     + '<code>/doctor</code> — проверить агента и починить, если сломан\n'
     + '<code>/stop</code> — остановить текущую задачу агента\n'
-    + '<code>/reset</code> — начать сессию с чистого контекста, память сохраняется\n\n'
+    + '<code>/reset</code> — начать сессию с чистого контекста, память сохраняется\n'
+    + '<code>/harness</code> — текущий рантайм роя и как переключить (claude⇄codex)\n\n'
     + stopNote
+  )
+}
+
+// Текущий харнес роя и как его сменить. Отчёт, а не исполнение: переключение
+// останавливает и перезапускает ВЕСЬ рой (включая сессию, где живёт этот плагин)
+// и может требовать интерактивного входа в подписку — запускать его из бота
+// нельзя, он убил бы собственную сессию. Текущий харнес читаем из того же
+// признака, что и /help//stop (активный приёмник драйвера ⇒ codex).
+function harnessText(): string {
+  const codex = codexHarness()
+  const current = codex ? 'codex' : 'claude'
+  const target = codex ? 'claude' : 'codex'
+  const curSub = codex ? 'ChatGPT/gpt' : 'Claude/sonnet'
+  const tgtSub = codex ? 'Claude/sonnet' : 'ChatGPT/gpt'
+  return (
+    '<b>харнес роя</b>\n\n'
+    + `сейчас: <code>${current}</code> (подписка ${curSub})\n\n`
+    + `перевести весь рой на <code>${target}</code> (подписка ${tgtSub}) — одной командой, `
+    + 'у оператора в терминале этого сервера:\n'
+    + `<code>bash orchestration/switch-harness.sh ${target}</code>\n\n`
+    + '<i>настройки, память и идентичность сохраняются; история диалога — нет '
+    + '(свежая сессия, память через recall). Может потребоваться вход в подписку. '
+    + 'Отсюда не запускаю: переход останавливает и перезапускает агентов, включая этого.</i>'
   )
 }
 
@@ -177,6 +202,7 @@ export const BOT_COMMANDS: ReadonlyArray<BotCommandSpec> = [
   { command: 'doctor', description: 'проверить и починить агента' },
   { command: 'stop', description: 'остановить текущую задачу агента' },
   { command: 'reset', description: 'очистить контекст сессии' },
+  { command: 'harness', description: 'текущий рантайм роя и как переключить' },
 ]
 
 function statusText(ctx: OobContext): string {
@@ -359,6 +385,16 @@ export async function handleOobCommand(
           text: '🔄 Сброшу сессию, как только агент закончит текущий ответ, и напишу.',
         },
         replyOnWriteFailure: { text: 'Не смог передать сброс — надзор недоступен.' },
+      }
+    }
+
+    case 'harness': {
+      ctx.log.info('oob /harness', { chat_id: ctx.chatId })
+      // Чистый отчёт: не будим модель и ничего не исполняем (см. harnessText).
+      return {
+        handled: true,
+        command: 'harness',
+        replyToTelegram: { text: harnessText(), parseMode: 'HTML' },
       }
     }
   }

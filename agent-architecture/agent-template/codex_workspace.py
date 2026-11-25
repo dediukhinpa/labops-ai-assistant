@@ -115,15 +115,45 @@ def adapt_text(text: str, agent_id: str) -> str:
     return text
 
 
-def swap_channel_section(identity: str, codex_section: str) -> str:
-    """Заменить раздел о канале на вариант Codex.
+def deadapt_text(text: str, agent_id: str) -> str:
+    """Обратные замены Codex→Claude: для перевода роя обратно на Claude Code.
+
+    Замены с пустым ``new`` необратимы (из пустой строки исходный текст не восстановить) и
+    пропускаются — это косметические пометки в общих доках памяти, не в идентичности, их
+    отсутствие claude-агента не ломает. Идут в обратном к adapt_text порядке, чтобы более
+    общие замены не съедали части более длинных.
 
     Args:
-        identity: Заполненный CLAUDE.md.
-        codex_section: Текст раздела для Codex (с заголовком).
+        text: Текст с заменами Codex.
+        agent_id: Id агента (для путей).
 
     Returns:
-        Текст идентичности для Codex.
+        Текст для Claude Code.
+    """
+    for rep in reversed(REPLACEMENTS):
+        if rep.new == "":
+            continue
+        old = rep.old.replace("{agent_id}", agent_id)
+        new = rep.new.replace("{agent_id}", agent_id)
+        text = text.replace(new, old)
+    return text
+
+
+def swap_channel_section(identity: str, section: str, span: int = 1) -> str:
+    """Заменить раздел о канале на другой вариант.
+
+    Раздел о канале начинается с ``CHANNEL_HEADING`` и охватывает ``span`` подряд идущих
+    ``## ``-секций. У Claude канал — одна секция (``span=1``, умолчание, прямой перевод); у
+    Codex — две (канал + «Web search and personal data», т.к. веб-поиск идёт мимо pii-proxy),
+    поэтому обратный перевод (Codex→Claude) снимает ``span=2`` секции и ставит claude-вариант.
+
+    Args:
+        identity: Текст идентичности (CLAUDE.md или AGENTS.src.md).
+        section: Текст вставляемого раздела (с заголовком).
+        span: Сколько подряд ``## ``-секций занимает заменяемый раздел.
+
+    Returns:
+        Текст идентичности с подменённым разделом.
 
     Raises:
         ValueError: В тексте нет раздела о канале (шаблон поменялся — молча собрать
@@ -132,10 +162,17 @@ def swap_channel_section(identity: str, codex_section: str) -> str:
     start = identity.find(CHANNEL_HEADING)
     if start < 0:
         raise ValueError(f"нет раздела «{CHANNEL_HEADING}» в шаблоне идентичности")
-    following = SECTION_HEADING.search(identity, start + len(CHANNEL_HEADING))
-    end = following.start() if following else len(identity)
-    section = codex_section.rstrip("\n") + "\n\n"
-    return identity[:start] + section + identity[end:]
+    end = len(identity)
+    search_from = start + len(CHANNEL_HEADING)
+    for _ in range(max(span, 1)):
+        following = SECTION_HEADING.search(identity, search_from)
+        if following is None:
+            end = len(identity)
+            break
+        end = following.start()
+        search_from = following.start() + 3
+    section_norm = section.rstrip("\n") + "\n\n"
+    return identity[:start] + section_norm + identity[end:]
 
 
 @dataclass(frozen=True)
@@ -322,24 +359,33 @@ def write_atomic(path: Path, text: str, mode: int = 0o644) -> None:
 
 
 def cmd_adapt(args: argparse.Namespace) -> int:
-    """Адаптировать файлы на месте."""
+    """Адаптировать файлы на месте (Codex; с --reverse — обратно под Claude Code)."""
+    transform = deadapt_text if getattr(args, "reverse", False) else adapt_text
     for name in args.files:
         path = Path(name)
         text = path.read_text(encoding="utf-8")
-        adapted = adapt_text(text, args.agent_id)
+        adapted = transform(text, args.agent_id)
         if adapted != text:
             write_atomic(path, adapted, path.stat().st_mode & 0o777)
-            logger.info("адаптирован для Codex: %s", path)
+            logger.info("адаптирован: %s", path)
     return 0
 
 
 def cmd_identity(args: argparse.Namespace) -> int:
-    """Собрать AGENTS.src.md из заполненного CLAUDE.md."""
+    """Собрать AGENTS.src.md из CLAUDE.md (с --reverse — CLAUDE.md из AGENTS.src.md).
+
+    Прямо: раздел о канале → вариант Codex, затем замены Codex. Обратно: раздел о канале →
+    вариант Claude (его подаёт вызывающий), затем обратные замены. Тело «души» в обе стороны
+    сохраняется — меняется только раздел о канале и обратимые упоминания путей.
+    """
     src = Path(args.claude_md).read_text(encoding="utf-8")
     section = Path(args.channel_section).read_text(encoding="utf-8")
-    text = adapt_text(swap_channel_section(src, section), args.agent_id)
+    swapped = swap_channel_section(src, section, getattr(args, "channel_span", 1))
+    text = (deadapt_text if getattr(args, "reverse", False) else adapt_text)(
+        swapped, args.agent_id
+    )
     write_atomic(Path(args.out), text)
-    logger.info("идентичность Codex: %s", args.out)
+    logger.info("идентичность: %s", args.out)
     return 0
 
 
@@ -377,12 +423,19 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("adapt", help="адаптировать заполненные файлы для Codex на месте")
     p.add_argument("--agent-id", required=True)
+    p.add_argument("--reverse", action="store_true", help="обратно под Claude Code (Codex→Claude)")
     p.add_argument("files", nargs="+")
     p.set_defaults(func=cmd_adapt)
-    p = sub.add_parser("identity", help="AGENTS.src.md из заполненного CLAUDE.md")
+    p = sub.add_parser("identity", help="AGENTS.src.md из CLAUDE.md (--reverse — наоборот)")
     p.add_argument("--agent-id", required=True)
-    p.add_argument("--channel-section", required=True)
-    p.add_argument("claude_md")
+    p.add_argument("--channel-section", required=True,
+                   help="раздел о канале: вариант Codex (прямо) или Claude (--reverse)")
+    p.add_argument("--reverse", action="store_true",
+                   help="CLAUDE.md из AGENTS.src.md (для перевода роя обратно на Claude)")
+    p.add_argument("--channel-span", type=int, default=1,
+                   help="сколько ## -секций занимает заменяемый раздел о канале "
+                        "(claude — 1; обратно с codex — число ## в codex/channel-section.md)")
+    p.add_argument("claude_md", help="CLAUDE.md (прямо) или AGENTS.src.md (--reverse)")
     p.add_argument("out")
     p.set_defaults(func=cmd_identity)
     p = sub.add_parser("agents-md", help="развернуть AGENTS.src.md в AGENTS.md")
