@@ -460,3 +460,48 @@ describe('oob texts per harness', () => {
     for (const c of BOT_COMMANDS) expect(c.description).not.toContain('Claude')
   })
 })
+
+// /harness — отчёт о текущем рантайме роя и как его сменить. Плагин НИЧЕГО не
+// исполняет и не будит модель: переключение останавливает/перезапускает весь рой
+// (включая эту сессию) и может требовать интерактивного входа — запускать его из
+// бота нельзя. Текущий харнес берётся из того же признака, что /help и /stop.
+describe('/harness', () => {
+  const codexOn = (): void => setInboundSink(async () => true)
+  const codexOff = (): void => setInboundSink(undefined)
+
+  test('parses /harness and /harness@botname', () => {
+    expect(parseOobCommand('/harness')!.name).toBe('harness')
+    expect(parseOobCommand('/harness@christopher_coderbot')!.name).toBe('harness')
+  })
+
+  test('claude (default): reports codex as the target one-command switch', async () => {
+    codexOff()
+    const result = await handleOobCommand(parseOobCommand('/harness')!, makeCtx())
+    expect(result.command).toBe('harness')
+    // Отчёт, не действие: модель не будим и заявку не кладём.
+    expect(result.notifyChannel).toBeUndefined()
+    expect(result.writeRequest).toBeUndefined()
+    const text = result.replyToTelegram!.text
+    expect(result.replyToTelegram!.parseMode).toBe('HTML')
+    expect(text).toContain('switch-harness.sh codex')
+    expect(text).toContain('<code>claude</code>')
+  })
+
+  test('codex: reports claude as the target one-command switch', async () => {
+    codexOn()
+    try {
+      const result = await handleOobCommand(parseOobCommand('/harness')!, makeCtx())
+      const text = result.replyToTelegram!.text
+      expect(text).toContain('switch-harness.sh claude')
+      expect(text).toContain('<code>codex</code>')
+    } finally {
+      codexOff()
+    }
+  })
+
+  test('is listed in /help and in the bot command menu', async () => {
+    const help = await handleOobCommand(parseOobCommand('/help')!, makeCtx())
+    expect(help.replyToTelegram!.text).toContain('/harness')
+    expect(BOT_COMMANDS.some((c) => c.command === 'harness')).toBe(true)
+  })
+})
