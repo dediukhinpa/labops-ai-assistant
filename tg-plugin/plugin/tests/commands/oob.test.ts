@@ -519,4 +519,33 @@ describe('/provider', () => {
     expect(help.replyToTelegram!.text).toContain('/provider')
     expect(BOT_COMMANDS.some((c) => c.command === 'provider')).toBe(true)
   })
+
+  // Абсолютный путь из LABOPS_SWITCH_HARNESS (его экспортит start-agent.sh) → команда
+  // самодостаточна, клиенту не нужно знать каталог и не нужен cd.
+  test('uses absolute LABOPS_SWITCH_HARNESS path when set', async () => {
+    codexOff()
+    const prev = process.env.LABOPS_SWITCH_HARNESS
+    process.env.LABOPS_SWITCH_HARNESS = '/opt/labops/ai-assistant/agent-architecture/orchestration/switch-harness.sh'
+    try {
+      const result = await handleOobCommand(parseOobCommand('/provider')!, makeCtx())
+      const text = result.replyToTelegram!.text
+      expect(text).toContain('bash /opt/labops/ai-assistant/agent-architecture/orchestration/switch-harness.sh codex')
+      expect(text).not.toContain('bash orchestration/switch-harness.sh')
+    } finally {
+      if (prev === undefined) delete process.env.LABOPS_SWITCH_HARNESS
+      else process.env.LABOPS_SWITCH_HARNESS = prev
+    }
+  })
+
+  test('falls back to relative path when LABOPS_SWITCH_HARNESS unset', async () => {
+    codexOff()
+    const prev = process.env.LABOPS_SWITCH_HARNESS
+    delete process.env.LABOPS_SWITCH_HARNESS
+    try {
+      const result = await handleOobCommand(parseOobCommand('/provider')!, makeCtx())
+      expect(result.replyToTelegram!.text).toContain('bash orchestration/switch-harness.sh codex')
+    } finally {
+      if (prev !== undefined) process.env.LABOPS_SWITCH_HARNESS = prev
+    }
+  })
 })

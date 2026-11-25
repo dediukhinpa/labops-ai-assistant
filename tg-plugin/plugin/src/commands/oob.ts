@@ -178,11 +178,16 @@ function providerText(): string {
   const currentName = codex ? 'GPT' : 'Claude'
   const targetName = codex ? 'Claude' : 'GPT'
   const targetArg = codex ? 'claude' : 'codex'    // аргумент скрипта остаётся техническим
+  // Абсолютный путь к switch-harness.sh (его экспортит start-agent.sh как LABOPS_SWITCH_HARNESS):
+  // команда получается самодостаточной — клиенту не нужно знать, где лежит agent-architecture, и
+  // не нужен cd. Фолбэк на относительный путь — только если переменная почему-то не задана.
+  const env = process.env.LABOPS_SWITCH_HARNESS
+  const script = env && env.length > 0 ? env : 'orchestration/switch-harness.sh'
   return (
     '<b>ИИ агентов</b>\n\n'
     + `сейчас: <code>${currentName}</code>\n\n`
     + `переключить на <code>${targetName}</code> — одной командой:\n`
-    + `<code>bash orchestration/switch-harness.sh ${targetArg}</code>\n\n`
+    + `<code>bash ${script} ${targetArg}</code>\n\n`
     + '<i>настройки и память агентов сохраняются; переписка начнётся заново. '
     + 'Отсюда не переключаю: смена перезапускает агентов, включая этого.</i>'
   )

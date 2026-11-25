@@ -6,6 +6,12 @@ set -euo pipefail
 # бинарник, и агент вообще не поднимается под systemd.
 export PATH="$HOME/.local/bin:$PATH"
 
+# Абсолютный путь к switch-harness.sh — плагин читает LABOPS_SWITCH_HARNESS и показывает в
+# /provider готовую команду переключения ИИ. Так клиенту не нужно знать, где лежит
+# agent-architecture (путь деплоя разный: /opt у клиента, ~/… в деве). Экспортируем ДО запуска
+# агента/плагина, чтобы переменная досталась процессу-плагину по наследству.
+export LABOPS_SWITCH_HARNESS="$(cd "$(dirname "$0")" && pwd)/switch-harness.sh"
+
 source "$(dirname "$0")/lib/agents.sh"
 # Единый запуск/надзор task-поллера (тот же код использует watchdog для supervise).
 source "$(dirname "$0")/lib/task-poller-launch.sh"
