@@ -25,6 +25,8 @@
 #                             # siblings ещё не установлены их собственными install.sh —
 #                             # агент стартует в деградированном режиме, см. README → Quickstart.
 #   ./install.sh --test-only  # только self-test
+#   ./install.sh --proxy-only # ТОЛЬКО поставить прокси для Donut Browser (Squid) и выйти:
+#                             # так прокси появляется до Claude, через него регистрируют аккаунт
 #   ./install.sh --no-agent   # подготовить + склонировать siblings, но авторизацию и
 #                             # агента не выполнять (для ручного/отложенного запуска:
 #                             #  claude --dangerously-skip-permissions && bash skills/create-agent/new-agent.sh)
@@ -41,6 +43,12 @@
 #                             # и браузера работать не будут
 #   SKIP_OCR=1                # не ставить Tesseract: фото и PDF не маскируются, а вырезаются
 #                             # из запросов к модели (по SKIP_PII_PROXY=1 тоже не ставится)
+#   (HTTP-прокси Squid для Donut Browser при ОБЫЧНОЙ установке НЕ ставится — рою серверный
+#                             # браузер-прокси не нужен. Поставить отдельно: install.sh --proxy-only.
+#                             # Переменные того режима: LABOPS_PROXY_ALLOW_FROM=<IP> — пускать
+#                             # только с этого адреса (иначе порт 3128 открыт наружу);
+#                             # LABOPS_PROXY_REPLACE_CONF=1 — заменить чужой конфиг squid нашим
+#                             # (старый сохраняется как *.labops-bak-*). Пароль случайный.)
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
 #   PREFLIGHT_DONE=1          # пропустить проверку доступности внешних хостов
 #   SKIP_SELFTEST=1           # не останавливать установку на self-test (осознанный обход
@@ -71,6 +79,9 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # voice_install: сервис расшифровки голоса ставится, пока у установки есть root.
 # shellcheck source=orchestration/lib/voice-install.sh
 . "$REPO_DIR/orchestration/lib/voice-install.sh"
+# proxy_install: Squid для Donut Browser — ставится ТОЛЬКО через `install.sh --proxy-only`.
+# shellcheck source=orchestration/lib/proxy-install.sh
+. "$REPO_DIR/orchestration/lib/proxy-install.sh"
 # ocr_install: Tesseract для media-masker, ставится, пока у установки есть root.
 # shellcheck source=orchestration/lib/ocr-install.sh
 . "$REPO_DIR/orchestration/lib/ocr-install.sh"
@@ -88,11 +99,12 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="full"
 [ "${1:-}" = "--test-only" ] && MODE="test"
 [ "${1:-}" = "--no-agent" ] && MODE="prep"
+[ "${1:-}" = "--proxy-only" ] && MODE="proxy"
 # Неизвестный аргумент — ошибка, а не молчаливая полная установка (так было бы и с опечаткой,
 # и с флагом удалённого режима).
 case "${1:-}" in
-  ""|--test-only|--no-agent) ;;
-  *) die "неизвестный аргумент: $1 (есть: --test-only, --no-agent;" \
+  ""|--test-only|--no-agent|--proxy-only) ;;
+  *) die "неизвестный аргумент: $1 (есть: --test-only, --no-agent, --proxy-only;" \
          "без аргумента — полная установка)" ;;
 esac
 
@@ -270,6 +282,15 @@ run_voice_step() {
     || warn "голос не настроен — текст работает; повторите установку, чтобы включить голос (пропустить: SKIP_VOICE=1)"
 }
 
+# run_proxy_step <пользователь> <его дом> — шаг «Прокси для Donut Browser».
+# При ОБЫЧНОЙ установке (full/prep) прокси НЕ ставится: рою серверный браузер-прокси не нужен,
+# он нужен только для Donut Browser на компьютере студента. Поставить его можно отдельной
+# командой `bash install.sh --proxy-only` (блок ниже). Поэтому в обычном потоке шаг пустой.
+run_proxy_step() {
+  export LABOPS_PROXY_DONE=1
+  return 0
+}
+
 # run_ocr_step — шаг «OCR для маскирования вложений». Шаг 5b (pii-setup.sh host) идёт уже
 # от пользователя агентов без apt, поэтому Tesseract ставим здесь, пока есть root, — иначе
 # media-masker не ставится и фото/PDF вырезаются из запросов (strip). Сбой не останавливает
@@ -280,7 +301,7 @@ run_ocr_step() {
     note "Tesseract пропущен (SKIP_OCR/SKIP_PII_PROXY) — фото и PDF не будут маскироваться"
     return 0
   fi
-  say "2d. OCR для маскирования вложений"
+  say "2e. OCR для маскирования вложений"
   echo "  Tesseract распознаёт текст на фото и в PDF, чтобы персональные данные на них"
   echo "  маскировались до отправки в модель. Без него вложения модели не передаются."
   ocr_install \
@@ -337,6 +358,21 @@ runtime_conf_source() {
     | tail -n 1 | sed 's/^SOURCE=//'
 }
 
+
+# ── --proxy-only ──────────────────────────────────────────────────
+# Прокси нужен ДО аккаунта Claude (через него аккаунт и регистрируют), поэтому его можно
+# поставить отдельно, не начиная остальную установку: ни preflight, ни агента, ни Claude Code.
+if [ "$MODE" = "proxy" ]; then
+  say "Прокси для Donut Browser"
+  echo "  Ставлю Squid: Donut Browser на вашем компьютере будет ходить в сеть через этот"
+  echo "  сервер. Доступ — по логину и случайному паролю; пароль в вывод не печатается."
+  # Здесь сбой прокси — сбой всей команды: другого дела у режима нет.
+  proxy_install "$(id -un)" "$HOME" || die "прокси не настроен — причина в сообщениях выше"
+  # Студент ставит прокси один раз из обычного окна терминала и сразу переносит значения в
+  # Donut Browser, поэтому показываем их тут, а не отправляем читать файл на сервере.
+  proxy_show_credentials "$HOME"
+  exit 0
+fi
 
 # ── 0. Доступность внешних хостов ─────────────────────────────────
 # Проверяем связь ПЕРВЫМ делом, до любых изменений на машине. Установка тянет
@@ -555,6 +591,7 @@ if [ "$(id -u)" -eq 0 ] && [ "$MODE" != "test" ] && [ "${SKIP_USER_SETUP:-0}" !=
         "${CLAUDE_LAB:-$NEW_HOME/.claude-lab}" || true
     fi
     run_voice_step "$AGENT_OS_USER" "$NEW_HOME"
+    run_proxy_step "$AGENT_OS_USER" "$NEW_HOME"
     run_ocr_step
     run_skill_tools_step "$AGENT_OS_USER" "$NEW_HOME"
     ok "продолжаю установку от имени $AGENT_OS_USER"
@@ -626,7 +663,14 @@ if [ "$MODE" != "test" ] && [ "${LABOPS_VOICE_DONE:-0}" != "1" ]; then
   fi
 fi
 
-# ── 2d. OCR для маскирования вложений ─────────────────────────────
+# ── 2d. Прокси для Donut Browser ──────────────────────────────────
+# Под root с отдельным пользователем шаг уже выполнен выше (LABOPS_PROXY_DONE пришёл с
+# окружением). Здесь — установка от root без отдельного пользователя и от обычного с sudo.
+if [ "$MODE" != "test" ] && [ "${LABOPS_PROXY_DONE:-0}" != "1" ]; then
+  run_proxy_step "$(id -un)" "$HOME"
+fi
+
+# ── 2e. OCR для маскирования вложений ─────────────────────────────
 # Под root с отдельным пользователем шаг уже выполнен выше (LABOPS_OCR_DONE пришёл с
 # окружением). Здесь — установка от root без отдельного пользователя и от обычного с sudo.
 if [ "$MODE" != "test" ] && [ "${LABOPS_OCR_DONE:-0}" != "1" ]; then

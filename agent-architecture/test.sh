@@ -935,6 +935,11 @@ unit "install.sh ставит сервис голоса и раздаёт ток
      "voice-install: юнит-тест провален (orchestration/lib/voice-install.test.sh)" \
      bash orchestration/lib/voice-install.test.sh
 
+# Прокси для Donut Browser (Squid): конфиг только с паролем, случайный пароль мимо argv и
+# вывода, повтор не меняет пароль, чужой конфиг сохраняется (lib/proxy-install.sh).
+unit "install.sh ставит Squid для Donut Browser, пароль не светится, повтор его не меняет — юнит-тест зелёный" \
+     "proxy-install: юнит-тест провален (orchestration/lib/proxy-install.test.sh)" \
+     bash orchestration/lib/proxy-install.test.sh
 # Tesseract для media-masker ставится, пока у install.sh есть root: шаг 5b идёт от пользователя
 # агентов без apt, и раньше фото/PDF молча вырезались из запросов (lib/ocr-install.sh).
 unit "install.sh ставит Tesseract (rus+eng), повтор apt не трогает — юнит-тест зелёный" \
@@ -967,15 +972,6 @@ if [ "$_unk_rc" -ne 0 ] && printf '%s' "$_unk_out" | grep -q 'неизвестн
   ok "install.sh отвергает неизвестный аргумент до начала установки"
 else
   bad "install.sh принял неизвестный аргумент (rc=$_unk_rc) — ушёл бы в полную установку"
-fi
-# Squid для Donut Browser удалён из установки: --proxy-only — такой же неизвестный аргумент,
-# а не молчаливая полная установка у тех, кто запустит его по старой инструкции курса.
-_px_rc=0
-_px_out="$(bash install.sh --proxy-only </dev/null 2>&1)" || _px_rc=$?
-if [ "$_px_rc" -ne 0 ] && printf '%s' "$_px_out" | grep -q 'неизвестный аргумент'; then
-  ok "install.sh отвергает удалённый режим --proxy-only"
-else
-  bad "install.sh принял --proxy-only (rc=$_px_rc) — режим Squid удалён"
 fi
 
 # Тест гоняет НАСТОЯЩИЙ install.sh, поэтому обязан быть глух к флагам в шелле
