@@ -302,7 +302,7 @@ proxy_install() {
   proxy_verify "$home" || return 1
   ip="$(sed -n 's/^Адрес:  //p' "$home/$PROXY_CREDENTIALS_NAME")"
   ok "прокси работает: $ip:$LABOPS_PROXY_PORT"
-  note "логин и пароль: cat $home/$PROXY_CREDENTIALS_NAME (пароль в этот вывод не печатается)"
+  note "логин и пароль сохранены в файле: cat $home/$PROXY_CREDENTIALS_NAME"
   note "порт принимает логин и пароль по HTTP без шифрования; чтобы пускать только с вашего"
   note "домашнего IP: LABOPS_PROXY_ALLOW_FROM=<ваш IP> и повторить установку прокси"
 }
