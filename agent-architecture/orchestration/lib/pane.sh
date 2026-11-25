@@ -199,8 +199,13 @@ has_auth_error() { printf '%s' "${1:-}" | grep -qaE "$AUTH_ERR_RE"; }
 # pane_input <pane-text> — the input box contents with ALL whitespace stripped.
 # Empty ⇒ clean idle prompt. Mirrors watchdog's emptiness test (❯ renders with a
 # trailing U+00A0, not an ASCII space).
+#
+# Строки с ❯ может не быть вовсе: экран «Usage limit reached» рисует плашку лимита и
+# очередь сообщений вместо поля ввода. grep тогда выходит с 1, и под `set -euo
+# pipefail` вызывающего (watchdog) это убивало демон: 25.11.2026 сторож marketer
+# падал каждую минуту, пока агент ждал сброса лимита. Нет поля — значит, пустой ввод.
 pane_input() {
-  printf '%s' "${1:-}" | grep -a '❯' | tail -1 \
+  { printf '%s' "${1:-}" | grep -a '❯' || true; } | tail -1 \
     | sed -e 's/.*❯//' -e 's/\xc2\xa0//g' -e 's/[[:space:]]//g'
 }
 
@@ -209,7 +214,8 @@ pane_input() {
 # line is recoverable from the pane, so a wrapped multi-line inbound cannot be
 # faithfully reconstructed — callers must treat this as best-effort.
 pane_input_raw() {
-  printf '%s' "${1:-}" | grep -a '❯' | tail -1 \
+  # `|| true` — по той же причине, что в pane_input: строки с ❯ может не быть.
+  { printf '%s' "${1:-}" | grep -a '❯' || true; } | tail -1 \
     | sed -e 's/.*❯//' -e 's/\xc2\xa0//g' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 

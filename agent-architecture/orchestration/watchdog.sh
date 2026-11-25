@@ -785,7 +785,9 @@ while true; do
   # prompt → empty INPUT; only genuinely typed text survives. Without this every
   # idle agent looked "stuck" → Enter/Escape/restart on a ~90s cycle, the main
   # cause of agents going silent (found 2026-06-13).
-  INPUT=$(printf '%s' "$TAIL" | grep -a '❯' | tail -1 | sed -e 's/.*❯//' -e 's/\xc2\xa0//g' -e 's/[[:space:]]//g')
+  # Через pane_input (lib/pane.sh): там же защита от экрана без ❯ (плашка лимита),
+  # на котором голый конвейер под pipefail ронял весь демон.
+  INPUT=$(pane_input "$TAIL")
   # Placeholder hint text (e.g. `Try "fix lint errors"`) renders dim/styled in
   # the TUI, which is how a human tells it apart from real typed input — but
   # capture-pane here has no `-e`, so that styling is invisible and the plain

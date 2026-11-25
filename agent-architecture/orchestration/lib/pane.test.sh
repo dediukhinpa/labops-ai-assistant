@@ -836,6 +836,26 @@ else
   bad "момент auth-рестарта не запоминается"
 fi
 
+# ---- экран лимита без поля ввода (25.11.2026) --------------------------------
+# Плашка «Usage limit reached» заменяет строку ❯. Под `set -euo pipefail` (как в
+# watchdog) голый `grep '❯' | ...` выходил с 1 и убивал демон каждую минуту.
+LIMIT='  task_done, затем продолжай текущую работу. См. AGENT_ROUTER.md.
+────────────────────
+  ⚠ Usage limit reached · limit resets 1:20pm
+    Continuing automatically at 1:20pm · Esc to cancel
+  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+if out="$(set -euo pipefail; x="$(pane_input "$LIMIT")"; y="$(pane_input_raw "$LIMIT")"; printf '[%s][%s]' "$x" "$y")" \
+   && [ "$out" = "[][]" ]; then
+  ok "экран лимита без ❯: pane_input/pane_input_raw пустые и не падают под pipefail"
+else
+  bad "экран лимита без ❯ роняет pane_input под pipefail: [$out]"
+fi
+if grep -q "INPUT=\$(pane_input \"\$TAIL\")" "$HERE/../watchdog.sh"; then
+  ok "watchdog берёт ввод через pane_input"
+else
+  bad "watchdog снова читает ввод голым конвейером grep ❯"
+fi
+
 echo
 echo "passed=$pass failed=$fail"
 [ $fail -eq 0 ]
