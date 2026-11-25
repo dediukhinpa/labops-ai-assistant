@@ -52,6 +52,41 @@ class WordsTest(unittest.TestCase):
         self.assertEqual(paw.cyrillic_variants("silvio")[0], "сильвио")
 
 
+    def test_speech_vowel_reduction_variant(self) -> None:
+        # Расшифровка голоса пишет «Радригес»: модель не узнавала агента (24.11.2026)
+        self.assertIn("радригес", paw.swarm_words([("rodriguez", "")]))
+        self.assertLessEqual(len(paw.reduced_variants("родригес")), paw.MAX_REDUCED)
+
+
+class ProductsTest(unittest.TestCase):
+    def test_products_list_has_speech_spellings(self) -> None:
+        # «Клод», «Антропик» из голосовых прятались как ФИО («Диана says Claude», 24.11.2026)
+        words = paw.product_words()
+        for word in ("клод", "антропик", "гемини", "дипсик", "битрикс"):
+            self.assertIn(word, words)
+
+    def test_products_list_is_clean(self) -> None:
+        words = paw.product_words()
+        self.assertEqual(len(words), len(set(words)))
+        for word in words:
+            self.assertGreaterEqual(len(word), paw.MIN_WORD_LEN, word)
+            self.assertRegex(word, r"^[а-я-]+$", word)
+        # Имена людей сюда не попадают: их маскирование правильное
+        for person in ("маск", "альтман", "алиса", "маруся"):
+            self.assertNotIn(person, words)
+
+    def test_auto_words_join_agents_and_products(self) -> None:
+        words = paw.auto_words([("rodriguez", "")])
+        self.assertIn("родригес", words)
+        self.assertIn("клод", words)
+
+    def test_comments_and_short_lines_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "p.txt"
+            path.write_text("# коммент\nклод  # Claude\nзум\n\nГемини\n", encoding="utf-8")
+            self.assertEqual(paw.product_words(path), ["клод", "гемини"])
+
+
 class SyncTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
