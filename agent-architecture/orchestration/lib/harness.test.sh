@@ -117,5 +117,22 @@ check "root: одинаковый харнес у нескольких — он 
   eq "$(harness_read_swarm_agent_users)" "codex"
 unset HARNESS_PASSWD_FILE
 
+# — Перевод роя: harness_switch_swarm в обход guard'а set_swarm —
+# set_swarm отказывается менять харнес, когда агенты уже есть; switch_swarm — переводит
+# (та самая «отдельная процедура»), сохраняя прочие строки файла.
+fresh_lab switch
+mkdir -p "$CLAUDE_LAB/shared" "$CLAUDE_LAB/dev/.claude"
+printf 'FOO=1\nHARNESS=claude\n' > "$CLAUDE_LAB/shared/swarm.env"
+harness_set_swarm codex >/dev/null 2>&1; rc=$?
+check "set_swarm отказывает при наличии агентов" eq "$rc" "1"
+check "set_swarm оставил рой на claude" eq "$(harness_current)" "claude"
+harness_switch_swarm codex >/dev/null 2>&1
+check "switch_swarm перевёл рой на codex" eq "$(harness_current)" "codex"
+check "switch_swarm сохранил прочие строки (FOO)" \
+  eq "$(sed -n 's/^FOO=//p' "$CLAUDE_LAB/shared/swarm.env")" "1"
+harness_switch_swarm gemini >/dev/null 2>&1; rc=$?
+check "switch_swarm отвергает неизвестный харнес" eq "$rc" "1"
+check "switch_swarm после отказа не сломал значение" eq "$(harness_current)" "codex"
+
 echo "harness.test.sh: $PASS ok, $FAIL fail"
 [ "$FAIL" -eq 0 ]
