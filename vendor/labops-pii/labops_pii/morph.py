@@ -89,6 +89,11 @@ def _parse(lowered: str) -> tuple[Parse, ...]:
     return parses
 
 
+
+def parse_word(word: str) -> tuple[Parse, ...]:
+    """Разборы pymorphy слова в любом регистре и с «ё» (из памяти запроса, как `_parse`)."""
+    return _parse(word.lower().replace("ё", "е"))
+
 @lru_cache(maxsize=LEMMA_CACHE_SIZE)
 def lemma(word: str) -> str:
     """Возвращает лемму слова, предпочитая разбор «фамилия/имя/отчество».
@@ -152,6 +157,9 @@ PATRONYM_FEMALE_ENDINGS = ("овна", "евна", "ична", "инична", "
 # Окончания женской формы фамилии на -ов/-ев/-ин/-ын: «Ивановой». «Иванову» сюда не входит
 # (мужской дательный или женский винительный): без уверенности рода нет.
 SURNAME_FEMALE_SUFFIXES = frozenset({"ой"})
+# Окончание без рода: «Иванову» - и «к Иванову (Ивану)», и «на Иванову (Анну)». Раньше считалось
+# мужским, и женщина в винительном падеже получала токен мужчины с тем же ключом (ревью 25.11)
+SURNAME_GENDERLESS_SUFFIX = "у"
 # «Иванова» — женский именительный или мужской родительный/винительный (R9-A4-07). Без
 # других признаков форма по-прежнему считается женской (R3-ALG-14: «Иванова И.И.» не
 # сливается с «Ивановым И.И.»), но её снимают признаки мужского косвенного падежа:
@@ -208,6 +216,8 @@ def _surname_vote(word: str) -> str | None:
     suffix = lowered[len(stem):]
     if not adjectival and suffix == SURNAME_AMBIGUOUS_SUFFIX:
         return _SURNAME_FEMALE_OR_MALE_OBLIQUE
+    if not adjectival and suffix == SURNAME_GENDERLESS_SUFFIX:
+        return None  # «Иванову»: мужской дательный или женский винительный - рода нет
     female = ADJ_SURNAME_FEMALE_SUFFIXES if adjectival else SURNAME_FEMALE_SUFFIXES
     return GENDER_FEMALE if suffix in female else GENDER_MALE
 
@@ -318,6 +328,39 @@ def with_preposition_gender(key: str, text: str) -> str:
     return " ".join(words)
 
 
+def with_female_subject(key: str) -> str:
+    """Помечает ключ ФИО без рода женским: ФИО - подлежащее при глаголе женского рода.
+
+    «Петрова Александра подписала договор»: форма «Петрова Александра» сама по себе - и
+    женский именительный, и мужской родительный (R9-A4-07), поэтому рода в ключе нет, и она
+    сопоставлялась с «Петров Александр» того же треда. Глагол женского рода после ФИО в
+    начале фразы снимает неоднозначность. Ключ с родом не меняется.
+
+    Args:
+        key: Ключ, построенный `person_key`.
+
+    Returns:
+        Ключ с пометкой женского рода (или тот же ключ, если род уже есть).
+    """
+    words, gender = split_key(key)
+    if gender is not None:
+        return key
+    return " ".join([*words, f"{GENDER_PREFIX}{GENDER_FEMALE}"])
+
+
+# Частей имени у одного человека: фамилия, имя, отчество (или их инициалы) и слово-роль,
+# которое NER нередко берёт в находку («Бухгалтер Павлова Елена Сергеевна»). Больше - склейка
+# людей; две пары «имя фамилия» подряд делит на людей уже детектор (_drop_multi_person_spans)
+MAX_PERSON_NAME_PARTS = 4
+# Частицы в составе ФИО, которые частью имени не считаются: «Мамед оглы», «фон Берг»
+NAME_PARTICLES = frozenset({"оглы", "огл", "кызы", "кзы", "ибн", "бен", "фон", "де", "ван", "дер"})
+
+
+def _name_parts(words: list[str]) -> int:
+    """Сколько частей имени в словах ключа (частицы не считаются)."""
+    return sum(1 for w in words if w not in NAME_PARTICLES)
+
+
 def keys_compatible(first: str, second: str) -> bool:
     """Решает, относятся ли два ключа ФИО к одному человеку.
 
@@ -329,6 +372,13 @@ def keys_compatible(first: str, second: str) -> bool:
     words_a, gender_a = split_key(first)
     words_b, gender_b = split_key(second)
     if gender_a and gender_b and gender_a != gender_b:
+        return False
+    # Больше четырёх частей имени - не один человек, а склейка («Петров А.Б. Сидоров В.Г.»).
+    # Нечёткое сопоставление с ней отдавало бы токен склейки каждому её участнику, и restore
+    # возвращал обоих; точное совпадение ключа (повтор того же написания) работает как раньше.
+    if _name_parts(words_a) > MAX_PERSON_NAME_PARTS or _name_parts(words_b) > (
+        MAX_PERSON_NAME_PARTS
+    ):
         return False
     full_a = {w for w in words_a if len(w) > 1}
     full_b = {w for w in words_b if len(w) > 1}
@@ -384,6 +434,86 @@ def is_inanimate_common_noun(word: str) -> bool:
     return not any(
         g in p.tag for p in parses for g in (*NAME_GRAMMEMES, "anim")
     )
+
+
+TYPO_MIN_LEN = 5  # короче - слишком много словарных соседей, правило ловило бы фамилии
+# Пары букв, которые распознавание речи путает на слух: звонкие/глухие, безударные гласные.
+# Опечатка расшифровки почти всегда такая («Садачу» ← «задачу»), а случайная фамилия
+# в одну такую замену от словарного слова - редкость: правило не раскрывает фамилии.
+SOUND_ALIKE_PAIRS = (
+    "зс", "дт", "бп", "вф", "гк", "жш", "ао", "еи", "иы", "эе", "ея", "юу", "цс", "щш", "чщ",
+)
+SOUND_ALIKE: dict[str, str] = {}
+for _pair in SOUND_ALIKE_PAIRS:
+    SOUND_ALIKE[_pair[0]] = SOUND_ALIKE.get(_pair[0], "") + _pair[1]
+    SOUND_ALIKE[_pair[1]] = SOUND_ALIKE.get(_pair[1], "") + _pair[0]
+# Окончания фамилий во всех падежах: «Крутоголов», «Свежинина», «Белоусову». У таких слов
+# почти всегда найдётся словарный сосед в одну букву, и правило опечатки раскрывало бы фамилию.
+SURNAME_SHAPE_RE = re.compile(
+    r"(?:ов|ев|ёв|ин|ын|ск|цк|ых|их)(?:а|у|ой|ым|ыми|ом|е|ы|ых|им|ими|ого|ому|ая|ую|ий|ый)?$"
+)
+
+
+def typo_noun_parses(word: str) -> list[Parse]:
+    """Разборы словарного существительного, опечаткой которого похоже слово вне словаря.
+
+    Распознавание голосовых пишет «Садачу» вместо «задачу» (25.11.2026): слова нет в словаре,
+    оно с заглавной, и NER принимал его за фамилию. Модель видела токен вместо слова, не могла
+    заметить ошибку и вставила «Садачу» в слайд. Опечатка расшифровки - замена первой буквы на
+    созвучную (SOUND_ALIKE). Словарные слова и слова с окончанием фамилии сюда не попадают.
+    Одного этого признака мало: «Кадар», «Танака» тоже в одну созвучную замену от словарных
+    слов. Поэтому детектор дополнительно требует согласованное определение перед словом.
+
+    Args:
+        word: Слово из находки ФИО.
+
+    Returns:
+        Разборы неодушевлённых существительных-кандидатов; пусто, если слово не опечатка.
+    """
+    lowered = word.lower().replace("ё", "е")
+    if len(lowered) < TYPO_MIN_LEN or not lowered.isalpha() or SURNAME_SHAPE_RE.search(lowered):
+        return []
+    if any(p.is_known for p in _parse(lowered)):
+        return []
+    found: list[Parse] = []
+    # Только первая буква: на стыке слов распознавание чаще всего путает начало («вашу Садачу»
+    # ← «вашу задачу»), а замена в середине давала соседей фамилиям («Кадар» ← «катар»).
+    for letter in SOUND_ALIKE.get(lowered[0], ""):
+        found += [
+            parse
+            for parse in _parse(letter + lowered[1:])
+            if parse.is_known
+            and parse.tag.POS == "NOUN"
+            and "anim" not in parse.tag
+            and not any(g in parse.tag for g in NAME_GRAMMEMES)
+        ]
+    return found
+
+
+MODIFIER_POS = frozenset({"ADJF", "PRTF"})  # «вашу», «эту», «новую», «сделанную»
+
+
+def agrees_as_modifier(modifier: str, nouns: list[Parse]) -> bool:
+    """Слово - определение (прилагательное, местоимение, причастие), согласованное с одним из
+    разборов существительного по падежу, числу и (в единственном числе) роду.
+
+    Args:
+        modifier: Слово перед существительным.
+        nouns: Разборы существительного.
+
+    Returns:
+        True, если есть согласованная пара разборов.
+    """
+    lowered = modifier.lower().replace("ё", "е")
+    for mod in _parse(lowered):
+        if mod.tag.POS not in MODIFIER_POS:
+            continue
+        for noun in nouns:
+            if mod.tag.case != noun.tag.case or mod.tag.number != noun.tag.number:
+                continue
+            if noun.tag.number == "plur" or mod.tag.gender == noun.tag.gender:
+                return True
+    return False
 
 
 def is_surname_candidate(word: str) -> bool:

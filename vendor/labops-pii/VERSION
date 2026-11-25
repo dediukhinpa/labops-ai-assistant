@@ -1,24 +1,25 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: v1.2.2
-tag: v1.2.2
-commit: be6c6220e15d291d8d34ef70a9d106fbbd238952
+ref: v1.3.0
+tag: v1.3.0
+commit: a4081b048608b6f23d9f7f19df555d94188ccfb9
 parts: media,service,ts
-vendored_at: 2026-11-25T14:45:03Z
+vendored_at: 2026-11-25T20:51:44Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
-  7a2e1595d5ff7ab21a3925c04dc61e4bfa8bfae1d4173fcc608221493d401bb9  labops_pii/__init__.py
+  7746864c3ce24c3ec412a7847a895546e6de72dfedd1c533aef276be7637e427  labops_pii/__init__.py
   356ad6a8aee34e5cbcb7e75d1ff954d7391fe8a511484ad71877fde0389a514b  labops_pii/__main__.py
   a6ccef9fc2ca1aa75117541f832702dd9c3d4ebecf2186d0fdef5fd03c8e8e08  labops_pii/allowlist.py
   0e6744aa521f8d2a65e748dabe80c7919da988b481c4eb5c781bac817bd36a27  labops_pii/api.py
   fc9b9cef86099a9999a9423daa03306ee694bd4f2aea090e300f27d0b9ed5189  labops_pii/body_guard.py
   027288d8b935ffce3096ede3689c69ee88c7370f78073286561ed54b8bc08763  labops_pii/checksums.py
   a964090bf6ed0b80fd4633c8c6c9018d9325f3411226b6583af7601b755264f9  labops_pii/config.py
-  28c5cc7a4839640059a622d6c1e45027d19a0412f4028a3c368d0cf9aeefb927  labops_pii/detector.py
+  3989ec57758870d56dfa1e9a074e36263ca44fb9190c9e69f5ef62f07a1ca228  labops_pii/detector.py
   5f29384a9c7dade20f12992cf9a4cedde0d0e7dd704bd7aac64ebe20f261d9dc  labops_pii/errors.py
   d67189690e9f239b1e93c76ff43943a08d85b278f3f78a7881df249ff872058d  labops_pii/inflect.py
   25a6d3fa10ef26a0804971f13e92793d9cd0ad83604bfeb31d8014a242b4f0b7  labops_pii/jsonlog.py
+  5a1b25f126bf9f3829d0cc2b0ef2d07f79e470594d8ef06d7b86d112afbefb69  labops_pii/latin_names.py
   d10ed85e67bbabf1b461b5fa7dc214ce7478bdae3cc43ac0b677a92ee47c0fe4  labops_pii/media/__init__.py
   34716bdc85a68dc17c4c3544c1a454f3cf250a039756a2c3bd5f0b61d4c26d43  labops_pii/media/gate/__init__.py
   0616211af2dc86738032e4f170a61cd6360496213ef84cbd9a780d9c34e2d904  labops_pii/media/gate/api.py
@@ -35,28 +36,32 @@ files:
   0a18998366bbb2caca3bf17fb394074c79e841775a472d0b5656087dc3cf356c  labops_pii/media/mask/ocr.py
   bc6c73cf6fc88ea6135beade2d286225db62e573a3c94a7d550f502a0d287ce1  labops_pii/media/mask/pdfdoc.py
   c6eab763d5cbf8291f8fe791f8b386ce142035b85c0c2c671d5cd4569117c9a9  labops_pii/media/mask/unreadable.py
-  e2d7f9527316e32059067708f0d8c926b989ba8954aa90587bbf327ef372c46c  labops_pii/morph.py
-  228b3cc0964ac1472490a49c865e276d2980a6d00bdea5c29b0f5506695e5693  labops_pii/name_hints.py
-  bbd65b1a007d71656e81fca9f08592b94fdc8453c0ee997f591726f1b0f2c5c3  labops_pii/pii_patterns.py
+  a9bc19df5af8c09dd0cf16df45955611dd220e0b59a730d994852f09ea613f51  labops_pii/morph.py
+  8310e2d4f00923d92feab6b058e4ba57671d4f5cba8bd32887ab61db8af0065c  labops_pii/name_hints.py
+  fda82d1a1be4a98a170fc4361956ce48f5e169d94cf2e7e6a9d92f3c437a2262  labops_pii/patronymic.py
+  102636ed99f4d7f170b3611a9097bbd5235476463487eef1ebca4f3d5b61f83a  labops_pii/pii_patterns.py
   b0f193133e70224e94c8524c4991197114f29fa4b1c8f770d1644824b7ebbb34  labops_pii/rekey.py
-  787e37c9c5213f2fa1a547c8148886466d692e58e01fea5bc31c65b282139018  labops_pii/service.py
-  e33ca3939a1cf68e4f23828f52177916420ab0c7250271cc30a95fe6cb713d72  labops_pii/store.py
+  3ffda7298321623d7c198fe850e4c2ebd2ef27bd2fb0956aef8a643621693426  labops_pii/service.py
+  a704e20715660579d2e3690356eb97197ced746feeaf22a9a1ebf268c7edb11a  labops_pii/store.py
   06256424fe301305c468d43f2e56dbc9fbf99aed9d6dc06e4d521201d6437b14  labops_pii/tech_tokens.py
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  ts/LICENSE
   a99699e44cc5dc561973aca532fb059c3345cb0c4a6c3eed9ed2a845000e97a3  ts/bun.lock
-  f5e204591d6d22812e2a28dc54767706bc41987e8fe9d3084a888f9f1bf9da10  ts/package.json
+  397eecbf53320c3152da078aa333fac9ff44b467249e950f9fadde7d46375366  ts/package.json
   1764223fd09722d0bb2007eeacad777695d3cecfe7ba5e07ab95eb35fec6a16b  ts/src/constants.ts
   0528858775883fd26b3fe462046d928fedde8273fc2df9dd96acaeb4e89b0b9c  ts/src/detector/address-patterns.ts
   f53c2a4725568adf851c514501d44a753a4833eb78372d0124f9bdcfdf532b08  ts/src/detector/addresses.ts
   e9775efc3b4617653f59a0cbe1823b84bc4da96d13b3011586ff6974dd30e71f  ts/src/detector/allowlist.ts
+  776499ea9e80e084a49a29510d5e735891c6831284b1086f91dc21866b9561d6  ts/src/detector/dictionary/latin-names-data.ts
   02f22fd4b5213a19e39bd62657b0181de0017dfcb6d6b0bcf0cf2b38db1f4a59  ts/src/detector/dictionary/name-dictionary-data.ts
   6e732602bdf988d850a791f20ea71d8c58017a7007e4b821f9e852ba1eef928e  ts/src/detector/index.ts
+  6a8bc972d93d82cbe46b8dbe395634aaa332908c54971edb8f5e85d7c1c3e1bf  ts/src/detector/latin-names.ts
   870dc9cfca077841a9421d5475818203c8a6044e01344aea7b5eb1a1684c16e6  ts/src/detector/name-dictionary.ts
   593859312ea4cdfd2d8665653a27d395d70864bc94533211e510b2d70c545140  ts/src/detector/normalize.ts
-  d6d9234e1f20ed6ad8225a4820ad8a0554241977f2e2ce7eac1b65c64b174463  ts/src/detector/person-words.ts
-  f6704b03d7269ebd145ef31d2c00820f394c3e98f73a1cd432eb13f98b418783  ts/src/detector/persons.ts
+  5be8985a9df84b717353a7ce483d46b65dbf27da88e595c99e72b6203ba497f7  ts/src/detector/person-words.ts
+  20a30baf5d8ae9a630a81dae541ab2ccdceb2fdd01df8078dfe9e2304c846817  ts/src/detector/persons.ts
   3aef85af4029a557caecebe87ab2a78d4ac1d7d57543f14aa6cb15d2d52fe7a3  ts/src/detector/regex-utils.ts
-  15d074384b8a6614111aab7cc28779d3db581d07823ecc49b2e21a7dadd06a1e  ts/src/detector/types.ts
+  497efe829411ea0b480dc589d1dafc9249ddcd452f26aca767e98a696f48122c  ts/src/detector/surname-context.ts
+  626a41b1e02bf3987ef7d492929dac244263cca98fbfa94c2103c3fd4b816117  ts/src/detector/types.ts
   12066e95c67935ce29f6d19590d0f91db7061496310a1f5ccfd3b27350d85a40  ts/src/errors.ts
   534fafa377bfe1043ab580e74df170a3fe98e73e280b44d2a52f047857934245  ts/src/image-policy.ts
   dbc983eb66dfc84676cfe13978a30f51f9719a6d1ffd51080bd03d68c6498747  ts/src/index.ts
