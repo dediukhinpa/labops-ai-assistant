@@ -23,16 +23,19 @@ skel_lab() {
   printf 'HARNESS=%s\n' "${2:-claude}" > "$lab/shared/swarm.env"
   printf '%s' "$lab"
 }
+# Уникальное имя тест-агента: НЕ "developer" — иначе реальный путь (pgrep watchdog.sh <agent>)
+# мог бы послать SIGHUP живому watchdog агента developer на хосте, где идёт тест.
+AG="swhprobe"
 # Лаборатория с ОДНИМ реально установленным claude-агентом (для прогонов перехода).
 real_lab() {
   local lab="$TMP/real-$1" home="$TMP/home-$1"
   mkdir -p "$lab/shared" "$home"
   printf 'HARNESS=claude\n' > "$lab/shared/swarm.env"
   env -i PATH="$PATH" HOME="$home" CLAUDE_LAB="$lab" NONINTERACTIVE=1 ENABLE_ALL=n CONFIRM=y \
-    AGENT_NAME=developer LANGUAGE=Russian COMMIT_LANGUAGE=English GITHUB_USERNAME=op \
+    AGENT_NAME="$AG" LANGUAGE=Russian COMMIT_LANGUAGE=English GITHUB_USERNAME=op \
     MCP_HOST=127.0.0.1 AGENT_BEARER=bearer-x AGENT_SCOPES=decisions \
     bash "$ROOT/agent-template/install.sh" >/dev/null 2>&1
-  echo 'ФАКТ-ПАМЯТИ-SW-4242' >> "$lab/developer/.claude/core/USER.md"
+  echo 'ФАКТ-ПАМЯТИ-SW-4242' >> "$lab/$AG/.claude/core/USER.md"
   printf '%s %s' "$lab" "$home"
 }
 run() { CLAUDE_LAB="$1" bash "$SWITCH" "${@:2}" >/dev/null 2>&1; }
@@ -56,10 +59,10 @@ CLAUDE_LAB="$lab" HOME="$home" SKIP_LOGIN=1 SKIP_PII_PROXY=1 SKIP_RUNTIME_INSTAL
   SWITCH_UNITCTL=true bash "$SWITCH" codex >/dev/null 2>&1
 check "полный прогон claude→codex -> rc 0" eq "$?" "0"
 check "swarm.env переключён на codex" eq "$(harness_of "$lab")" "codex"
-check "codex config.toml отрендерен" eq "$([ -f "$lab/developer/.codex/config.toml" ] && echo y)" "y"
-check "идентичность codex посеяна" eq "$([ -f "$lab/developer/.claude/AGENTS.src.md" ] && echo y)" "y"
+check "codex config.toml отрендерен" eq "$([ -f "$lab/$AG/.codex/config.toml" ] && echo y)" "y"
+check "идентичность codex посеяна" eq "$([ -f "$lab/$AG/.claude/AGENTS.src.md" ] && echo y)" "y"
 check "память сохранена при переходе" \
-  eq "$(grep -c 'ФАКТ-ПАМЯТИ-SW-4242' "$lab/developer/.claude/core/USER.md")" "1"
+  eq "$(grep -c 'ФАКТ-ПАМЯТИ-SW-4242' "$lab/$AG/.claude/core/USER.md")" "1"
 check "бэкап создан" eq "$([ -d "$lab/shared/backups" ] && echo y)" "y"
 
 # 6. Пустая лаборатория — отказ.
@@ -72,9 +75,22 @@ CLAUDE_LAB="$lab" HOME="$home" SKIP_LOGIN=1 SKIP_PII_PROXY=1 SKIP_RUNTIME_INSTAL
   SWITCH_UNITCTL=false bash "$SWITCH" codex >/dev/null 2>&1
 check "сбой перезапуска -> rc 1" eq "$?" "1"
 check "откат вернул swarm.env к claude" eq "$(harness_of "$lab")" "claude"
-check "откат убрал codex-конфиг" eq "$([ -e "$lab/developer/.codex/config.toml" ] && echo y || echo n)" "n"
+check "откат убрал codex-конфиг" eq "$([ -e "$lab/$AG/.codex/config.toml" ] && echo y || echo n)" "n"
 check "память цела после отката" \
-  eq "$(grep -c 'ФАКТ-ПАМЯТИ-SW-4242' "$lab/developer/.claude/core/USER.md")" "1"
+  eq "$(grep -c 'ФАКТ-ПАМЯТИ-SW-4242' "$lab/$AG/.claude/core/USER.md")" "1"
+
+# 8. Реальный путь (БЕЗ мока SWITCH_UNITCTL): стоп через stop-agent.sh (без sudo), рестарт —
+#    SIGHUP watchdog. Watchdog'а в песочнице нет → agent_reexec_watchdog возвращает 1 → откат.
+#    Имя агента уникально (swhprobe), поэтому pgrep не заденет никакой живой watchdog.
+read -r lab home <<<"$(real_lab 8)"
+CLAUDE_LAB="$lab" HOME="$home" SKIP_LOGIN=1 SKIP_PII_PROXY=1 SKIP_RUNTIME_INSTALL=1 \
+  SWITCH_READY_WAIT=4 bash "$SWITCH" codex >/dev/null 2>&1
+check "реальный путь без watchdog -> rc 1 (откат)" eq "$?" "1"
+check "реальный путь: swarm.env возвращён к claude" eq "$(harness_of "$lab")" "claude"
+check "реальный путь: codex-конфиг убран откатом" \
+  eq "$([ -e "$lab/$AG/.codex/config.toml" ] && echo y || echo n)" "n"
+check "реальный путь: память цела" \
+  eq "$(grep -c 'ФАКТ-ПАМЯТИ-SW-4242' "$lab/$AG/.claude/core/USER.md")" "1"
 
 echo "switch-harness.test.sh: $PASS ok, $FAIL fail"
 [ "$FAIL" -eq 0 ]

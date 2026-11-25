@@ -48,8 +48,12 @@ bash orchestration/switch-harness.sh codex --dry-run # показать план
    Доки памяти (`core/AGENTS.md`, `USER.md`, `rules.md`, `TOOLS.md`) при переходе на claude
    правятся на месте (`harness_reverse_adapt_core` → `adapt --reverse`); в сторону codex их
    адаптирует сам установщик. Упоминания путей/подагентов, без потери содержимого.
-8. **Перезапуск** юнитов и проверка готовности (webhook-порт, auth-state, health). При сбое —
-   **автоматический откат** из бэкапа (воркспейсы + `swarm.env`).
+8. **Переподъём агентов на новый харнес** и проверка готовности (webhook-порт, auth-state,
+   health). Делается **без sudo** (у пользователя-агента его может не быть на `systemctl`):
+   стоп — `stop-agent.sh` (ставит `agent_stop_mark`, снимает сессию/драйвер/канал); «рестарт» —
+   `SIGHUP` работающему watchdog: тот делает `exec` самого себя (тот же PID — рестарт юнита не
+   нужен), перечитывает `swarm.env` и поднимает агента уже в новом рантайме (см. `on_hup` в
+   `watchdog.sh`). При сбое — **автоматический откат** из бэкапа (воркспейсы + `swarm.env`).
 
 ## Что сохраняется, что меняется
 
@@ -86,10 +90,14 @@ bash orchestration/switch-harness.sh codex --dry-run # показать план
       (`ensure_pii`: `pii-setup.sh host` + `agent <id>`). Knob'ы: `SKIP_RUNTIME_INSTALL`,
       `SKIP_LOGIN`, `SKIP_PII_PROXY`.
 - [x] Пауза/стоп → флип → конвертация → рестарт с **автоматическим откатом** из бэкапа при любом
-      сбое после точки невозврата (`stop_all`/`flip_swarm`/`convert_all`/`restart_all`/`rollback`,
-      `agent_unit_cmd` через systemctl; тест-хук `SWITCH_UNITCTL`). Полный мок-прогон перехода и
-      откат — под юнит-тестом (реально установленный агент, systemd/вход/pii замоканы).
-      **Живой end-to-end на HRV ещё не прогонялся** — это следующий шаг валидации.
+      сбое после точки невозврата (`stop_all`/`flip_swarm`/`convert_all`/`restart_all`/`rollback`).
+      Управление агентом — **без sudo**: стоп через `stop-agent.sh`, «рестарт» через `SIGHUP`
+      работающему watchdog (он делает `exec` себя, перечитывает харнес — `agent_ctl`/
+      `agent_reexec_watchdog`; `on_hup` в `watchdog.sh`); тест-хук `SWITCH_UNITCTL` подменяет оба
+      шага. Под юнит-тестами: полный мок-прогон + откат, реальный путь без watchdog → откат,
+      SIGHUP-реэксек watchdog (тот же PID, снятый маркер = доказанный re-exec).
+      Живой e2e на HRV прогонялся 25.11.26 (переход/прокси/`/harness`, всё откачено); на HRV агент
+      под **системным** юнитом без sudo — ровно тот случай, ради которого сделан путь через watchdog.
 - [x] Скилл-враппер `skills/switch-harness/` (инструктирует запустить скрипт, сперва `--dry-run`)
       и TG-команда `/harness` (в `tg-plugin` `commands/oob.ts`: **отчёт о текущем харнесе +
       как переключить**, не исполняет — переключение убило бы сессию плагина и может требовать

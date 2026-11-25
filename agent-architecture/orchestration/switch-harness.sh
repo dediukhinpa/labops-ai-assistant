@@ -14,7 +14,8 @@
 #      settings.json+.mcp.json ⇄ .codex/config.toml — из той же «души» и памяти (core/,
 #      channel.env, agent.env/bearer сохраняются как есть);
 #   7) переключение swarm.env (harness_switch_swarm);
-#   8) перезапуск юнитов и проверка готовности; при сбое — автоматический откат.
+#   8) переподъём агентов на новый харнес (SIGHUP watchdog, без sudo) и проверка готовности;
+#      при сбое — автоматический откат.
 #
 # Запускать ОТ ПОЛЬЗОВАТЕЛЯ АГЕНТОВ (у него лаборатория и swarm.env), не от root.
 #
@@ -226,18 +227,38 @@ preseed_all() {
   done
 }
 
-# ── Управление юнитом агента ──────────────────────────────────────
-# По умолчанию systemctl (user-юнит, иначе системный через scoped sudo). Тесты переопределяют
-# SWITCH_UNITCTL (например =true) — тогда без реального systemd.
-agent_unit_cmd() {  # <action> <agent>
+# ── Управление агентом БЕЗ sudo (через его watchdog) ──────────────────────────────
+# Переход не трогает systemd: на system-unit хостах у пользователя-агента нет sudo на
+# `systemctl stop/restart` (проверено на живом сервере — раньше переход там отваливался).
+# Поэтому:
+#   • стоп сессии — штатный stop-agent.sh (ставит stop-mark, снимает сессию/драйвер/канал, без sudo);
+#   • «рестарт» на новый харнес — SIGHUP работающему watchdog: он делает exec самого себя (тот же
+#     PID), перечитывает swarm.env и поднимает агента в новом рантайме (см. on_hup в watchdog.sh).
+# Тесты подменяют оба шага через SWITCH_UNITCTL (<action> <agent>) — тогда без реальных процессов.
+agent_ctl() {  # <action: stop|restart> <agent>
   local action="$1" agent="$2"
-  local unit="claude-agent-$agent.service"
-  if [ -n "${SWITCH_UNITCTL:-}" ]; then $SWITCH_UNITCTL "$action" "$unit"; return $?; fi
-  if systemctl --user cat "$unit" >/dev/null 2>&1; then
-    systemctl --user "$action" "$unit"
-  else
-    sudo -n systemctl "$action" "$unit"
+  if [ -n "${SWITCH_UNITCTL:-}" ]; then "$SWITCH_UNITCTL" "$action" "$agent"; return $?; fi
+  case "$action" in
+    stop)    bash "$HERE/stop-agent.sh" "$agent" ;;
+    restart) agent_reexec_watchdog "$agent" ;;
+    *)       warn "agent_ctl: неизвестное действие '$action'"; return 1 ;;
+  esac
+}
+
+# agent_reexec_watchdog <agent> — SIGHUP работающему watchdog агента, чтобы он переподнялся на
+# новый харнес. Без sudo (тот же пользователь). Нет watchdog — честно сообщаем и возвращаем 1
+# (без супервизора перезапуск на новый харнес из скрипта невозможен).
+agent_reexec_watchdog() {
+  local agent="$1" pids
+  pids="$(pgrep -f "watchdog\.sh[[:space:]]+${agent}\$" 2>/dev/null || true)"
+  if [ -z "$pids" ]; then
+    warn "$agent: не найден работающий watchdog — перезапусти агента вручную (из скрипта без sudo нельзя)"
+    return 1
   fi
+  # shellcheck disable=SC2086
+  kill -HUP $pids 2>/dev/null || { warn "$agent: не удалось послать SIGHUP watchdog ($pids)"; return 1; }
+  log "$agent: watchdog ($pids) получил SIGHUP — переподнимется на новый харнес"
+  return 0
 }
 agent_ready() {  # <agent>: поднялась ли tmux-сессия агента
   [ -n "${SWITCH_UNITCTL:-}" ] && return 0            # в тестах юниты замоканы
@@ -252,11 +273,11 @@ agent_ready() {  # <agent>: поднялась ли tmux-сессия агент
 # ── Точка невозврата: стоп → флип → конвертация → рестарт ──────────
 stop_all() {
   step "Пауза роя и остановка агентов ($CURRENT)"
-  [ "$DRY_RUN" = "1" ] && { log "· (план) stop-mark + остановка юнитов всех агентов"; return 0; }
+  [ "$DRY_RUN" = "1" ] && { log "· (план) stop-agent.sh для каждого агента (stop-mark + снятие сессии, без sudo)"; return 0; }
   local a
   for a in "${AGENTS[@]}"; do
     agent_stop_mark "$a" 2>/dev/null || true          # watchdog не перезапустит во время свопа
-    agent_unit_cmd stop "$a" || warn "$a: остановка юнита вернула ошибку (возможно уже остановлен)"
+    agent_ctl stop "$a" || warn "$a: остановка вернула ошибку (возможно уже остановлен)"
   done
   return 0
 }
@@ -280,11 +301,11 @@ convert_all() {
   return 0
 }
 restart_all() {
-  step "Перезапуск юнитов и проверка готовности"
-  [ "$DRY_RUN" = "1" ] && { log "· (план) перезапуск юнитов + ожидание готовности агентов"; return 0; }
+  step "Переподъём агентов на новый харнес и проверка готовности"
+  [ "$DRY_RUN" = "1" ] && { log "· (план) SIGHUP watchdog каждого агента (exec → новый харнес) + ожидание готовности"; return 0; }
   local a
   for a in "${AGENTS[@]}"; do
-    agent_unit_cmd restart "$a" || { warn "$a: перезапуск юнита не удался"; return 1; }
+    agent_ctl restart "$a" || { warn "$a: переподъём агента не удался"; return 1; }
   done
   for a in "${AGENTS[@]}"; do
     agent_ready "$a" || { warn "$a: агент не поднялся за ${SWITCH_READY_WAIT:-60}s"; return 1; }
@@ -302,7 +323,7 @@ rollback() {
       tar -C "$LAB" -xzf "$BACKUP_DIR/$a.tgz" 2>/dev/null || warn "$a: распаковка бэкапа не удалась"
     fi
   done
-  for a in "${AGENTS[@]}"; do agent_unit_cmd restart "$a" 2>/dev/null || true; done
+  for a in "${AGENTS[@]}"; do agent_ctl restart "$a" 2>/dev/null || true; done
   die "переход откатан к $CURRENT. Бэкап сохранён: $BACKUP_DIR"
 }
 
