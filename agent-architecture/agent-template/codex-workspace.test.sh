@@ -185,5 +185,41 @@ check "размер: нет config.toml — предел по умолчанию
 printf '# X\n\nбез раздела канала\n' > "$I/claude.md"
 check "нет раздела канала — ошибка" bash -c "! python3 '$HERE/codex_workspace.py' identity --agent-id x --channel-section '$HERE/templates/codex/channel-section.md' '$I/claude.md' '$I/out.md' 2>/dev/null"
 
+# --- Обратимость перевода роя: claude → codex → claude возвращает исходную «душу» ---
+# identity --reverse и adapt --reverse нужны switch-harness.sh для обратного перехода.
+RT="$TMP/rt"; mkdir -p "$RT"
+cat > "$RT/claude.md" <<'EOF'
+# Dev
+
+Идентичность. Правила живут в `~/.claude/CLAUDE.md`, ещё раз ~/.claude/CLAUDE.md.
+
+## Talking to the operator (channel) -- mandatory
+Claude: ответь обычным сообщением.
+
+## Shared brain
+хвост
+EOF
+cat > "$RT/claude-section.md" <<'EOF'
+## Talking to the operator (channel) -- mandatory
+Claude: ответь обычным сообщением.
+EOF
+python3 "$HERE/codex_workspace.py" identity --agent-id dev \
+  --channel-section "$HERE/templates/codex/channel-section.md" \
+  "$RT/claude.md" "$RT/AGENTS.src.md" 2>/dev/null
+check "forward: codex-путь в AGENTS.src.md" grep -q "\.codex/AGENTS.md" "$RT/AGENTS.src.md"
+check "forward: раздел канала стал codex" \
+  bash -c "! grep -q 'ответь обычным сообщением' '$RT/AGENTS.src.md'"
+CODEX_SPAN="$(grep -c '^## ' "$HERE/templates/codex/channel-section.md")"
+python3 "$HERE/codex_workspace.py" identity --reverse --agent-id dev \
+  --channel-section "$RT/claude-section.md" --channel-span "$CODEX_SPAN" \
+  "$RT/AGENTS.src.md" "$RT/claude.rt.md" 2>/dev/null
+check "round-trip: CLAUDE.md восстановлен побайтно" diff -q "$RT/claude.md" "$RT/claude.rt.md"
+
+printf 'см. ~/.claude/CLAUDE.md тут\n' > "$RT/doc.md"
+python3 "$HERE/codex_workspace.py" adapt --agent-id dev "$RT/doc.md" 2>/dev/null
+check "adapt: путь стал codex" grep -q "\.codex/AGENTS.md" "$RT/doc.md"
+python3 "$HERE/codex_workspace.py" adapt --reverse --agent-id dev "$RT/doc.md" 2>/dev/null
+check "deadapt: путь вернулся к claude" grep -q "~/.claude/CLAUDE.md" "$RT/doc.md"
+
 echo "codex-workspace.test.sh: $PASS ok, $FAIL fail"
 [ "$FAIL" -eq 0 ]
