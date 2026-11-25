@@ -163,7 +163,7 @@ creds_valid() {  # claude: валиден ли OAuth-токен на диске
 login_claude_interactive() {
   command -v tmux >/dev/null 2>&1 || { warn "нет tmux для входа claude"; return 1; }
   local sess="labops-login-$$"
-  log "claude: нужен вход. В ДРУГОМ терминале на этом сервере выполни:  tmux attach -t $sess"
+  log "claude: нужен вход. В ДРУГОМ терминале на этом сервере выполни:  tmux attach -t =$sess"  # tmux-target-ok: текст подсказки оператору, не вызов tmux; цель уже точная (=$sess)
   log "       внутри набери /login и пройди вход — окно закроется само."
   tmux new-session -d -s "$sess" "claude --dangerously-skip-permissions" 2>/dev/null || return 1
   local i=0 max="${CLAUDE_LOGIN_WAIT:-300}"
