@@ -1,21 +1,21 @@
 # labops-pii: вендоренная копия. Не править руками — тест проекта сверяет хеши.
 # Обновление: tools/vendor.py из репозитория labops-pii (новый тег -> PR в проекте).
-ref: v1.2.0
-tag: v1.2.0
-commit: dd76fb6dc1afac84bf461a68fae155595d89e1f4
+ref: v1.2.1
+tag: v1.2.1
+commit: 71a604e89a566505d95c127d5e9d281f7186a2a1
 parts: media,service,ts
-vendored_at: 2026-11-22T18:40:07Z
+vendored_at: 2026-11-25T13:11:33Z
 hash_algorithm: sha256
 files:
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  LICENSE
-  f9b819679c7c67e037f0647bc9eb0302bc04763cb9204acf8c12bddeba105e81  labops_pii/__init__.py
+  e04ad260725abcaa3f83acfd07cef360c5aeab918d97cfea48cb70164456951d  labops_pii/__init__.py
   356ad6a8aee34e5cbcb7e75d1ff954d7391fe8a511484ad71877fde0389a514b  labops_pii/__main__.py
   a6ccef9fc2ca1aa75117541f832702dd9c3d4ebecf2186d0fdef5fd03c8e8e08  labops_pii/allowlist.py
   0e6744aa521f8d2a65e748dabe80c7919da988b481c4eb5c781bac817bd36a27  labops_pii/api.py
   fc9b9cef86099a9999a9423daa03306ee694bd4f2aea090e300f27d0b9ed5189  labops_pii/body_guard.py
   027288d8b935ffce3096ede3689c69ee88c7370f78073286561ed54b8bc08763  labops_pii/checksums.py
   a964090bf6ed0b80fd4633c8c6c9018d9325f3411226b6583af7601b755264f9  labops_pii/config.py
-  816727a8072a3f95d6ac556d21c9ee39b2d8096e35a6ec403b1eb6ec7bab52ac  labops_pii/detector.py
+  5104ee587b38a206a8b0ba74679658ffc7269345ac80cb3170d26aa2e7323196  labops_pii/detector.py
   5f29384a9c7dade20f12992cf9a4cedde0d0e7dd704bd7aac64ebe20f261d9dc  labops_pii/errors.py
   d67189690e9f239b1e93c76ff43943a08d85b278f3f78a7881df249ff872058d  labops_pii/inflect.py
   25a6d3fa10ef26a0804971f13e92793d9cd0ad83604bfeb31d8014a242b4f0b7  labops_pii/jsonlog.py
@@ -44,7 +44,7 @@ files:
   06256424fe301305c468d43f2e56dbc9fbf99aed9d6dc06e4d521201d6437b14  labops_pii/tech_tokens.py
   ff5954d3b42399cef4579d7144a75e2b42c4bd982f549d86d1a46478fa7378b0  ts/LICENSE
   a99699e44cc5dc561973aca532fb059c3345cb0c4a6c3eed9ed2a845000e97a3  ts/bun.lock
-  9c50cf038e10986836adedb927f135c2dfdf7fc11c4885268b1fc4c4cad5a552  ts/package.json
+  2044afa62cf0febfc665e70e3604c4c52e3eb84a8dfbafbd4487d81942da7ed6  ts/package.json
   1764223fd09722d0bb2007eeacad777695d3cecfe7ba5e07ab95eb35fec6a16b  ts/src/constants.ts
   0528858775883fd26b3fe462046d928fedde8273fc2df9dd96acaeb4e89b0b9c  ts/src/detector/address-patterns.ts
   f53c2a4725568adf851c514501d44a753a4833eb78372d0124f9bdcfdf532b08  ts/src/detector/addresses.ts
