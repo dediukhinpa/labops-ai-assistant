@@ -76,3 +76,37 @@ harness_reverse_adapt_core() {
   [ "${#files[@]}" -eq 0 ] && return 0
   python3 "$py" adapt --reverse --agent-id "$agent" "${files[@]}"
 }
+
+# harness_render_agent <agent_id> <target_harness> <model>
+# Отрендерить конфиги целевого харнеса поверх существующего воркспейса, переиспользуя штатный
+# agent-template/install.sh. Его fill_template — skip-if-exists, поэтому память (core/), канал,
+# agent.env/bearer и уже посеянную идентичность он СОХРАНЯЕТ; создаются только недостающие файлы
+# целевого харнеса (config.toml ⇄ settings.json/.mcp.json, глобальные правила, .codex home,
+# symlink скиллов). Харнес установщик берёт из swarm.env — он уже должен быть переключён.
+# Значения берём из сохранённого agent.env; pii-адрес (codex) детерминирован через pii_proxy_port.
+harness_render_agent() {
+  local agent="$1" target="$2" model="$3"
+  local root at lab ws env_file bearer scopes lang pii_env=""
+  root="$(_hc_root)"; at="$root/agent-template"
+  lab="${CLAUDE_LAB:-$HOME/.claude-lab}"
+  ws="$lab/$agent/.claude"; env_file="$ws/agent.env"
+  bearer="$(sed -n 's/^AGENT_BEARER=//p'   "$env_file" 2>/dev/null | tail -1)"
+  scopes="$(sed -n 's/^AGENT_SCOPES=//p'    "$env_file" 2>/dev/null | tail -1)"
+  lang="$(sed -n 's/^SUMMARY_LANGUAGE=//p'  "$env_file" 2>/dev/null | tail -1)"
+  : "${lang:=Russian}"; : "${bearer:=CHANGE_ME}"; : "${scopes:=decisions}"
+  if [ "$target" = "codex" ]; then
+    # shellcheck source=/dev/null
+    . "$root/orchestration/lib/agents.sh" 2>/dev/null || true
+    # shellcheck source=/dev/null
+    . "$root/orchestration/lib/pii.sh" 2>/dev/null || true
+    local port; port="$(CLAUDE_LAB="$lab" pii_proxy_port "$agent" 2>/dev/null || true)"
+    [ -n "$port" ] && pii_env="http://127.0.0.1:$port"
+  fi
+  env -i PATH="$PATH" HOME="$HOME" CLAUDE_LAB="$lab" \
+    NONINTERACTIVE=1 ENABLE_ALL=n CONFIRM=y \
+    AGENT_NAME="$agent" LANGUAGE="$lang" COMMIT_LANGUAGE=English GITHUB_USERNAME=labops \
+    PRIMARY_MODEL="$model" MCP_HOST=127.0.0.1 \
+    AGENT_BEARER="$bearer" AGENT_SCOPES="$scopes" \
+    ${pii_env:+PII_PROXY_URL="$pii_env"} \
+    bash "$at/install.sh"
+}

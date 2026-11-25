@@ -36,15 +36,18 @@ bash orchestration/switch-harness.sh codex --dry-run # показать план
    app-server; claude: `tmux kill-session` + добивание bun). Маркеры `agent_stop_mark`, чтобы
    watchdog не перезапускал во время свопа.
 6. **Флип** `swarm.env` на целевой харнес (`harness_switch_swarm`).
-7. **Конвертация каждого агента** — переиспользует `new-agent.sh REUSE_EXISTING=1` (после флипа
-   он рендерит файлы целевого харнеса, а память/канал/`agent.env`/bearer сохраняет, т.к.
-   `fill_template` — skip-if-exists). Перед этим **пред-посев идентичности**, чтобы «душа»
+7. **Конвертация каждого агента** (`lib/harness-convert.sh`) — после флипа рендерит файлы
+   целевого харнеса поверх существующего воркспейса штатным `agent-template/install.sh`
+   (`harness_render_agent`): `fill_template` — skip-if-exists, поэтому память/канал/`agent.env`/
+   bearer и уже посеянную идентичность он сохраняет, создаются только недостающие файлы целевого
+   харнеса. Перед этим **пред-посев идентичности** (`harness_preseed_identity`), чтобы «душа»
    сохранилась побайтно (а не перерендерилась из шаблона):
    - claude→codex: `codex_workspace.py identity` из существующего `CLAUDE.md` → `AGENTS.src.md`;
    - codex→claude: `codex_workspace.py identity --reverse --channel-span <N>` из `AGENTS.src.md`
      → `CLAUDE.md` (`N` = число `## `-секций в `templates/codex/channel-section.md`).
-   Доки памяти (`core/AGENTS.md`, `USER.md`, `rules.md`, `TOOLS.md`) правятся на месте
-   (`adapt` / `adapt --reverse`) — упоминания путей/подагентов, без потери содержимого.
+   Доки памяти (`core/AGENTS.md`, `USER.md`, `rules.md`, `TOOLS.md`) при переходе на claude
+   правятся на месте (`harness_reverse_adapt_core` → `adapt --reverse`); в сторону codex их
+   адаптирует сам установщик. Упоминания путей/подагентов, без потери содержимого.
 8. **Перезапуск** юнитов и проверка готовности (webhook-порт, auth-state, health). При сбое —
    **автоматический откат** из бэкапа (воркспейсы + `swarm.env`).
 
@@ -73,7 +76,10 @@ bash orchestration/switch-harness.sh codex --dry-run # показать план
       «safe-stop» (недостроенная команда делает бэкап и не трогает рой) (+юнит-тесты).
 - [x] Обратимость идентичности в `codex_workspace.py` (`identity/adapt --reverse`, span-aware
       подмена раздела канала) — round-trip claude→codex→claude побайтный (+юнит-тесты).
-- [ ] Конвертация воркспейса (пред-посев идентичности + `new-agent.sh REUSE_EXISTING`).
+- [x] Конвертация воркспейса (`lib/harness-convert.sh`: пред-посев идентичности из «души» +
+      `harness_render_agent` поверх штатного установщика skip-if-exists + обратная адаптация
+      памяти на claude) — юнит + сквозной интеграционный тест claude→codex (память и ручные
+      правки идентичности сохраняются).
 - [ ] Доустановка рантайма целевого харнеса + встроенный вход + pii-proxy.
 - [ ] Пауза/стоп/рестарт/откат.
 - [ ] Скилл-враппер `switch-harness` и TG-команда `/harness` (отдельным шагом).
