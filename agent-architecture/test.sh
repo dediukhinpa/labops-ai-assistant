@@ -232,6 +232,7 @@ done
 echo "── 8a. Харнес роя (lib/harness.sh) ──"
 unit "harness.sh: харнес роя из swarm.env, умолчание claude, смена при агентах запрещена — юнит-тест зелёный" "harness.sh: юнит-тест провален (orchestration/lib/harness.test.sh)" bash orchestration/lib/harness.test.sh
 unit "switch-harness.sh: dry-run и контракт безопасности (бэкап есть, swarm.env не трогается до реализации) — юнит-тест зелёный" "switch-harness.sh: юнит-тест провален (orchestration/switch-harness.test.sh)" bash orchestration/switch-harness.test.sh
+unit "harness-convert.sh: посев идентичности claude⇄codex из сохранённой «души» и обратная адаптация памяти — юнит-тест зелёный" "harness-convert.sh: юнит-тест провален (orchestration/lib/harness-convert.test.sh)" bash orchestration/lib/harness-convert.test.sh
 unit "codex-watch.sh: вход ChatGPT / heartbeat / шаблоны процессов драйвера — юнит-тест зелёный" "codex-watch.sh: юнит-тест провален (orchestration/lib/codex-watch.test.sh)" bash orchestration/lib/codex-watch.test.sh
 unit "tg-send.sh: адрес Bot API из TELEGRAM_API_ROOT / channel.env, иначе облако — юнит-тест зелёный" "tg-send.sh: юнит-тест провален (orchestration/tg-send.test.sh)" bash orchestration/tg-send.test.sh
 unit "рендер воркспейса: claude как раньше, codex — AGENTS.md + config.toml через pii-proxy — юнит-тест зелёный" "рендер воркспейса по харнесу: юнит-тест провален (agent-template/codex-workspace.test.sh)" bash agent-template/codex-workspace.test.sh
