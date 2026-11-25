@@ -450,50 +450,65 @@ describe('oob texts per harness', () => {
       expect(stop.notifyChannel!.meta.command).toBe('stop')
       const help = await handleOobCommand(parseOobCommand('/help')!, makeCtx())
       expect(help.replyToTelegram!.text).toContain('прерывает текущий ход агента сразу')
-      expect(help.replyToTelegram!.text).not.toContain('Claude')
+      // На codex в справке нет claude-варианта заметки про /stop. ('Claude' теперь
+      // легитимно встречается в строке /provider, поэтому проверяем именно заметку.)
+      expect(help.replyToTelegram!.text).not.toContain('best-effort')
     } finally {
       codexOff()
     }
   })
 
-  test('bot menu wording is harness-neutral', () => {
-    for (const c of BOT_COMMANDS) expect(c.description).not.toContain('Claude')
+  test('bot menu: only /provider names the AIs, others stay neutral', () => {
+    for (const c of BOT_COMMANDS) {
+      if (c.command === 'provider') continue
+      expect(c.description).not.toContain('Claude')
+      expect(c.description).not.toContain('GPT')
+    }
+    const provider = BOT_COMMANDS.find((c) => c.command === 'provider')!
+    expect(provider.description).toContain('Claude')
+    expect(provider.description).toContain('GPT')
   })
 })
 
-// /harness — отчёт о текущем рантайме роя и как его сменить. Плагин НИЧЕГО не
-// исполняет и не будит модель: переключение останавливает/перезапускает весь рой
-// (включая эту сессию) и может требовать интерактивного входа — запускать его из
-// бота нельзя. Текущий харнес берётся из того же признака, что /help и /stop.
-describe('/harness', () => {
+// /provider — отчёт, на каком ИИ (Claude/GPT) сейчас работают агенты и как переключить.
+// Плагин НИЧЕГО не исполняет и не будит модель: переключение останавливает/перезапускает
+// всех агентов (включая эту сессию) и может требовать интерактивного входа — запускать его
+// из бота нельзя. Текущий ИИ берётся из того же признака, что /help и /stop. Текст — для
+// нетехнического клиента: значения Claude/GPT, без слов «харнес»/«рой».
+describe('/provider', () => {
   const codexOn = (): void => setInboundSink(async () => true)
   const codexOff = (): void => setInboundSink(undefined)
 
-  test('parses /harness and /harness@botname', () => {
-    expect(parseOobCommand('/harness')!.name).toBe('harness')
-    expect(parseOobCommand('/harness@christopher_coderbot')!.name).toBe('harness')
+  test('parses /provider and /provider@botname', () => {
+    expect(parseOobCommand('/provider')!.name).toBe('provider')
+    expect(parseOobCommand('/provider@christopher_coderbot')!.name).toBe('provider')
   })
 
-  test('claude (default): reports codex as the target one-command switch', async () => {
+  test('claude (default): reports Claude now, GPT as the one-command switch', async () => {
     codexOff()
-    const result = await handleOobCommand(parseOobCommand('/harness')!, makeCtx())
-    expect(result.command).toBe('harness')
+    const result = await handleOobCommand(parseOobCommand('/provider')!, makeCtx())
+    expect(result.command).toBe('provider')
     // Отчёт, не действие: модель не будим и заявку не кладём.
     expect(result.notifyChannel).toBeUndefined()
     expect(result.writeRequest).toBeUndefined()
     const text = result.replyToTelegram!.text
     expect(result.replyToTelegram!.parseMode).toBe('HTML')
+    expect(text).toContain('<code>Claude</code>')
+    expect(text).toContain('<code>GPT</code>')
     expect(text).toContain('switch-harness.sh codex')
-    expect(text).toContain('<code>claude</code>')
+    // Клиентский текст без технического жаргона.
+    expect(text).not.toContain('харнес')
+    expect(text).not.toContain('рантайм')
   })
 
-  test('codex: reports claude as the target one-command switch', async () => {
+  test('codex: reports GPT now, Claude as the one-command switch', async () => {
     codexOn()
     try {
-      const result = await handleOobCommand(parseOobCommand('/harness')!, makeCtx())
+      const result = await handleOobCommand(parseOobCommand('/provider')!, makeCtx())
       const text = result.replyToTelegram!.text
       expect(text).toContain('switch-harness.sh claude')
-      expect(text).toContain('<code>codex</code>')
+      expect(text).toContain('<code>GPT</code>')
+      expect(text).toContain('<code>Claude</code>')
     } finally {
       codexOff()
     }
@@ -501,7 +516,7 @@ describe('/harness', () => {
 
   test('is listed in /help and in the bot command menu', async () => {
     const help = await handleOobCommand(parseOobCommand('/help')!, makeCtx())
-    expect(help.replyToTelegram!.text).toContain('/harness')
-    expect(BOT_COMMANDS.some((c) => c.command === 'harness')).toBe(true)
+    expect(help.replyToTelegram!.text).toContain('/provider')
+    expect(BOT_COMMANDS.some((c) => c.command === 'provider')).toBe(true)
   })
 })

@@ -39,7 +39,7 @@ import type { TelegramApi } from '../channel/tools.js'
 import { inboundSinkActive, sendChannelNotification, type ChannelEvent } from '../channel/notify.js'
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js'
 
-export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'doctor' | 'harness'
+export type OobCommandName = 'help' | 'status' | 'stop' | 'reset' | 'doctor' | 'provider'
 
 const KNOWN_COMMANDS = new Set<OobCommandName>([
   'help',
@@ -47,7 +47,7 @@ const KNOWN_COMMANDS = new Set<OobCommandName>([
   'stop',
   'reset',
   'doctor',
-  'harness',
+  'provider',
 ])
 
 export interface ParsedOobCommand {
@@ -162,31 +162,29 @@ function helpText(): string {
     + '<code>/doctor</code> — проверить агента и починить, если сломан\n'
     + '<code>/stop</code> — остановить текущую задачу агента\n'
     + '<code>/reset</code> — начать сессию с чистого контекста, память сохраняется\n'
-    + '<code>/harness</code> — текущий рантайм роя и как переключить (claude⇄codex)\n\n'
+    + '<code>/provider</code> — на каком ИИ сейчас агенты (Claude или GPT)\n\n'
     + stopNote
   )
 }
 
-// Текущий харнес роя и как его сменить. Отчёт, а не исполнение: переключение
-// останавливает и перезапускает ВЕСЬ рой (включая сессию, где живёт этот плагин)
-// и может требовать интерактивного входа в подписку — запускать его из бота
-// нельзя, он убил бы собственную сессию. Текущий харнес читаем из того же
-// признака, что и /help//stop (активный приёмник драйвера ⇒ codex).
-function harnessText(): string {
+// На каком ИИ сейчас работают агенты и как переключить. Отчёт, а не исполнение:
+// переключение останавливает и перезапускает ВСЕХ агентов (включая сессию, где живёт
+// этот плагин) и может требовать интерактивного входа в подписку — запускать его из
+// бота нельзя, он убил бы собственную сессию. Текст — для нетехнического клиента:
+// значения Claude/GPT, без слов «харнес»/«рой». Текущий ИИ читаем из того же признака,
+// что и /help//stop (активный приёмник драйвера ⇒ GPT/codex).
+function providerText(): string {
   const codex = codexHarness()
-  const current = codex ? 'codex' : 'claude'
-  const target = codex ? 'claude' : 'codex'
-  const curSub = codex ? 'ChatGPT/gpt' : 'Claude/sonnet'
-  const tgtSub = codex ? 'Claude/sonnet' : 'ChatGPT/gpt'
+  const currentName = codex ? 'GPT' : 'Claude'
+  const targetName = codex ? 'Claude' : 'GPT'
+  const targetArg = codex ? 'claude' : 'codex'    // аргумент скрипта остаётся техническим
   return (
-    '<b>харнес роя</b>\n\n'
-    + `сейчас: <code>${current}</code> (подписка ${curSub})\n\n`
-    + `перевести весь рой на <code>${target}</code> (подписка ${tgtSub}) — одной командой, `
-    + 'у оператора в терминале этого сервера:\n'
-    + `<code>bash orchestration/switch-harness.sh ${target}</code>\n\n`
-    + '<i>настройки, память и идентичность сохраняются; история диалога — нет '
-    + '(свежая сессия, память через recall). Может потребоваться вход в подписку. '
-    + 'Отсюда не запускаю: переход останавливает и перезапускает агентов, включая этого.</i>'
+    '<b>ИИ агентов</b>\n\n'
+    + `сейчас: <code>${currentName}</code>\n\n`
+    + `переключить на <code>${targetName}</code> — одной командой:\n`
+    + `<code>bash orchestration/switch-harness.sh ${targetArg}</code>\n\n`
+    + '<i>настройки и память агентов сохраняются; переписка начнётся заново. '
+    + 'Отсюда не переключаю: смена перезапускает агентов, включая этого.</i>'
   )
 }
 
@@ -202,7 +200,7 @@ export const BOT_COMMANDS: ReadonlyArray<BotCommandSpec> = [
   { command: 'doctor', description: 'проверить и починить агента' },
   { command: 'stop', description: 'остановить текущую задачу агента' },
   { command: 'reset', description: 'очистить контекст сессии' },
-  { command: 'harness', description: 'текущий рантайм роя и как переключить' },
+  { command: 'provider', description: 'на каком ИИ сейчас агенты (Claude или GPT)' },
 ]
 
 function statusText(ctx: OobContext): string {
@@ -388,13 +386,13 @@ export async function handleOobCommand(
       }
     }
 
-    case 'harness': {
-      ctx.log.info('oob /harness', { chat_id: ctx.chatId })
-      // Чистый отчёт: не будим модель и ничего не исполняем (см. harnessText).
+    case 'provider': {
+      ctx.log.info('oob /provider', { chat_id: ctx.chatId })
+      // Чистый отчёт: не будим модель и ничего не исполняем (см. providerText).
       return {
         handled: true,
-        command: 'harness',
-        replyToTelegram: { text: harnessText(), parseMode: 'HTML' },
+        command: 'provider',
+        replyToTelegram: { text: providerText(), parseMode: 'HTML' },
       }
     }
   }
