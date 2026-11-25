@@ -10,6 +10,10 @@
 Слова, вписанные оператором вручную, не теряются: прошлый автоматический набор хранится в
 PII_ALLOWED_WORDS_AUTO, при пересчёте убирается только он и добавляется новый.
 
+В тот же автоматический набор входят названия продуктов из pii-allowed-products.txt рядом
+с этим файлом («Клод», «Гемини», «Битрикс»): голосовая расшифровка пишет их кириллицей,
+и детектор прятал их как ФИО (рой Дианы, 24.11.2026). Список общий для всех установок.
+
     pii_allowed_words.py sync <env-файл> <агент>[=<заголовок CLAUDE.md>] ...
         печатает changed / unchanged (код 0); env-файл переписывается атомарно, права 600.
     pii_allowed_words.py words <агент>[=<заголовок>] ...
@@ -32,6 +36,12 @@ AUTO_KEY = "PII_ALLOWED_WORDS_AUTO"
 MIN_WORD_LEN = 4
 # Вариантов кириллицы на одно слово не больше: каждая лишняя основа - лишнее исключение.
 MAX_VARIANTS = 6
+# Вариантов с «аканьем» на основное написание: расшифровка голоса пишет безударные
+# гласные как слышит («Родригес» → «Радригес», рой Дианы, 24.11.2026).
+MAX_REDUCED = 3
+# Безударная гласная → как её пишет расшифровка речи
+VOWEL_REDUCTION = {"о": "а", "е": "и", "э": "и"}
+PRODUCTS_FILE = Path(__file__).with_name("pii-allowed-products.txt")
 # Предел перебора развилок одного слова (защита от длинного имени с десятком развилок)
 MAX_COMBOS = 4096
 # Заголовок CLAUDE.md: «# El'Pablo — Coder & Architect» - имя до первого разделителя.
@@ -128,6 +138,34 @@ def cyrillic_variants(word: str) -> list[str]:
     return list(seen)
 
 
+def reduced_variants(word: str) -> list[str]:
+    """Написания с одной безударной гласной «как слышится»: «родригес» → «радригес».
+
+    Ударения мы не знаем, поэтому меняем по одной гласной (кроме первой буквы слова: она
+    почти всегда пишется верно) и берём не больше MAX_REDUCED вариантов.
+    """
+    out: list[str] = []
+    for pos in range(1, len(word)):
+        sub = VOWEL_REDUCTION.get(word[pos])
+        if sub:
+            out.append(word[:pos] + sub + word[pos + 1:])
+        if len(out) >= MAX_REDUCED:
+            break
+    return out
+
+
+def product_words(path: Path = PRODUCTS_FILE) -> list[str]:
+    """Основы названий продуктов из файла-списка (без комментариев и коротких основ)."""
+    if not path.exists():
+        return []
+    out: dict[str, None] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        word = line.split("#", 1)[0].strip().lower().replace("ё", "е")
+        if len(word) >= MIN_WORD_LEN:
+            out.setdefault(word, None)
+    return list(out)
+
+
 def name_words(agent_id: str, heading: str = "") -> list[str]:
     """Латинские слова имени агента: части agent-id и имя из заголовка CLAUDE.md."""
     words: list[str] = []
@@ -140,15 +178,21 @@ def name_words(agent_id: str, heading: str = "") -> list[str]:
 
 
 def swarm_words(agents: list[tuple[str, str]]) -> list[str]:
-    """Все слова-исключения роя: латиница и кириллические варианты, без повторов."""
+    """Имена агентов роя: латиница, кириллические варианты и «аканье», без повторов."""
     out: dict[str, None] = {}
     for agent_id, heading in agents:
         for word in name_words(agent_id, heading):
             out.setdefault(word, None)
-            for cyr in cyrillic_variants(word):
+            variants = cyrillic_variants(word)
+            for cyr in [*variants, *(reduced_variants(variants[0]) if variants else [])]:
                 if len(cyr) >= MIN_WORD_LEN:
                     out.setdefault(cyr, None)
     return list(out)
+
+
+def auto_words(agents: list[tuple[str, str]]) -> list[str]:
+    """Автоматический набор исключений: имена агентов роя и названия продуктов."""
+    return list(dict.fromkeys([*swarm_words(agents), *product_words()]))
 
 
 def _split(value: str) -> list[str]:
@@ -201,10 +245,10 @@ def _parse_agents(args: list[str]) -> list[tuple[str, str]]:
 
 def main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[0] == "words":
-        print(",".join(swarm_words(_parse_agents(argv[1:]))))
+        print(",".join(auto_words(_parse_agents(argv[1:]))))
         return 0
     if len(argv) >= 2 and argv[0] == "sync":
-        changed = sync_env(Path(argv[1]), swarm_words(_parse_agents(argv[2:])))
+        changed = sync_env(Path(argv[1]), auto_words(_parse_agents(argv[2:])))
         print("changed" if changed else "unchanged")
         return 0
     print(__doc__, file=sys.stderr)
