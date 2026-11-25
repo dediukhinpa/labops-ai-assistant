@@ -123,6 +123,9 @@ unit "pii.sh: порты / режим и гистерезис / session_stuck / 
 unit "pii-setup.sh: установка прокси агента и правка settings.json — юнит-тест зелёный" \
      "pii-setup.sh: юнит-тест провален (orchestration/pii-setup.test.sh)" \
      bash orchestration/pii-setup.test.sh
+unit "pii_allowed_words.py: имена агентов в исключениях маскирования — юнит-тест зелёный" \
+     "pii_allowed_words.py: юнит-тест провален (orchestration/lib/pii_allowed_words.test.py)" \
+     python3 orchestration/lib/pii_allowed_words.test.py
 # Решение владельца 23.11.2026: прокси молчит — агент работает напрямую с предупреждением в
 # Telegram, а не стоит. Значит: start-agent выбирает режим по /health и не отказывает в старте,
 # панель claude в режиме напрямую убирает ANTHROPIC_BASE_URL, драйвер codex получает файл режима,

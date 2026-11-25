@@ -151,4 +151,29 @@ grep -qx 'PII_PROXY_UPSTREAM=https://api.anthropic.com' "$CLAUDE_LAB/alpha/.clau
   || fail "claude-агент потерял upstream Anthropic"
 rm -f "$CLAUDE_LAB/shared/swarm.env"
 
+# 6. Имена агентов в исключениях маскирования: латиница и кириллица, ручные слова целы,
+# сервис перезапускается только при изменении списка.
+envs="$TMP/cfg/pseudonymizer.env"
+allowed() { sed -n 's/^PII_ALLOWED_WORDS=//p' "$envs" | tr ',' '\n'; }
+grep -q '^PII_ALLOWED_WORDS=' "$envs" || fail "host не записал исключения"
+allowed | grep -qx alpha || fail "нет agent-id в исключениях"
+allowed | grep -qx 'альфа' || fail "нет кириллицы имени агента"
+mkdir -p "$CLAUDE_LAB/rodriguez/.claude"
+printf '# Rodriguez -- Content Producer\n' > "$CLAUDE_LAB/rodriguez/.claude/CLAUDE.md"
+sed -i 's/^PII_ALLOWED_WORDS=/PII_ALLOWED_WORDS=штурман,/' "$envs"
+: > "$TMP/systemctl.log"
+bash "$HERE/pii-setup.sh" allowed-words >/dev/null 2>&1 || fail "allowed-words упал"
+allowed | grep -qx 'родригес' || fail "нет «родригес» после allowed-words"
+allowed | grep -qx 'штурман' || fail "ручное слово потеряно"
+allowed | grep -qx 'content' && fail "описание из заголовка попало в исключения"
+grep -q 'restart labops-pseudonymizer.service' "$TMP/systemctl.log" || fail "сервис не перезапущен"
+: > "$TMP/systemctl.log"
+bash "$HERE/pii-setup.sh" allowed-words >/dev/null 2>&1
+grep -q 'restart labops-pseudonymizer' "$TMP/systemctl.log" && fail "рестарт без изменений"
+rm -rf "$CLAUDE_LAB/rodriguez"
+bash "$HERE/pii-setup.sh" allowed-words >/dev/null 2>&1
+allowed | grep -qx 'родригес' && fail "слова удалённого агента остались"
+allowed | grep -qx 'штурман' || fail "ручное слово потеряно при удалении агента"
+[ "$(stat -c %a "$envs")" = 600 ] || fail "env сервиса не 600"
+
 echo "OK: pii-setup.test.sh"
