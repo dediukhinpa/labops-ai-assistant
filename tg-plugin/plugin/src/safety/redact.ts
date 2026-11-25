@@ -130,7 +130,11 @@ const GENERIC_LONG_TOKEN_RE = /\b([A-Za-z0-9_-]{4})[A-Za-z0-9_-]{16,}([A-Za-z0-9
 // (sk-…, gsk_…, ghp_…), `Bearer …`, and the Telegram bot-token shape. The
 // span stops at whitespace or quote/angle/backtick so an href="…" boundary
 // and a bare trailing space both end it cleanly.
-const URL_SPAN_RE = /\bhttps?:\/\/[^\s<>"'`]+/gi
+// Кроме http(s)-ссылок ссылкой считается IPv4 с портом или путём без схемы
+// (`10.1.2.3:8098/dash`): Telegram делает её кликабельной, и агенты так пишут адреса.
+// Голый IP в тексте («сервер 10.1.2.3») ссылкой не считается и маскируется как раньше.
+const LINK_SPAN_RE =
+  /\bhttps?:\/\/[^\s<>"'`]+|\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5}(?:\/[^\s<>"'`]*)?|\/[^\s<>"'`]*)/gi
 
 // Исключение из общего правила: составные имена из строчных слов через `_`/`-` — имена
 // инструментов и серверов MCP (`mcp__second_brain-agent_router__list_my_pending`,
@@ -166,17 +170,24 @@ const RULES: ReadonlyArray<RedactionRule> = [
   // 3. Auth header + query params — preserve prefix.
   { pattern: BEARER_RE, replacement: '$1[REDACTED]' },
   { pattern: QUERY_TOKEN_RE, replacement: '$1[REDACTED]' },
-  // 4. IPv4 — middle-octet mask.
-  { pattern: IPV4_RE, replacement: ipv4Replacer },
   // 5. Secret paths.
   { pattern: SECRET_PATH_TILDE_RE, replacement: '$1secrets/***' },
   { pattern: SECRET_PATH_ANCHORED_RE, replacement: '$1secrets/***' },
-  // 6. Supabase host.
+  // 6. Supabase host: id проекта чувствителен и в ссылке, маскируется везде.
   { pattern: SUPABASE_HOST_RE, replacement: supabaseReplacer },
   // 7. Telegram partial-mask shape (renderer-style).
   { pattern: TELEGRAM_TOKEN_PARTIAL_RE, replacement: '$1***:$2***' },
-  // NB: the generic long-token rule (rule 8) is applied separately in
-  // `redactSecrets`, URL-aware — see GENERIC_LONG_TOKEN_RE / URL_SPAN_RE.
+  // NB: правило IPv4 и общее правило длинных токенов
+  // применяются отдельно и только вне ссылок — см. OUTSIDE_LINK_RULES / LINK_SPAN_RE.
+]
+
+// Правила, которые маскируют части адреса, а не секреты: IP и длинные id. Внутри ссылки они ломают адрес: агент прислал дашборд
+// `http://<IP>:8098/...`, а пользователю дошло `203.***.***.87` — ссылка не открывалась (25.11.2026).
+// Поэтому внутри ссылок работают только правила секретов (RULES выше: токены провайдеров,
+// `Bearer`, `?token=`, токен бота), а эти — только в обычном тексте.
+const OUTSIDE_LINK_RULES: ReadonlyArray<RedactionRule> = [
+  { pattern: IPV4_RE, replacement: ipv4Replacer },
+  { pattern: GENERIC_LONG_TOKEN_RE, replacement: genericLongTokenReplacer },
 ]
 
 // Apply the generic long-token rule to every span of `text` that is NOT part
@@ -184,19 +195,23 @@ const RULES: ReadonlyArray<RedactionRule> = [
 // have already been masked by `RULES` over the whole text (URLs included), so
 // the only thing this rule would still catch inside a URL is a legitimate long
 // path/id segment — which we must not corrupt.
-function applyGenericOutsideUrls(text: string): string {
-  const generic = (chunk: string): string =>
-    chunk.replace(GENERIC_LONG_TOKEN_RE, genericLongTokenReplacer)
+function applyRule(text: string, rule: RedactionRule): string {
+  if (typeof rule.replacement === 'string') return text.replace(rule.pattern, rule.replacement)
+  return text.replace(rule.pattern, rule.replacement as (sub: string, ...args: unknown[]) => string)
+}
+
+function applyOutsideLinks(text: string): string {
+  const outside = (chunk: string): string => OUTSIDE_LINK_RULES.reduce(applyRule, chunk)
   let out = ''
   let last = 0
-  URL_SPAN_RE.lastIndex = 0
-  for (const match of text.matchAll(URL_SPAN_RE)) {
+  LINK_SPAN_RE.lastIndex = 0
+  for (const match of text.matchAll(LINK_SPAN_RE)) {
     const start = match.index ?? 0
-    out += generic(text.slice(last, start)) // text outside the URL — redact
-    out += match[0] // the URL itself — untouched
+    out += outside(text.slice(last, start)) // обычный текст — маскируем
+    out += match[0] // сама ссылка — без изменений
     last = start + match[0].length
   }
-  out += generic(text.slice(last))
+  out += outside(text.slice(last))
   return out
 }
 
@@ -227,20 +242,8 @@ export function redactSecrets(
       out = out.replace(new RegExp(escaped, 'g'), '[REDACTED]')
     }
   }
-  for (const rule of RULES) {
-    // String replacement: replace() accepts string OR callback. We narrow
-    // explicitly so TS picks the right overload.
-    if (typeof rule.replacement === 'string') {
-      out = out.replace(rule.pattern, rule.replacement)
-    } else {
-      // Cast to satisfy String.prototype.replace's variadic callback shape.
-      // The replacer is typed (match, ...groups) which matches replace()'s
-      // contract for capturing groups.
-      out = out.replace(rule.pattern, rule.replacement as (sub: string, ...args: unknown[]) => string)
-    }
-  }
-  // Generic long-token rule LAST and URL-aware: it would otherwise inject
-  // `***` into a normal link's path/id segment and corrupt the address.
-  out = applyGenericOutsideUrls(out)
+  out = RULES.reduce(applyRule, out)
+  // Адреса и длинные токены — последними и только вне ссылок, чтобы не сломать адрес.
+  out = applyOutsideLinks(out)
   return out
 }
