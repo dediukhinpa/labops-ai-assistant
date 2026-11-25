@@ -3,6 +3,8 @@
 # Сервис и media-masker - вендоренная библиотека labops-pii (vendor/labops-pii), профиль labops.
 #
 #   pii-setup.sh host            # один раз на хост: сервис псевдонимизации
+#   pii-setup.sh allowed-words   # пересчитать исключения: имена агентов роя (host и agent
+#                                # делают это сами; команда - для уже установленных роёв)
 #   pii-setup.sh agent <agent>   # на каждого агента: свой pii-proxy + settings.json
 #                                # (рой на Codex: прокси к бэкенду ChatGPT; адрес прокси
 #                                #  попадает в config.toml при рендере воркспейса, поэтому
@@ -36,6 +38,8 @@ HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
 . "$HERE/lib/pii.sh"
 # shellcheck source=lib/harness.sh
 . "$HERE/lib/harness.sh"
+# shellcheck source=lib/agents.sh
+. "$HERE/lib/agents.sh"
 
 SRC_DIR="${PII_SRC_DIR:-$(cd "$HERE/../.." && pwd)}"
 RUNTIME_DIR="${PII_RUNTIME_DIR:-$HOME/labops-pii-runtime}"
@@ -186,6 +190,42 @@ wait_health() {   # <url> <name>
   return 1
 }
 
+# sync_allowed_words [<агент>...] — имена агентов роя в исключения маскирования.
+# Имя агента («Rodriguez», «Родригес») детектор принимает за ФИО, и модель видит токен вместо
+# имени: переспрашивает оператора, кто это, или подставляет в ответ не тот токен (рой Дианы,
+# 24.11.2026). Слова собирает lib/pii_allowed_words.py: agent-id, имя из заголовка CLAUDE.md
+# и варианты кириллицей; ручные слова оператора в PII_ALLOWED_WORDS сохраняются.
+# Аргументы - агенты, которых ещё нет в ростере (Codex: прокси ставится до воркспейса).
+# Сервис читает список при старте, поэтому при изменении перезапускаем его, если он запущен.
+# Таблицы замен у сервиса в памяти: прокси видят новый boot_id и маскируют историю заново.
+sync_allowed_words() {
+  local env_file="$CONFIG_DIR/pseudonymizer.env" args=() id heading md state
+  [ -f "$env_file" ] || return 0
+  local lab
+  lab="$(pii_lab)"   # до local CLAUDE_LAB: объявление скрыло бы переданное значение
+  # shellcheck disable=SC2034  # CLAUDE_LAB читает list_agents из lib/agents.sh
+  local CLAUDE_LAB="$lab"
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    md="$CLAUDE_LAB/$id/.claude/CLAUDE.md"
+    heading=""
+    [ -f "$md" ] && heading="$(grep -m1 '^# ' "$md" 2>/dev/null || true)"
+    args+=("$id=$heading")
+  done < <({ list_agents; printf '%s\n' "$@"; } | awk 'NF && !seen[$0]++')
+  [ "${#args[@]}" -gt 0 ] || return 0
+  state="$(python3 "$HERE/lib/pii_allowed_words.py" sync "$env_file" "${args[@]}")" || {
+    warn "не обновил исключения маскирования (имена агентов) - сервис работает со старым списком"
+    return 0
+  }
+  [ "$state" = "changed" ] || return 0
+  ok "имена агентов в исключениях маскирования: $env_file"
+  if ucmd is-active --quiet labops-pseudonymizer.service 2>/dev/null; then
+    ucmd restart labops-pseudonymizer.service \
+      || warn "не перезапустил labops-pseudonymizer - новые исключения заработают после рестарта"
+    wait_health "$PII_PSEUDONYMIZER_URL_DEFAULT" "pseudonymizer" "labops-pseudonymizer" || true
+  fi
+}
+
 cmd_host() {
   if ! pii_enabled; then warn_disabled; return 0; fi
   say "Сервис псевдонимизации (один на хост)"
@@ -217,6 +257,7 @@ cmd_host() {
   fi
   chmod 600 "$env_file"
   ensure_env_key "$env_file" PSEUDONYMIZER_ADDRESS_MASK true
+  sync_allowed_words
   INSTALL_DIR_FOR_UNIT="$LIB_DIR" ENV_FILE_FOR_UNIT="$env_file" \
     render_unit "$DEPLOY_DIR/pseudonymizer.user.service.template" \
       "$UNIT_DIR/labops-pseudonymizer.service"
@@ -408,10 +449,12 @@ cmd_agent() {
     ok "settings.json: ANTHROPIC_BASE_URL=http://127.0.0.1:$port, хук SessionEnd"
   fi
   wait_health "http://127.0.0.1:$port" "pii-proxy $agent" "labops-pii-proxy@$agent" || true
+  sync_allowed_words "$agent"
 }
 
 case "${1:-}" in
   host)  cmd_host ;;
   agent) shift; cmd_agent "${1:-}" ;;
-  *) echo "использование: pii-setup.sh host | agent <agent-id>" >&2; exit 2 ;;
+  allowed-words) if pii_enabled; then sync_allowed_words; fi ;;
+  *) echo "использование: pii-setup.sh host | agent <agent-id> | allowed-words" >&2; exit 2 ;;
 esac
