@@ -43,12 +43,12 @@
 #                             # и браузера работать не будут
 #   SKIP_OCR=1                # не ставить Tesseract: фото и PDF не маскируются, а вырезаются
 #                             # из запросов к модели (по SKIP_PII_PROXY=1 тоже не ставится)
-#   SKIP_PROXY=1              # НЕ ставить HTTP-прокси (Squid) для Donut Browser. По умолчанию
-#                             # ставится: пароль случайный, лежит в ~/proxy-credentials.txt;
-#                             # порт 3128 открывается наружу (LABOPS_PROXY_ALLOW_FROM=<IP> —
-#                             # пускать только с этого адреса). Squid, уже настроенный
-#                             # не нами, не трогается: LABOPS_PROXY_REPLACE_CONF=1 — заменить
-#                             # его конфиг нашим (старый сохраняется как *.labops-bak-*)
+#   (HTTP-прокси Squid для Donut Browser при ОБЫЧНОЙ установке НЕ ставится — рою серверный
+#                             # браузер-прокси не нужен. Поставить отдельно: install.sh --proxy-only.
+#                             # Переменные того режима: LABOPS_PROXY_ALLOW_FROM=<IP> — пускать
+#                             # только с этого адреса (иначе порт 3128 открыт наружу);
+#                             # LABOPS_PROXY_REPLACE_CONF=1 — заменить чужой конфиг squid нашим
+#                             # (старый сохраняется как *.labops-bak-*). Пароль случайный.)
 #   SKIP_USER_SETUP=1         # не предлагать создание отдельного пользователя для агентов
 #   PREFLIGHT_DONE=1          # пропустить проверку доступности внешних хостов
 #   SKIP_SELFTEST=1           # не останавливать установку на self-test (осознанный обход
@@ -79,7 +79,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # voice_install: сервис расшифровки голоса ставится, пока у установки есть root.
 # shellcheck source=orchestration/lib/voice-install.sh
 . "$REPO_DIR/orchestration/lib/voice-install.sh"
-# proxy_install: Squid для Donut Browser, ставится по умолчанию (SKIP_PROXY=1 — не ставить).
+# proxy_install: Squid для Donut Browser — ставится ТОЛЬКО через `install.sh --proxy-only`.
 # shellcheck source=orchestration/lib/proxy-install.sh
 . "$REPO_DIR/orchestration/lib/proxy-install.sh"
 # ocr_install: Tesseract для media-masker, ставится, пока у установки есть root.
@@ -282,30 +282,13 @@ run_voice_step() {
     || warn "голос не настроен — текст работает; повторите установку, чтобы включить голос (пропустить: SKIP_VOICE=1)"
 }
 
-# run_proxy_step <пользователь> <его дом> — шаг «Прокси для Donut Browser». Ставится по
-# умолчанию (отключить: SKIP_PROXY=1). Сбой не останавливает установку — прокси нужен только
-# для Donut Browser на компьютере студента. Без Linux с apt и systemd (например, macOS)
-# шаг тихо пропускается; в режиме --proxy-only эта причина уже ошибка.
+# run_proxy_step <пользователь> <его дом> — шаг «Прокси для Donut Browser».
+# При ОБЫЧНОЙ установке (full/prep) прокси НЕ ставится: рою серверный браузер-прокси не нужен,
+# он нужен только для Donut Browser на компьютере студента. Поставить его можно отдельной
+# командой `bash install.sh --proxy-only` (блок ниже). Поэтому в обычном потоке шаг пустой.
 run_proxy_step() {
   export LABOPS_PROXY_DONE=1
-  if [ "$MODE" != "proxy" ]; then
-    if [ "${SKIP_PROXY:-0}" = "1" ]; then
-      note "прокси пропущен (SKIP_PROXY=1) — Donut Browser через этот сервер ходить не сможет"
-      return 0
-    fi
-    if ! command -v apt-get >/dev/null 2>&1 || ! command -v systemctl >/dev/null 2>&1; then
-      note "прокси пропущен: нужен Linux с apt и systemd (на этой системе его не поставить)"
-      return 0
-    fi
-  fi
-  say "2d. Прокси для Donut Browser"
-  echo "  Ставлю Squid: Donut Browser на вашем компьютере будет ходить в сеть через этот"
-  echo "  сервер. Доступ — по логину и случайному паролю; пароль в вывод не печатается."
-  local rc=0
-  proxy_install "$1" "$2" || rc=$?
-  # Пропуск из-за чужого конфига squid — осознанное решение, причина уже напечатана.
-  [ "$rc" -eq 0 ] || [ "$rc" -eq "$PROXY_RC_SKIPPED_FOREIGN" ] \
-    || warn "прокси не настроен — повторите: bash install.sh --proxy-only (подробности выше)"
+  return 0
 }
 
 # run_ocr_step — шаг «OCR для маскирования вложений». Шаг 5b (pii-setup.sh host) идёт уже
