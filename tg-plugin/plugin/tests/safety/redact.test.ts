@@ -91,6 +91,34 @@ describe('redactSecrets — IPv4 masking', () => {
     expect(redactSecrets('curl 127.0.0.1:8080')).toBe('curl 127.0.0.1:8080')
     expect(redactSecrets('bind 0.0.0.0:80')).toBe('bind 0.0.0.0:80')
   })
+
+  // Ссылка на дашборд с IP приходила со звёздочками и не открывалась (25.11.2026)
+  test('keeps IPv4 inside links intact', () => {
+    const url = 'http://203.0.113.87:8098/dashboard.html'
+    expect(redactSecrets(`Открой: ${url}`)).toBe(`Открой: ${url}`)
+    expect(redactSecrets('<a href="https://10.2.3.44/x">тут</a>')).toBe(
+      '<a href="https://10.2.3.44/x">тут</a>',
+    )
+  })
+
+  test('keeps bare IPv4 links with port or path intact', () => {
+    expect(redactSecrets('адрес 203.0.113.87:8098/kpi.html')).toBe('адрес 203.0.113.87:8098/kpi.html')
+    expect(redactSecrets('адрес 203.0.113.87:8098')).toBe('адрес 203.0.113.87:8098')
+    expect(redactSecrets('файл 10.2.3.44/report')).toBe('файл 10.2.3.44/report')
+  })
+
+  test('still masks plain IPv4 next to a link', () => {
+    expect(redactSecrets('сервер 10.2.3.44, ссылка http://10.2.3.44:80/a')).toBe(
+      'сервер 10.***.***.44, ссылка http://10.2.3.44:80/a',
+    )
+  })
+
+  test('still masks secret-shaped tokens inside links', () => {
+    const tok = 'abcdefghijklmnopqrstuvwxyz123456'
+    expect(redactSecrets(`http://203.0.113.87:8098/a?token=${tok}`)).toBe(
+      'http://203.0.113.87:8098/a?token=[REDACTED]',
+    )
+  })
 })
 
 describe('redactSecrets — secret paths', () => {
