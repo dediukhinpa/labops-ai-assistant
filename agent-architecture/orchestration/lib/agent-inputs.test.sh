@@ -25,7 +25,7 @@ done
 # guard <env...> — код возврата и вывод require_unattended_inputs под env.
 guard() {
   RC=0
-  OUT="$(env -u AGENT_NAME -u TELEGRAM_BOT_TOKEN -u TELEGRAM_ALLOWED_USER_IDS "$@" bash -c '
+  OUT="$(env -u AGENT_NAME -u NEW_AGENT_ID -u TELEGRAM_BOT_TOKEN -u TELEGRAM_ALLOWED_USER_IDS "$@" bash -c '
     source "'"$HERE"'/agent-inputs.sh"
     require_unattended_inputs
     echo PASSED' </dev/null 2>&1)" || RC=$?
@@ -96,5 +96,28 @@ if command -v ss >/dev/null 2>&1; then
 fi
 [ "$(pick_webhook_port "$TMP/plab" "$(( BUSY + 1 ))")" != "$(( BUSY + 1 ))" ] \
   || fail "pick_webhook_port взял порт из channel.env"
+
+# 7. Имя — как назвал оператор (кириллица можно), служебный id — латиницей. Из латинского
+#    имени id выводится сам; для «Игорь» без NEW_AGENT_ID — остановка с подсказкой.
+[ "$(derive_agent_id Developer)" = developer ] || fail "derive_agent_id Developer"
+[ "$(derive_agent_id 'My Agent')" = my-agent ] || fail "derive_agent_id 'My Agent'"
+[ -z "$(derive_agent_id Игорь)" ] || fail "из кириллицы получился id: $(derive_agent_id Игорь)"
+for v in igor dev-2 a; do valid_agent_id "$v" || fail "отверг допустимый id: $v"; done
+for v in "" Igor -igor "ig or" игорь "$(printf 'a%.0s' $(seq 1 32))"; do
+  valid_agent_id "$v" && fail "принял недопустимый id: '$v'"
+done
+for v in Игорь Денчик "My Agent" Developer; do valid_agent_name "$v" || fail "отверг имя: $v"; done
+for v in "" 'a|b' 'a&b' 'a\b' "$(printf 'a\nb')" "$(printf 'я%.0s' $(seq 1 41))"; do
+  valid_agent_name "$v" && fail "принял недопустимое имя: '$v'"
+done
+guard NONINTERACTIVE=1 AGENT_NAME=Игорь
+[ "$RC" -ne 0 ] || fail "кириллическое имя без NEW_AGENT_ID пропущено"
+echo "$OUT" | grep -q 'NEW_AGENT_ID' || fail "не назван NEW_AGENT_ID: $OUT"
+guard NONINTERACTIVE=1 AGENT_NAME=Игорь NEW_AGENT_ID=igor
+[ "$RC" -eq 0 ] || fail "Игорь + NEW_AGENT_ID=igor отвергнуты: $OUT"
+guard NONINTERACTIVE=1 AGENT_NAME=Игорь NEW_AGENT_ID=Igor
+[ "$RC" -ne 0 ] || fail "NEW_AGENT_ID с заглавной пропущен"
+guard NONINTERACTIVE=1 'AGENT_NAME=a|b' NEW_AGENT_ID=ab
+[ "$RC" -ne 0 ] || fail "имя с | пропущено"
 
 echo "agent-inputs: ok"

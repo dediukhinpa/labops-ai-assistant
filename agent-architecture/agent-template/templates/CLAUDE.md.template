@@ -1,11 +1,13 @@
 # {{AGENT_NAME}}
 
+## Role
+
+<!-- labops:agent-role -->
+
 ## SOUL
 
 **Green zone (on my own):**
-- Code, scripts, configs, refactoring, code review
-- Git: commits, branches, PRs
-- Deploy outside production, CI/CD
+<!-- labops:green-zone -->
 
 **Red zone (ask the operator first)** -- on top of the shared red zone in `~/.claude/CLAUDE.md`:
 - Architecture changes

@@ -1,0 +1,3 @@
+- Code, scripts, configs, refactoring, code review
+- Git: commits, branches, PRs
+- Deploy outside production, CI/CD

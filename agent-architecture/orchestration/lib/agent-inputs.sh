@@ -27,6 +27,31 @@ valid_allowlist() {
   printf '%s' "$1" | grep -qE '^-?[0-9]+(,-?[0-9]+)*$'
 }
 
+# valid_agent_id <id> — служебный id агента: латиница, цифры, дефис, до 31 символа (папки,
+# юнит, tmux). Под LC_ALL=C: в UTF-8 диапазон [a-z] у некоторых локалей ловит и не-латиницу.
+valid_agent_id() {
+  printf '%s' "$1" | LC_ALL=C grep -qxE '[a-z0-9][a-z0-9-]{0,30}'
+}
+
+# valid_agent_name <имя> — как агента зовут в заголовке идентичности: хоть по-русски, до 40
+# символов, без | & \ и переводов строк (установщик подставляет имя через sed).
+valid_agent_name() {
+  local n="$1"
+  [ -n "$n" ] && [ "${#n}" -le 40 ] || return 1
+  case "$n" in *'|'*|*'&'*|*'\'*|*$'\n'*|*$'\r'*) return 1 ;; esac
+  return 0
+}
+
+# derive_agent_id <имя> — id из имени (нижний регистр, пробел → дефис); пусто, если так он
+# не получается (кириллица, знаки): тогда оператор называет id сам, NEW_AGENT_ID. Раньше id
+# выводился из имени всегда, и агента нельзя было назвать «Игорь».
+derive_agent_id() {
+  local id
+  id="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
+  if valid_agent_id "$id"; then printf '%s\n' "$id"; fi
+  return 0
+}
+
 # Webhook-порты плагина: первый свободный начиная с 6000, не дальше диапазона.
 WEBHOOK_PORT_BASE=6000
 WEBHOOK_PORT_SPAN=100
@@ -59,6 +84,16 @@ pick_webhook_port() {
 unattended_input_errors() {
   [ -n "${AGENT_NAME:-}" ] \
     || echo "AGENT_NAME — имя агента (иначе возьмётся Developer)"
+  if [ -n "${AGENT_NAME:-}" ]; then
+    valid_agent_name "$AGENT_NAME" \
+      || echo "AGENT_NAME — до 40 символов, без | & \\ и переводов строк"
+    if [ -n "${NEW_AGENT_ID:-}" ]; then
+      valid_agent_id "$NEW_AGENT_ID" \
+        || echo "NEW_AGENT_ID — только латиница, цифры и дефис, до 31 символа"
+    elif [ -z "$(derive_agent_id "$AGENT_NAME")" ]; then
+      echo "NEW_AGENT_ID — служебный id латиницей (папка, юнит): из имени «$AGENT_NAME» он не получается"
+    fi
+  fi
   if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     if [ -z "${TELEGRAM_ALLOWED_USER_IDS:-}" ]; then
       echo "TELEGRAM_ALLOWED_USER_IDS — Telegram user_id оператора (без него бот ответит всем)"
