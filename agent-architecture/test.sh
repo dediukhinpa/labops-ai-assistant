@@ -867,6 +867,12 @@ unit "второй агент получает USER.md первого, свой 
      "operator-profile: юнит-тест провален (orchestration/lib/operator-profile.test.sh)" \
      bash orchestration/lib/operator-profile.test.sh
 
+# 16g. Что видно в чате во время работы, второй агент берёт у первого: выключенная
+# плашка активности не возвращается у новых агентов (lib/channel-display.sh).
+unit "второй агент наследует показ в чате у первого, явный выбор не перетирается — юнит-тест зелёный" \
+     "channel-display: юнит-тест провален (orchestration/lib/channel-display.test.sh)" \
+     bash orchestration/lib/channel-display.test.sh
+
 echo "── 17. Секреты не попадают в командную строку ──"
 
 # 17a. Поведенческий тест: реальный запуск session-exec.sh с подставным claude,
