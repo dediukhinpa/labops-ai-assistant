@@ -108,6 +108,15 @@ if grep -q "\"cleanupPeriodDays\": $TRANSCRIPT_KEEP_DAYS" agent-template/templat
 else
   bad "cleanupPeriodDays != $TRANSCRIPT_KEEP_DAYS — CLI сотрёт транскрипты и контекст клиента"
 fi
+# 4a2c. Фильтр безопасности модели не ставит агента на паузу: CLI сам переключается на другую
+# модель и отвечает (решение владельца 26.11.26). Без ключа берётся пользовательская настройка
+# машины; у developer там стояло false — сессия почти три часа ждала выбора в окне, которого из
+# Telegram не видно. Ключ в settings.json агента (--settings) перекрывает пользовательский.
+if grep -q '"switchModelsOnFlag": true' agent-template/templates/settings.json.template; then
+  ok "settings.json.template включает switchModelsOnFlag (пауза фильтра не глушит агента)"
+else
+  bad "settings.json.template не включает switchModelsOnFlag — фильтр поставит агента на паузу"
+fi
 # 4a3. DISABLE_TELEMETRY и CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC выключают у CLI загрузку
 # флагов функций, и каналы (Telegram) не поднимаются: «Channels are not currently available»
 # (проверено 05.11.26 на CLI 2.1.318, developer остался без связи). В шаблон их не возвращать.
