@@ -85,6 +85,60 @@ LOGIN_EXPIRES_SOON='⚠ Your login expires in 3 days · run /login to renew
 has_auth_error "$LOGIN_EXPIRES_SOON" && bad "login-expiry reminder misread as auth error" \
                                      || ok "login-expiry reminder is not an auth error"
 
+# ---- ответ агента со словом «Unauthorized» (26.11.2026) ---------------------
+# Агент разобрал лабу PortSwigger и процитировал ответ сервера. Шаблон видит весь
+# экран вместе с перепиской; голое «Unauthorized» в нём дало рестарт сессии.
+REPLY_WITH_WORD='● 2. Подставляешь куку wiener (не админ), шлёшь POST → «Unauthorized».
+  Значит на методе POST проверка прав есть.
+────────────────────
+❯
+  ⏵⏵ bypass permissions on'
+has_auth_error "$REPLY_WITH_WORD" && bad "слово «Unauthorized» в переписке принято за ошибку входа" \
+                                  || ok "слово «Unauthorized» в переписке — не ошибка входа"
+API_401='  ⎿  API Error: 401 {"type":"error","error":{"message":"Unauthorized"}}
+────────────────────
+❯
+  ⏵⏵ bypass permissions on'
+has_auth_error "$API_401" && ok "отказ API с кодом 401 ловится" || bad "отказ API с кодом 401 пропущен"
+
+# ---- окно выбора (26.11.2026) -----------------------------------------------
+# Реальный экран developer: пауза фильтра безопасности ждёт выбора почти три часа.
+SAFEGUARD_PAUSE="✻ Waiting for API response · will retry in 0s · check your network
+────────────────────────────────────────────
+  Session paused
+
+  Opus 5.5's safeguards flagged this session. You may be seeing this for the
+  first time.
+
+  Details: \`[cyber]\`
+
+  ❯ 1. Switch to Opus 4.8
+    2. Edit prompt and retry with Opus 5.5"
+TYPED_NUMBERED='────────────────────
+❯ 1. сделай бэкап
+────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle)'
+looks_like_choice_dialog "$SAFEGUARD_PAUSE" && ok "пауза фильтра распознана как окно выбора" \
+                                            || bad "пауза фильтра не распознана"
+looks_like_choice_dialog "$IDLE"            && bad "пустое поле ввода принято за окно" \
+                                            || ok "пустое поле ввода — не окно"
+looks_like_choice_dialog "$TYPED_NUMBERED"  && bad "набранное «1. …» принято за окно" \
+                                            || ok "набранное в поле «1. …» — не окно"
+looks_like_choice_dialog "$ACTIVE"          && bad "активный ход принят за окно" \
+                                            || ok "активный ход — не окно"
+# Именно это и ломалось: для ветки (B) окно — непустое поле ввода. Тест фиксирует
+# причину порядка веток: перестанет окно выглядеть вводом — порядок можно обсуждать.
+is_stuck_input "$SAFEGUARD_PAUSE" && ok "окно выглядит застрявшим вводом — потому (A1b) раньше (B)" \
+                                  || bad "окно больше не похоже на ввод — пересмотреть комментарий (A1b)"
+summary="$(choice_dialog_summary "$SAFEGUARD_PAUSE")"
+case "$summary" in
+  "Session paused / "*"1. Switch to Opus 4.8 / 2. Edit prompt and retry with Opus 5.5")
+    ok "сводка окна: текст и пункты одной строкой" ;;
+  *) bad "сводка окна неверна: $summary" ;;
+esac
+summary_cut="$(CHOICE_SUMMARY_MAX_BYTES=7 choice_dialog_summary $'───\n  ❯ 1. абвгд\n    2. е')"
+[ "$summary_cut" = "1. аб" ] && ok "обрезка сводки не рвёт букву" || bad "обрезка сводки: [$summary_cut]"
+
 # ---- мастер первого запуска -------------------------------------------------
 # Реальный хвост панели developer 2026-09-09, снятый ровно так, как его берёт
 # watchdog (capture-pane -S -8): сессия перезапустилась на обновившийся CLI и
@@ -685,6 +739,26 @@ if [ -n "$rec_line" ] && [ -n "$esc2_line" ] && [ "$rec_line" -lt "$esc2_line" ]
 else
   bad "recovery does not precede escalation (recover=$rec_line escalate=$esc2_line)"
 fi
+
+# Окно выбора: ветка (A1b) раньше (A2) и (B) — иначе Ctrl-U/Enter уходят в окно,
+# а слово из переписки над ним перезапускает сессию как «мёртвую авторизацию».
+choice_line="$(grep -n '^  if looks_like_choice_dialog "\$TAIL"; then' "$W" | head -1 | cut -d: -f1)"
+auth_line="$(grep -n '^  if has_auth_error "\$TAIL" && ! heartbeat_fresh; then' "$W" | head -1 | cut -d: -f1)"
+if [ -n "$choice_line" ] && [ -n "$auth_line" ] && [ -n "$stuck_line" ] \
+   && [ "$choice_line" -lt "$auth_line" ] && [ "$choice_line" -lt "$stuck_line" ]; then
+  ok "ветка окна выбора стоит до (A2) и (B) (строка $choice_line < $auth_line, $stuck_line)"
+else
+  bad "ветку окна выбора обошли: choice=$choice_line auth=$auth_line stuck=$stuck_line"
+fi
+choice_block="$(sed -n "${choice_line:-1},/^  CHOICE_CYCLES=0/p" "$W")"
+if printf '%s' "$choice_block" | grep -qE 'restart_session|send-keys'; then
+  bad "ветка окна выбора жмёт клавиши или перезапускает сессию"
+else
+  ok "ветка окна выбора не жмёт клавиш и не перезапускает сессию"
+fi
+printf '%s' "$choice_block" | grep -q 'report_down' \
+  && ok "долго висящее окно выбора эскалируется оператору" \
+  || bad "окно выбора никому не сообщается — снова тихая поломка"
 
 # ---- атрибуция досылки -----------------------------------------------------
 # Регрессия 2026-09-01: watchdog отправлял агенту любой нарисованный в поле

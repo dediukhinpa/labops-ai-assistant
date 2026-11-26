@@ -1,5 +1,6 @@
 {
   "model": "{{PRIMARY_MODEL}}",
+  "switchModelsOnFlag": true,
   "cleanupPeriodDays": 36500,
   "env": {
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "400000",

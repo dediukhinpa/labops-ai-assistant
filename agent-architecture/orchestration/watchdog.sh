@@ -324,6 +324,11 @@ AUTH_RESTART_AT=0
 AUTH_RECOVERY_MARGIN_SEC="${WATCHDOG_AUTH_RECOVERY_MARGIN_SEC:-15}"
 # То же самое для мастера первого запуска (ветка A1): один рестарт на эпизод.
 ONBOARDING_RESTARTED=0
+# Окно выбора (ветка A1b): сколько статичных проходов оно на экране. Отвечает на
+# него оператор через плагин канала; watchdog лишь зовёт оператора, если окно
+# висит дольше WATCHDOG_CHOICE_ALERT_CYCLES проходов (~30 с каждый, около 10 мин).
+CHOICE_CYCLES=0
+CHOICE_ALERT_CYCLES="${WATCHDOG_CHOICE_ALERT_CYCLES:-20}"
 # Вопрос о каналах для разработки (ветка A0): сколько раз ответили за эпизод.
 # Не уходит после нескольких ответов — один рестарт сессии (как у мастера, A1);
 # вернулся и после него — зовём оператора, а не жмём Enter вечно.
@@ -668,6 +673,8 @@ while true; do
   # Pane moved since last cycle → agent is progressing; reset and move on
   if [ "$TAIL" != "$PREV_TAIL" ]; then
     FROZEN_COUNT=0; NUDGE_STAGE=0; IDLE_COUNT=0; IDLE_CONSOLIDATED=0
+    # Экран сменился — новое окно выбора считается с нуля (лог и тревога по нему свои).
+    CHOICE_CYCLES=0
     # Эпизод auth-сбоя считаем закрытым только по доказательству: ход реально
     # прошёл (свежий heartbeat) и ошибки в панели нет. Просто перерисовка панели
     # доказательством не является — после рестарта она новая всегда.
@@ -743,6 +750,29 @@ while true; do
       "⛔ Claude Code требует пройти первый запуск — нужна помощь на сервере."
     continue
   fi
+
+  # (A1b) Окно выбора Claude Code («❯ 1. … / 2. …»), например пауза фильтра
+  # безопасности. Стоит ДО (A2) и (B): для (B) окно — непустое поле ввода, и та
+  # слала бы в окно Ctrl-U, а на непустом буфере — Enter, выбирая пункт за
+  # человека; для (A2) слово из окна или переписки над ним выглядело как ошибка
+  # входа (26.11.2026: рестарт по «Unauthorized» из ответа агента). Рестарт тоже
+  # не нужен: свежая сессия теряет контекст, а окно — штатное ожидание ответа.
+  # Отвечает оператор кнопками в Telegram (плагин, choice-dialog.ts), паузу
+  # фильтра плагин переключает сам. Здесь — лог и запасная тревога, если окно
+  # провисело долго (плагин мёртв или оператор не видел сообщения).
+  if looks_like_choice_dialog "$TAIL"; then
+    CHOICE_CYCLES=$((CHOICE_CYCLES + 1))
+    if [ "$CHOICE_CYCLES" -eq 1 ]; then
+      log "окно выбора на экране — жду ответа оператора: $(choice_dialog_summary "$TAIL")"
+    fi
+    if [ "$CHOICE_CYCLES" -eq "$CHOICE_ALERT_CYCLES" ]; then
+      CHOICE_ALERT="⛔ агент ждёт выбора в окне на экране: $(choice_dialog_summary "$TAIL")."
+      CHOICE_ALERT+=" Ответьте кнопкой в чате агента или выберите пункт в сессии $SESSION на сервере."
+      report_down "окно выбора не отвечено $CHOICE_CYCLES проходов" "$CHOICE_ALERT"
+    fi
+    continue
+  fi
+  CHOICE_CYCLES=0
 
   # TUI lost its prompt entirely → restart, UNLESS a recent hook proves the
   # session is alive (mid-render / transient repaint). A truly dead TUI stops

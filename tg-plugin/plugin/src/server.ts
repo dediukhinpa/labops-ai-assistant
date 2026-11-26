@@ -75,6 +75,12 @@ import {
 } from './channel/permissions.js'
 import { createAskUserQuestionRelay } from './channel/ask-user-question.js'
 import {
+  CHOICE_CALLBACK_PREFIX,
+  createChoiceDialogRelay,
+  type ChoiceDialogRelay,
+} from './channel/choice-dialog.js'
+import { resolveAgentSession } from './channel/ensure-submit.js'
+import {
   createAskUserQuestionUi,
   type AskCallbackContext,
   type AskUserQuestionUi,
@@ -747,6 +753,28 @@ const askUserQuestionUi: AskUserQuestionUi = createAskUserQuestionUi({
   telegramApi,
   relay: askUserQuestionRelay,
 })
+// Окна выбора Claude Code («Session paused · 1. Switch to … / 2. …») → оператору в
+// Telegram с кнопками; пауза по фильтру безопасности переключает модель сама
+// (см. choice-dialog.ts). Только главная сессия Claude Code: у Codex окон в tmux
+// нет. Получатели — оператор (operator_user_ids, иначе TELEGRAM_ALLOWED_USER_IDS):
+// permission_relay.allowed_user_ids здесь не годится, его умолчание — канарейка.
+// Выключатель — TELEGRAM_CHOICE_RELAY=0; автопереключение отдельно —
+// TELEGRAM_SAFEGUARD_AUTO_SWITCH=0.
+const CHOICE_POLL_MS = 5000
+const choiceSession = resolveAgentSession()
+const choiceDialog: ChoiceDialogRelay | undefined =
+  !codexMode && choiceSession.length > 0 && process.env.TELEGRAM_CHOICE_RELAY !== '0'
+    ? createChoiceDialogRelay({
+        session: choiceSession,
+        telegramApi,
+        recipients: resolveCodexOperatorUserIds(config),
+        log,
+        autoSwitchOnSafeguard: process.env.TELEGRAM_SAFEGUARD_AUTO_SWITCH !== '0',
+      })
+    : undefined
+const stopChoiceDialog = choiceDialog?.start(CHOICE_POLL_MS)
+if (choiceDialog !== undefined) log.info('choice-dialog relay enabled', { session: choiceSession })
+
 // Adapt grammY's Context to our structural CallbackQueryLike. grammY's
 // answerCallbackQuery returns Promise<true>; the structural type expects
 // Promise<void>. We wrap to drop the boolean and decouple from grammY types.
@@ -760,6 +788,23 @@ const askUserQuestionUi: AskUserQuestionUi = createAskUserQuestionUi({
 // in the chat.
 bot.on('callback_query:data', async ctx => {
   const data = ctx.callbackQuery.data ?? ''
+  if (choiceDialog !== undefined && data.startsWith(CHOICE_CALLBACK_PREFIX)) {
+    try {
+      await choiceDialog.handleCallback({
+        data,
+        fromUserId: ctx.from.id,
+        answerCallbackQuery: async arg => {
+          if (arg) await ctx.answerCallbackQuery(arg)
+          else await ctx.answerCallbackQuery()
+        },
+      })
+    } catch (err) {
+      log.error('choice-dialog callback_query handler threw', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return
+  }
   if (data.startsWith('ask:')) {
     const askCtx: AskCallbackContext = {
       callbackQuery: { data },
@@ -969,6 +1014,7 @@ const handlerDeps: HandlerDeps = {
   askUserQuestionUi,
   ...(clientRelay !== undefined ? { clientRelay } : {}),
   ...(mediaConsent !== undefined ? { mediaConsent } : {}),
+  ...(choiceDialog !== undefined ? { choiceDialog } : {}),
 }
 
 // Codex + multichat: фильтр до всех обработчиков (они ставят 👀 и статус ещё до доставки).
@@ -1002,6 +1048,8 @@ function shutdown(exitCode = 0): void {
   if (shuttingDown) return
   shuttingDown = true
   log.info('shutting down', { exit_code: exitCode })
+  // Останавливаем опрос окон: на выходе нажимать в панели уже некому и незачем.
+  stopChoiceDialog?.()
 
   // Best-effort: clean up any pulsing status messages so the chat doesn't
   // show a stale "Печатает..." after the bot dies. Errors are swallowed
