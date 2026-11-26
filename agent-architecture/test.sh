@@ -320,6 +320,16 @@ else
   bad "CLAUDE.md.template не объясняет, что отвечать надо через reply — ответы агента будут теряться"
 fi
 
+echo "── 9c2. Блок качества работы (CLAUDE.md.template) ──"
+# Регрессия 2026-11-26: дизайнер понял «системные фонты» как Arial, не сверил слайды с
+# бренд-гайдом и отдал непроверенные ссылки — гайд у него был, привычек сверки не было.
+if grep -q '## Quality of work -- mandatory' "$CT" && grep -q 'Read requirements back' "$CT" \
+  && grep -q 'point by point' "$CT" && grep -q 'Never open a reply with a name token' "$CT"; then
+  ok "CLAUDE.md.template задаёт пересказ требований, сверку по пунктам и обращение без метки"
+else
+  bad "в CLAUDE.md.template нет блока качества работы — агент гадает и не сверяет результат"
+fi
+
 echo "── 10. Изоляция per-agent окружения (создание агента из сессии агента) ──"
 # new-agent.sh почти всегда запускается ИЗ сессии другого агента, а tmux
 # new-session строит env сессии из ГЛОБАЛЬНОГО env tmux-сервера (загрязнённого
