@@ -753,6 +753,11 @@ export class CodexDriver {
     try {
       await this.safeMemory('session-end', { hook_event_name: 'SessionEnd', reason: 'clear' })
       await this.deps.effects.rebuildIdentity()
+      // Новая нить читает только что собранный AGENTS.md — его отпечаток и сохраняем. Раньше
+      // в состоянии оставался отпечаток со старта драйвера: если AGENTS.md с тех пор менялся,
+      // первый же перезапуск после /reset принимал инструкции за изменившиеся и начинал ещё
+      // одну нить — переписка после сброса терялась (HRV, 26.11.2026).
+      this.identityHash = this.deps.identityHash?.() ?? this.identityHash
       await this.startNewThread('clear')
       this.saveThread()
       this.deps.log.info('codex thread reset', { thread_id: this.threadId })
