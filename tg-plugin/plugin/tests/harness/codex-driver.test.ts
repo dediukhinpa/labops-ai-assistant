@@ -1078,6 +1078,27 @@ describe('инструкции (AGENTS.md) и новая нить', () => {
     expect(JSON.parse(readFileSync(stateFile, 'utf8')).identityHash).toBe('ccc')
   })
 
+  test('resetThread запоминает отпечаток пересобранного AGENTS.md — перезапуск после сброса продолжает нить', async () => {
+    let current = 'aaa'
+    const { driver, stateFile } = setup({
+      savedState: { threadId: 'thr-old', identityHash: 'aaa' },
+      identityHash: () => current,
+    })
+    await driver.start()
+    expect(driver.thread).toBe('thr-old')
+    // Агент дописал свою память — AGENTS.md при сбросе соберётся другим.
+    current = 'bbb'
+    await driver.resetThread()
+    const saved = JSON.parse(readFileSync(stateFile, 'utf8')) as Record<string, unknown>
+    expect(saved).toMatchObject({ threadId: 'thr-new', identityHash: 'bbb' })
+
+    // Перезапуск с тем же AGENTS.md: нить после сброса продолжается, новой нет.
+    const restarted = setup({ savedState: saved, identityHash: () => 'bbb' })
+    await restarted.driver.start()
+    expect(restarted.server.requests('thread/start')).toHaveLength(0)
+    expect(restarted.driver.thread).toBe('thr-new')
+  })
+
   test('отпечаток изменился, но resume упал — ошибка не маскируется новой нитью', async () => {
     const { driver, server, stateFile } = setup({
       savedState: { threadId: 'thr-old', identityHash: 'aaa' },
