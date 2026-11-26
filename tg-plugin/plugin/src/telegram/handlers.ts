@@ -30,6 +30,7 @@ import {
   shouldRouteDmPerPerson,
 } from './dm-routing.js'
 import { ensureSubmitted, resolveAgentSession } from '../channel/ensure-submit.js'
+import type { ChoiceDialogRelay } from '../channel/choice-dialog.js'
 import { recordInboundDelivery } from '../channel/inbound-marker.js'
 import type { ClientRelay } from './client-relay.js'
 import { gateTelegramMessage, type GateInput } from './gate.js'
@@ -164,6 +165,9 @@ export interface HandlerDeps {
   // "yes <id>" / "no <id>" replies from approvers and emits verdicts.
   // Optional so older tests that don't exercise permissions still compile.
   permissionHooks?: PermissionRelayHooks
+  // Окно выбора Claude Code, отправленное оператору: ответ цифрой выбирает пункт
+  // и агенту не доставляется (choice-dialog.ts). Нет — ветка пропускается.
+  choiceDialog?: ChoiceDialogRelay
   // T11: status manager owns the "Печатает.../🔧 tool" transient. Optional
   // so older T4-T10 tests that pre-date T11 still compile against this
   // type — when absent we just skip status creation.
@@ -1170,6 +1174,17 @@ export async function handleInboundText(ctx: Context, deps: HandlerDeps): Promis
   // read/done): a busy session that has the message queued shows 👀, not 👌,
   // so the receipt never lies. Both stages cover every message type and both
   // the DM and per-chat multichat sessions uniformly.
+
+  // Ответ цифрой на окно выбора, отправленное оператору. Съедается, только пока
+  // окно открыто и пишет оператор в личку; иначе текст идёт агенту как обычно.
+  if (deps.choiceDialog !== undefined) {
+    const consumed = await deps.choiceDialog.tryHandleText({
+      fromUserId: ctx.from?.id,
+      chatType: ctx.chat?.type,
+      text,
+    })
+    if (consumed) return
+  }
 
   // FIX-T1 F3 (PRX-1 Phase 5, 2026-05-27): permission verdicts ALWAYS take
   // priority over the AskUserQuestion «Other» text consumer. Previously the

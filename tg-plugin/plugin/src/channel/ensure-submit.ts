@@ -21,6 +21,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { Logger } from '../log.js'
 import { paneTarget } from '../tmux/index.js'
+import { parseChoiceDialog } from './choice-dialog.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -74,6 +75,10 @@ export function paneInput(pane: string): string {
 export function paneInputStuck(pane: string): boolean {
   if (!/❯|bypass permissions/.test(pane)) return false
   if (pane.includes('esc to interrupt')) return false
+  // Окно выбора («❯ 1. Switch to …») — не поле ввода. Очистка и перепечатка ушли
+  // бы в само окно: цифра из сообщения оператора выбрала бы пункт за него, а Enter
+  // подтвердил бы текущий. Окно ведёт choice-dialog.ts.
+  if (parseChoiceDialog(pane) !== null) return false
   const input = paneInput(pane)
   if (input.length === 0) return false
   if (/^Try".*"$/.test(input)) return false
