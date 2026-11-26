@@ -105,6 +105,8 @@ ORCH_DIR="$REPO_DIR/orchestration"
 . "$ORCH_DIR/lib/agent-inputs.sh"
 # shellcheck source=../../orchestration/lib/operator-profile.sh
 . "$ORCH_DIR/lib/operator-profile.sh"
+# shellcheck source=../../orchestration/lib/channel-display.sh
+. "$ORCH_DIR/lib/channel-display.sh"
 # Харнес роя (claude|codex) выбран первым вопросом install.sh и записан в shared/swarm.env;
 # новый агент его наследует и о нём не спрашивает. Codex: вход в ChatGPT общий на рой.
 # shellcheck source=../../orchestration/lib/harness.sh
@@ -674,6 +676,14 @@ ENV
       fi
     else
       warn "config.json уже существует и jq недоступен — проверьте вручную, что webhook.enabled=true и status.suppress_typing_bubble=false в $CONFIG_JSON"
+    fi
+    # Что видно в чате во время работы (плашка активности, прогресс, зеркало задач) — как
+    # у первого агента роя: выключенная оператором плашка не возвращается у новых агентов.
+    # Явно заданное в config.json этого агента не трогаем (см. lib/channel-display.sh).
+    if DISPLAY_TAKEN="$(channel_display_inherit "$(channel_display_source "$LAB_DIR" "$AGENT_ID")" "$CONFIG_JSON")"; then
+      [ -z "$DISPLAY_TAKEN" ] || ok "config.json: показ в чате как у первого агента — $DISPLAY_TAKEN"
+    else
+      warn "не удалось перенести настройки показа в $CONFIG_JSON — плашка активности по умолчанию"
     fi
   fi
 else
