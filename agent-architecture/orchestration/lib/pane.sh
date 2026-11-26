@@ -182,10 +182,59 @@ dev_channels_prompt_wait_gone() {
 # сутки показывали «Not logged in · Run /login», а watchdog считал их живыми.
 # Напоминание «Your login expires in N days · run /login to renew» сюда НЕ
 # подпадает намеренно: сессия при нём ещё рабочая.
-AUTH_ERR_RE='disabled Claude subscription access|Invalid API key|Please run /login|Not logged in|OAuth token (has )?expired|Credit balance is too low|authentication_error|Unauthorized'
+#
+# Голого слова «Unauthorized» в шаблоне НЕТ, и возвращать его нельзя: шаблон
+# смотрит на весь видимый экран, а там и переписка. 26.11.2026 developer ответил
+# оператору разбором лабы PortSwigger («шлёшь POST → «Unauthorized»»), через
+# минуту heartbeat штатно протух, и watchdog счёл ответ мёртвой авторизацией —
+# рестарт стёр контекст и сбросил модель. Отказ API с кодом 401 Claude Code
+# рисует как «API Error: 401 …» — его и ловим.
+AUTH_ERR_RE='disabled Claude subscription access|Invalid API key|Please run /login|Not logged in|OAuth token (has )?expired|Credit balance is too low|authentication_error|API Error: 401'
 
 # has_auth_error <pane-text> — в панели видна ошибка авторизации/доступа?
 has_auth_error() { printf '%s' "${1:-}" | grep -qaE "$AUTH_ERR_RE"; }
+
+# ── Окно выбора ─────────────────────────────────────────────────────────────
+# Claude Code ставит сессию на паузу и ждёт выбора пункта: «❯ 1. … / 2. …».
+# Пример — пауза фильтра безопасности (26.11.2026, developer, почти три часа
+# тишины): «Session paused · ❯ 1. Switch to Opus 4.8 / 2. Edit prompt and retry».
+#
+# Для веток простоя окно неотличимо от застрявшего ввода: последняя строка с «❯»
+# непуста. Ветка (B) поэтому «чистила поле» (Ctrl-U в окно), а на непустом буфере
+# жала бы Enter — то есть выбирала пункт за человека. Окно ведёт плагин канала
+# (choice-dialog.ts: шлёт оператору кнопки, паузу фильтра переключает сам), а
+# watchdog его не трогает и зовёт оператора, только если окно висит долго.
+#
+# Отличие от поля ввода с набранным «1. сделай бэкап»: под полем ввода всегда
+# линия ─── и строка режима, под пунктами окна — нет. Окна старта сессии (каналы
+# разработки, Bypass Permissions, мастер) этот шаблон тоже ловит — их ветки в
+# watchdog стоят раньше.
+looks_like_choice_dialog() {
+  printf '%s' "${1:-}" | awk '
+    /❯/ { marker = $0; below = 0; next }
+    marker != "" && /^[[:space:]]*(─|━)(─|━)(─|━)/ { below = 1 }
+    marker != "" && /bypass permissions|shift\+tab to cycle/ { below = 1 }
+    END {
+      if (marker == "" || below) exit 1
+      if (marker !~ /❯[[:space:]]*[0-9][0-9]?\.[[:space:]]+[^[:space:]]/) exit 1
+      exit 0
+    }'
+}
+
+# choice_dialog_summary <pane-text> — окно одной строкой для лога и тревоги:
+# текст под последней линией ───, пункты через « / », не длиннее 600 байт.
+# cut режет по байтам и может рассечь кириллическую букву — обрывок дочищает
+# iconv -c (Telegram битый UTF-8 не примет). `|| true`: iconv, выбросив обрывок,
+# выходит с 1, а вызывающий watchdog живёт под `set -euo pipefail`.
+CHOICE_SUMMARY_MAX_BYTES="${CHOICE_SUMMARY_MAX_BYTES:-600}"
+choice_dialog_summary() {
+  { printf '%s' "${1:-}" | awk '
+      /^[[:space:]]*(─|━)(─|━)(─|━)/ { n = 0; next }
+      { sub(/^[[:space:]]*(❯[[:space:]]*)?/, ""); sub(/[[:space:]]+$/, "") }
+      $0 != "" { line[++n] = $0 }
+      END { for (i = 1; i <= n; i++) printf "%s%s", (i > 1 ? " / " : ""), line[i] }' \
+      | cut -b "1-$CHOICE_SUMMARY_MAX_BYTES" | iconv -c -f utf-8 -t utf-8; } 2>/dev/null || true
+}
 
 # ── Stuck-input detection & recovery ─────────────────────────────────────────
 # The tg channel delivers an inbound by asking Claude Code (research-preview
