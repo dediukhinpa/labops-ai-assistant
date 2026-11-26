@@ -13,6 +13,9 @@
 #
 # Переменные (любую можно передать заранее — тогда без вопроса):
 #   AGENT_NAME PRIMARY_MODEL LANGUAGE
+#   NEW_AGENT_ID (служебный id латиницей, если из имени он не получается: «Игорь» → igor)
+#   NEW_AGENT_ROLE (роль словами оператора, если он описал её при создании; иначе у агента
+#     заготовка «роль не задана», и роль оператор присылает самому агенту)
 #   USER_MD_SOURCE (чей core/USER.md взять; по умолчанию — первого агента роя)
 #   MCP_HOST (default: 127.0.0.1, colocated) AGENT_SCOPES
 #   SECOND_BRAIN_MEMORY_URL/_MEMORY_ROUTER_URL/_AGENT_ROUTER_URL/_TASKS_URL (override for remote/reverse-proxy)
@@ -267,11 +270,16 @@ say "1. Конфигурация агента"
 # Без живого ввода (скилл create-agent из Bash-инструмента) — проверить ответы
 # до того, как создано хоть что-то; см. lib/agent-inputs.sh.
 require_unattended_inputs
-ask AGENT_NAME  "Имя агента (напр. Developer, Friday)" "Developer"
+ask AGENT_NAME  "Имя агента — как к нему обращаться (напр. Developer, Friday, Игорь)" "Developer"
+valid_agent_name "$AGENT_NAME" || die "имя: до 40 символов, без | & \\ и переводов строк"
 # Роль и характер не спрашиваем: оператор пишет их в личный CLAUDE.md агента по уроку
-# курса 07-claude-md. Строка-ответ из установщика ложилась туда же и расходилась с уроком.
-AGENT_ID=$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
-[[ "$AGENT_ID" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]] || die "имя: только латиница/цифры/дефис, ≤31"
+# курса 07-claude-md. Если он уже описал роль, создающий агент передаёт её в NEW_AGENT_ROLE.
+# Имя — как назвал оператор, а служебный id (папка, юнит, порт) — латиницей: из латинского
+# имени он выводится сам, для «Игорь» его называют в NEW_AGENT_ID. Раньше id выводился из
+# имени всегда, и агенту давали латинское имя вместо того, что сказал оператор.
+AGENT_ID="${NEW_AGENT_ID:-$(derive_agent_id "$AGENT_NAME")}"
+[ -n "$AGENT_ID" ] || ask AGENT_ID "Служебный id латиницей — папка, юнит (напр. igor)" ""
+valid_agent_id "$AGENT_ID" || die "id агента: только латиница/цифры/дефис, ≤31 (NEW_AGENT_ID=…)"
 # Идемпотентность: не затираем уже существующего агента молча.
 if [ -d "$LAB_DIR/$AGENT_ID/.claude" ] && [ "${REUSE_EXISTING:-0}" != "1" ]; then
   die "агент '$AGENT_ID' уже существует ($LAB_DIR/$AGENT_ID/.claude). Выберите другое имя, либо REUSE_EXISTING=1 чтобы донастроить поверх (существующие файлы не перезапишутся)."
@@ -298,6 +306,14 @@ if [ -n "$USER_MD_FROM" ]; then
   [ -n "${LANGUAGE:-}" ] || LANGUAGE="$(operator_profile_language "$USER_MD_FROM")"
 fi
 ask LANGUAGE "Язык ответов" "Russian"
+# Первый агент роя — разработчик (идентичность как всегда: код, git, деплой); следующих он
+# заводит под роль оператора: её текст из NEW_AGENT_ROLE, а без него — «роль не задана».
+if [ -n "$USER_MD_FROM" ]; then AGENT_PROFILE=custom; else AGENT_PROFILE=developer; fi
+if [ -n "${NEW_AGENT_ROLE:-}" ]; then
+  ok "роль со слов оператора запишу в идентичность агента"
+elif [ "$AGENT_PROFILE" = "custom" ]; then
+  note "роль не передана (NEW_AGENT_ROLE) — агент попросит оператора её описать"
+fi
 # Второй мозг всегда колоцирован на этом же VPS, без reverse proxy — прямые
 # host:port URL на дефолтных портах, без вопроса. Переопределяется через
 # MCP_HOST (другой хост) или напрямую SECOND_BRAIN_*_URL (напр. свой домен+proxy).
@@ -451,7 +467,8 @@ if [ "$HARNESS" = "codex" ]; then
   export PII_PROXY_URL
   ok "агент ходит в модель через pii-proxy: $PII_PROXY_URL"
 fi
-NONINTERACTIVE=1 AGENT_NAME="$AGENT_NAME" LANGUAGE="$LANGUAGE" \
+NONINTERACTIVE=1 AGENT_NAME="$AGENT_NAME" NEW_AGENT_ID="$AGENT_ID" LANGUAGE="$LANGUAGE" \
+  AGENT_PROFILE="$AGENT_PROFILE" NEW_AGENT_ROLE="${NEW_AGENT_ROLE:-}" \
   PRIMARY_MODEL="$PRIMARY_MODEL" \
   MCP_HOST="$MCP_HOST" \
   SECOND_BRAIN_MEMORY_URL="$SECOND_BRAIN_MEMORY_URL" \

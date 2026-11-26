@@ -110,12 +110,39 @@ fi
 [ "${NONINTERACTIVE:-0}" = "1" ] || { echo "Answer a few questions to set up your agent."; echo ""; }
 
 prompt AGENT_NAME              "Agent name (e.g. Homer, Friday, Developer)" "MyAgent"
-AGENT_ID=$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+# Имя — как его назвал оператор (хоть «Игорь»): оно в заголовке идентичности. Служебный id
+# (папки, юнит, порт) — только латиница; new-agent.sh передаёт его в NEW_AGENT_ID, если из
+# имени он не получается. Не AGENT_ID: внутри сессии агента там лежит id РОДИТЕЛЯ (общий
+# env tmux), и новый воркспейс лёг бы поверх чужого. Раньше id всегда выводился из имени,
+# и кириллическое имя не проходило.
+AGENT_ID="${NEW_AGENT_ID:-$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')}"
 
 if [[ ! "${AGENT_ID}" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]]; then
-    err "Agent name must contain only letters, numbers, and hyphens (max 31 chars)"
+    err "Agent id must contain only latin letters, numbers, and hyphens (max 31 chars); pass NEW_AGENT_ID for a non-latin name"
     exit 1
 fi
+case "$AGENT_NAME" in
+    *'|'*|*'&'*|*'\'*|*$'\n'*)
+        err "Agent name must not contain | & \\ or line breaks"
+        exit 1 ;;
+esac
+
+# Роль и зелёная зона идентичности. developer — первый агент роя (как было всегда: код, git,
+# деплой); custom — агенты, которых он заводит: роль из NEW_AGENT_ROLE (что оператор сказал при
+# создании), а без неё — заготовка «роль не задана», чтобы агент не выдавал себя за
+# программиста. По умолчанию developer: прямой запуск установщика рендерит как раньше.
+AGENT_PROFILE="${AGENT_PROFILE:-developer}"
+case "$AGENT_PROFILE" in
+    developer|custom) ;;
+    *) err "AGENT_PROFILE must be developer or custom (got: $AGENT_PROFILE)"; exit 1 ;;
+esac
+IDENTITY_PARTS_DIR="${SCRIPT_DIR}/templates/identity"
+if [ -n "${NEW_AGENT_ROLE:-}" ]; then
+    AGENT_ROLE_TEXT="$(printf '%s' "$NEW_AGENT_ROLE" | tr -d '\r')"
+else
+    AGENT_ROLE_TEXT="$(cat "${IDENTITY_PARTS_DIR}/role-${AGENT_PROFILE}.md")"
+fi
+AGENT_GREEN_ZONE_TEXT="$(cat "${IDENTITY_PARTS_DIR}/green-zone-${AGENT_PROFILE}.md")"
 
 # Роль, описание и характер не спрашиваются: они пишутся в личный CLAUDE.md уроком курса
 # 07-claude-md, а ответ установщика ложился туда же второй, расходящейся версией.
@@ -270,7 +297,23 @@ fill_template() {
     # Sweep any unsubstituted {{TODO}} placeholders
     sed_i 's|{{[A-Z_0-9]*}}|TODO: fill in|g' "$dst"
 
+    render_identity_blocks "$dst"
+
     log "Created: $dst"
+}
+
+# render_identity_blocks <файл> — строки-метки роли и зелёной зоны заменяются текстом как есть.
+# После всех sed: текст оператора может содержать $, &, |, {{…}} — sed бы его исказил или
+# принял за плейсхолдер. awk берёт текст из окружения, без экранирования.
+render_identity_blocks() {
+    local dst="$1" tmp
+    grep -qxE '<!-- labops:(agent-role|green-zone) -->' "$dst" || return 0
+    tmp="$(mktemp)"
+    ROLE_TEXT="$AGENT_ROLE_TEXT" GREEN_TEXT="$AGENT_GREEN_ZONE_TEXT" awk '
+        $0 == "<!-- labops:agent-role -->" { print ENVIRON["ROLE_TEXT"]; next }
+        $0 == "<!-- labops:green-zone -->" { print ENVIRON["GREEN_TEXT"]; next }
+        { print }' "$dst" > "$tmp" && cat "$tmp" > "$dst"
+    rm -f "$tmp"
 }
 
 # Управляющие документы РЯДОМ с CLAUDE.md, а не только в репозитории.

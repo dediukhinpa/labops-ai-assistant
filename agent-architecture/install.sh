@@ -1216,7 +1216,8 @@ rm -f "$NEW_AGENT_STATUS_FILE"
 
 # Скилл create-agent у Developer берётся из общей копии скиллов, которую
 # agent-template/install.sh кладёт в $LAB_DIR/shared/skills.
-DEV_WS="$LAB_DIR/$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')/.claude"
+# id первого агента — тот же, что выбрал new-agent.sh: NEW_AGENT_ID для нелатинского имени.
+DEV_WS="$LAB_DIR/${NEW_AGENT_ID:-$(echo "$AGENT_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')}/.claude"
 if [ -d "$DEV_WS" ] && [ ! -f "$DEV_WS/skills/create-agent/SKILL.md" ]; then
   warn "у Developer нет скилла create-agent — выполните:"
   warn "  bash $RUNTIME_ARCH/orchestration/sync-skills.sh"

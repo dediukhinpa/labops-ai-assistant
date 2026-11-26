@@ -1,0 +1,2 @@
+- Routine work within my role (see «Role»): drafts, analysis, research, preparing materials
+- Questions and clarifications to the operator about the task
