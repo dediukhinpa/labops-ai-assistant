@@ -83,6 +83,24 @@ fi
 # истории). Бот-токены ловит regex выше; персональные Telegram-id паттерном не
 # отличить от обычных чисел без ложных срабатываний, поэтому отдельной проверки нет.
 
+echo "── 3b. needrestart не перезапускает агентов ──"
+# Конфиг — perl, его исполняет needrestart. Проверяем, что он грузится и правило ловит
+# только юниты агентов (см. systemd/needrestart-labops.conf).
+if command -v perl >/dev/null 2>&1; then
+  if perl -e 'our %nrconf; do $ARGV[0]; die "load: $@" if $@; die "load: $!" unless %nrconf;
+      my %rc = %{$nrconf{override_rc}};
+      my $hit = sub { my $u = shift; for my $k (keys %rc) { return $rc{$k} if $u =~ $k } return 1 };
+      exit(($hit->("claude-agent-elpablo.service") == 0 && $hit->("ssh.service") == 1
+            && $hit->("claude-agent-.service") == 1) ? 0 : 1)' \
+      ./systemd/needrestart-labops.conf 2>/dev/null; then
+    ok "needrestart-labops.conf исключает только claude-agent-*.service"
+  else
+    bad "needrestart-labops.conf не грузится или исключает не те службы"
+  fi
+else
+  ok "perl нет — проверка needrestart-labops.conf пропущена"
+fi
+
 echo "── 4. Модель и авторизация Claude Code учтены ──"
 # 4a. settings.json реально задаёт модель (не только описательные доки)
 if grep -q '"model"' agent-template/templates/settings.json.template; then

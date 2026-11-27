@@ -226,6 +226,22 @@ install_via_pkgmgr() {
 # `bash install.sh` от обычного: там юнит не ставился никогда, агент не
 # запускался, а установка всё равно писала «Developer создан» (17.09.2026, клиент).
 # Возвращает 0, если права выданы.
+install_needrestart_guard() {
+  # needrestart после unattended-upgrades перезапускал claude-agent-* по разу на заход;
+  # серия заходов загоняла юнит в start-limit-hit, и агент молчал (27.11.2026, сервер клиента).
+  # Без needrestart на машине шаг пустой. Сбой не останавливает установку.
+  local NR_SRC="$REPO_DIR/systemd/needrestart-labops.conf"
+  local NR_DIR="/etc/needrestart/conf.d"
+  [ -d "$NR_DIR" ] || return 0
+  [ -f "$NR_SRC" ] || { warn "нет $NR_SRC — needrestart может перезапускать агентов"; return 0; }
+  if $SUDO install -m 644 "$NR_SRC" "$NR_DIR/labops-agents.conf"; then
+    echo "  needrestart: службы claude-agent-* не перезапускаются при обновлении пакетов"
+  else
+    warn "не удалось записать $NR_DIR/labops-agents.conf — needrestart может перезапускать агентов"
+  fi
+  return 0
+}
+
 grant_agent_autostart() {
   local AGENT_OS_USER="$1"
   local UNIT_HELPER_SRC="$REPO_DIR/orchestration/labops-agent-unit.sh"
@@ -248,6 +264,8 @@ grant_agent_autostart() {
   $SUDO install -m 755 "$RUNTIME_HELPER_SRC" "$LABOPS_RUNTIME_HELPER" || return 1
   echo "  хелпер автостарта: $LABOPS_UNIT_HELPER"
   echo "  хелпер копии роя: $LABOPS_RUNTIME_HELPER"
+  install_needrestart_guard
+
   SUDOERS_FILE="/etc/sudoers.d/labops-agent-systemd-$AGENT_OS_USER"
   SUDOERS_TMP="$(mktemp)"
   sudoers_agent_rules "$AGENT_OS_USER" > "$SUDOERS_TMP"
